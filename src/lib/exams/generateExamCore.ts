@@ -166,9 +166,16 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
           zodSchema: singleQuestionResultSchema,
           validate: async (parsedQuestion) => {
             const candidate = { ...parsedQuestion.question, number: slot.number, curriculumUnitRowIndex: slot.unitRowIndex }
-            const { question, issues, warnings: questionWarnings } = correctSingleQuestion(candidate, unitCurriculum)
+            let { question, issues, warnings: questionWarnings } = correctSingleQuestion(candidate, unitCurriculum)
             if (question.type !== slot.type) issues.push(`Questão ${slot.number}: esperado tipo "${slot.type}", veio "${question.type}".`)
-            if (visualAid === 'obrigatorio' && (!question.needsImage || !question.imageQuery)) issues.push(`Questão ${slot.number}: recurso visual obrigatório não foi solicitado.`)
+            if (visualAid === 'obrigatorio' && (!question.needsImage || !question.imageQuery?.trim())) {
+              // A exigência da matriz é uma regra do sistema. Se o modelo
+              // omitir o campo, corrigimos localmente e evitamos desperdiçar
+              // uma rodada inteira de geração por uma falha de serialização.
+              const fallbackQuery = `${unit.tituloCapitulo} ${unit.conteudo ?? ''}`.replace(/\s+/g, ' ').trim().slice(0, 180)
+              question = { ...question, needsImage: true, imageQuery: question.imageQuery?.trim() || fallbackQuery }
+              questionWarnings.push(`Questão ${slot.number}: recurso visual obrigatório foi normalizado a partir do capítulo.`)
+            }
             if (qualityGateEnabled && !question.pedagogicalClassification.difficulty) issues.push(`Questão ${slot.number}: difficulty é obrigatória para geração com o gate pedagógico ativo.`)
             // A revisão cega pedagógica é feita uma única vez sobre a prova
             // montada. Executá-la por item multiplica chamadas e torna uma
