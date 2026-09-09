@@ -1,0 +1,22 @@
+node_modules/
+.venv-omr/
+.next/
+coverage/
+.env
+.env.local
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+*.bak
+enem-microdados-cache/
+# Acervo público local do INEP (11+ GB); regenerável com
+# npm run download-inep-enem-archive e não deve ir para o Git.
+referencias/inep/enem-archive/
+scripts/*.pdf
+scripts/*.xlsx
+
+# Conteúdo gerado pelo `skills` CLI (vercel-labs/agent-skills) — regenerável
+# via `npx skills experimental_install`, que lê skills-lock.json (esse sim
+# fica versionado, mesma lógica do package-lock.json).
+.agents/
+agent/

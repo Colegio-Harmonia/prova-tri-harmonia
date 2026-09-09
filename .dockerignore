@@ -1,0 +1,12 @@
+.git
+.next
+node_modules
+.venv-omr
+.env
+.env.*
+coverage
+output
+*.log
+*.dump
+*.tar.gz
+backups

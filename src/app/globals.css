@@ -1,0 +1,149 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --font-sans: 'Roboto', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-display: 'Roboto', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+
+  --color-canvas: 249 250 251;
+  --color-surface: 255 255 255;
+  --color-surface-subtle: 232 245 238;
+  --color-surface-raised: 255 255 255;
+  --color-content-primary: 60 66 79;
+  --color-content-secondary: 75 85 99;
+  --color-content-muted: 107 114 128;
+  --color-content-inverse: 255 255 255;
+  --color-border: 229 231 235;
+  --color-border-strong: 0 134 73;
+  --color-action-primary: 0 134 73;
+  --color-action-primary-hover: 0 106 58;
+  --color-action-primary-foreground: 255 255 255;
+  --color-action-danger: 220 38 38;
+  --color-action-danger-hover: 185 28 28;
+  --color-status-success: 0 134 73;
+  --color-status-warning: 217 119 6;
+  --color-status-danger: 220 38 38;
+  --color-status-info: 37 99 235;
+  --color-focus: 0 134 73;
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --shadow-soft: 0 1px 3px rgb(0 0 0 / 0.07);
+  --shadow-raised: 0 2px 8px rgb(0 0 0 / 0.08);
+  --duration-fast: 150ms;
+  --duration-default: 250ms;
+  --ease-productive: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --color-canvas: 19 27 21;
+  --color-surface: 27 37 29;
+  --color-surface-subtle: 35 48 38;
+  --color-surface-raised: 40 54 43;
+  --color-content-primary: 239 245 238;
+  --color-content-secondary: 199 212 200;
+  --color-content-muted: 158 177 161;
+  --color-content-inverse: 20 29 22;
+  --color-border: 67 85 70;
+  --color-border-strong: 102 123 105;
+  --color-action-primary: 61 181 111;
+  --color-action-primary-hover: 91 205 137;
+  --color-action-primary-foreground: 14 35 21;
+  --color-action-danger: 248 113 113;
+  --color-action-danger-hover: 252 145 145;
+  --color-status-success: 74 202 122;
+  --color-status-warning: 244 172 75;
+  --color-status-danger: 248 113 113;
+  --color-status-info: 104 185 236;
+  --color-focus: 251 176 82;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --color-canvas: 19 27 21;
+    --color-surface: 27 37 29;
+    --color-surface-subtle: 35 48 38;
+    --color-surface-raised: 40 54 43;
+    --color-content-primary: 239 245 238;
+    --color-content-secondary: 199 212 200;
+    --color-content-muted: 158 177 161;
+    --color-content-inverse: 20 29 22;
+    --color-border: 67 85 70;
+    --color-border-strong: 102 123 105;
+    --color-action-primary: 61 181 111;
+    --color-action-primary-hover: 91 205 137;
+    --color-action-primary-foreground: 14 35 21;
+    --color-action-danger: 248 113 113;
+    --color-action-danger-hover: 252 145 145;
+    --color-status-success: 74 202 122;
+    --color-status-warning: 244 172 75;
+    --color-status-danger: 248 113 113;
+    --color-status-info: 104 185 236;
+    --color-focus: 251 176 82;
+  }
+}
+
+* {
+  border-color: rgb(var(--color-border));
+}
+
+body {
+  @apply bg-canvas font-sans text-content-primary antialiased;
+  line-height: 1.5;
+}
+
+::selection {
+  background: rgb(var(--color-action-primary) / 0.22);
+}
+
+:focus-visible {
+  outline: 3px solid rgb(var(--color-focus) / 0.8);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+@media print {
+  @page {
+    margin: 14mm;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .sae-student-report,
+  .sae-student-report * {
+    visibility: visible !important;
+  }
+
+  .sae-student-report {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    border: 0 !important;
+    background: white !important;
+    color: #111827 !important;
+  }
+
+  .sae-print-hide {
+    display: none !important;
+  }
+}
