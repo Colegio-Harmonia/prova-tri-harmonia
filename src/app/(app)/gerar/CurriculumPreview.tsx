@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { SEGMENT_LABELS, SEGMENT_GRADES, SEGMENT_SUBJECTS } from '@/config/subjects'
 import { getEnemAreaForSubject } from '@/config/enemAreaMap'
-import type { Segment, CurriculumSelection } from '@/types/exam'
+import type { Segment, CurriculumPlanItem, CurriculumSelection } from '@/types/exam'
 import { GenerationStepper } from '@/features/assessments/components/GenerationStepper'
 
 // Subtarefa 1b (24/07/2026): a geração deixou de ser síncrona — o botão
@@ -114,12 +114,25 @@ export default function CurriculumPreview() {
   const [axisFilter, setAxisFilter] = useState('')
   const [bnccFilter, setBnccFilter] = useState('')
   const [step, setStep] = useState<1 | 2 | 3>(1)
+  const [contentPlan, setContentPlan] = useState<CurriculumPlanItem[]>([])
 
   const singleSubject = selectedSubjects.length === 1 ? selectedSubjects[0] : null
   // Banco ENEM só em disciplina única (a API rejeita batch multi + banco).
   const enemArea = singleSubject && segment === 'ensino-medio' ? getEnemAreaForSubject(singleSubject) : null
   const totalCount = questionCount + bankSelected.size
   const totalValid = totalCount >= 12 && totalCount <= 15
+  const contentPlanTotal = contentPlan.reduce((sum, item) => sum + item.questionCount, 0)
+  const contentPlanValid = !singleSubject || contentPlan.length === 0 || contentPlanTotal === questionCount
+
+  function makeDefaultContentPlan(units: CurriculumSelection['units'], count: number): CurriculumPlanItem[] {
+    if (!units.length) return []
+    return units.map((unit, index) => ({
+      unitRowIndex: unit.rowIndex,
+      questionCount: Math.floor(count / units.length) + (index < count % units.length ? 1 : 0),
+      priority: 'media',
+      visualAid: 'auto',
+    }))
+  }
 
   function resetSelectionDependentState() {
     setPreviews([])
@@ -129,6 +142,7 @@ export default function CurriculumPreview() {
     setBnccFilter('')
     setEnqueued(null)
     setEnqueueError(null)
+    setContentPlan([])
     setStep(1)
   }
 
@@ -264,6 +278,8 @@ export default function CurriculumPreview() {
         }),
       )
       setPreviews(settled)
+      const available = settled.length === 1 ? settled[0].data?.units ?? [] : []
+      setContentPlan(makeDefaultContentPlan(available, questionCount))
       setStep(2)
     } finally {
       setLoading(false)
@@ -281,7 +297,7 @@ export default function CurriculumPreview() {
   }
 
   const blockedSubjects = previews.filter((p) => subjectBlockReason(p) !== null)
-  const canEnqueue = totalValid && previews.length > 0 && blockedSubjects.length === 0
+  const canEnqueue = totalValid && contentPlanValid && previews.length > 0 && blockedSubjects.length === 0
 
   async function handleEnqueue() {
     setEnqueueing(true)
@@ -302,6 +318,7 @@ export default function CurriculumPreview() {
             enemBankQuestionIds: Array.from(bankSelected),
             assessmentKind,
             ...(bimester !== '' ? { bimester } : {}),
+            ...(singleSubject && contentPlan.length ? { contentPlan } : {}),
           },
         }),
       })
@@ -561,6 +578,45 @@ export default function CurriculumPreview() {
         </div>
       )}
 
+      {step === 2 && singleSubject && previews[0]?.data && (
+        <fieldset className="rounded border border-neutral-200 bg-white p-4">
+          <legend className="px-1 text-sm font-medium">Matriz da avaliação</legend>
+          <p className="mb-3 text-xs text-neutral-500">
+            Selecione, no planejamento do bimestre, o que realmente será cobrado. A quantidade por capítulo define a composição da prova; a prioridade orienta substituições e regenerações.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-xs">
+              <thead className="border-b text-neutral-500">
+                <tr><th className="pb-2 pr-3">Capítulo do planejamento</th><th className="pb-2 pr-3">Questões</th><th className="pb-2 pr-3">Prioridade</th><th className="pb-2">Recurso visual</th></tr>
+              </thead>
+              <tbody>
+                {previews[0].data.units.map((unit) => {
+                  const item = contentPlan.find((candidate) => candidate.unitRowIndex === unit.rowIndex)
+                  const enabled = Boolean(item && item.questionCount > 0)
+                  return (
+                    <tr key={unit.rowIndex} className="border-b last:border-0">
+                      <td className="py-3 pr-3 align-top">
+                        <label className="flex cursor-pointer gap-2"><input type="checkbox" checked={enabled} onChange={(event) => setContentPlan((current) => {
+                          const found = current.find((candidate) => candidate.unitRowIndex === unit.rowIndex)
+                          if (event.target.checked) return found ? current.map((candidate) => candidate.unitRowIndex === unit.rowIndex ? { ...candidate, questionCount: Math.max(1, candidate.questionCount) } : candidate) : [...current, { unitRowIndex: unit.rowIndex, questionCount: 1, priority: 'media', visualAid: 'auto' }]
+                          return current.map((candidate) => candidate.unitRowIndex === unit.rowIndex ? { ...candidate, questionCount: 0 } : candidate)
+                        })} /><span><span className="font-medium">{unit.tituloCapitulo || 'Capítulo sem título'}</span>{unit.conteudo && <span className="mt-0.5 block text-neutral-500">{unit.conteudo}</span>}</span></label>
+                      </td>
+                      <td className="py-3 pr-3 align-top"><input aria-label={`Quantidade para ${unit.tituloCapitulo}`} type="number" min={0} max={15} value={item?.questionCount ?? 0} onChange={(event) => setContentPlan((current) => current.map((candidate) => candidate.unitRowIndex === unit.rowIndex ? { ...candidate, questionCount: Math.max(0, Number(event.target.value) || 0) } : candidate))} className="w-16 rounded border border-neutral-300 px-2 py-1" /></td>
+                      <td className="py-3 pr-3 align-top"><select aria-label={`Prioridade para ${unit.tituloCapitulo}`} value={item?.priority ?? 'media'} disabled={!enabled} onChange={(event) => setContentPlan((current) => current.map((candidate) => candidate.unitRowIndex === unit.rowIndex ? { ...candidate, priority: event.target.value as CurriculumPlanItem['priority'] } : candidate))} className="rounded border border-neutral-300 px-2 py-1 disabled:opacity-50"><option value="alta">Alta</option><option value="media">Média</option><option value="baixa">Baixa</option></select></td>
+                      <td className="py-3 align-top"><select aria-label={`Recurso visual para ${unit.tituloCapitulo}`} value={item?.visualAid ?? 'auto'} disabled={!enabled} onChange={(event) => setContentPlan((current) => current.map((candidate) => candidate.unitRowIndex === unit.rowIndex ? { ...candidate, visualAid: event.target.value as CurriculumPlanItem['visualAid'] } : candidate))} className="rounded border border-neutral-300 px-2 py-1 disabled:opacity-50"><option value="auto">Analisar necessidade</option><option value="obrigatorio">Obrigatório</option><option value="sem_imagem">Não usar</option></select></td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className={`mt-3 text-xs ${contentPlanValid ? 'text-harmonia-green' : 'font-medium text-red-600'}`}>
+            Matriz: {contentPlanTotal} de {questionCount} questões de IA definidas.{!contentPlanValid && ' Ajuste as quantidades antes de continuar.'}
+          </p>
+        </fieldset>
+      )}
+
       {step === 2 && (
         <div className="flex flex-col gap-4 rounded border border-border bg-surface p-4 sm:flex-row sm:items-end">
           {enemArea && <div><label className="text-sm font-medium">Questões do banco ENEM</label><input type="number" min={0} max={15} value={bankSelected.size} onChange={(e) => handleBankCountChange(Number(e.target.value))} disabled={bankLoading} className="mt-1 w-24 rounded border border-border bg-surface px-2 py-1.5 text-sm disabled:opacity-60" /><p className="mt-0.5 text-[11px] text-content-muted">{bankLoading ? 'buscando…' : bankQuestions.length ? `de ${bankQuestions.length} encontradas` : 'usa os filtros acima'}</p></div>}
@@ -570,7 +626,7 @@ export default function CurriculumPreview() {
             Total por prova: <span className={totalValid ? 'font-semibold text-content-primary' : 'font-semibold text-status-danger'}>{totalCount}</span> ({questionCount} IA + {bankSelected.size} banco), entre 12 e 15.
             {selectedSubjects.length > 1 && ` A mesma composição vale pras ${selectedSubjects.length} disciplinas.`}
           </p>
-          <div className="flex gap-2"><button onClick={() => setStep(1)} className="min-h-10 rounded border border-border px-4 text-sm font-medium">Voltar</button><button onClick={() => setStep(3)} disabled={!totalValid} className="min-h-10 rounded bg-harmonia-green px-4 text-sm font-medium text-white disabled:opacity-60">Conferir</button></div>
+          <div className="flex gap-2"><button onClick={() => setStep(1)} className="min-h-10 rounded border border-border px-4 text-sm font-medium">Voltar</button><button onClick={() => setStep(3)} disabled={!totalValid || !contentPlanValid} className="min-h-10 rounded bg-harmonia-green px-4 text-sm font-medium text-white disabled:opacity-60">Conferir</button></div>
         </div>
       )}
 

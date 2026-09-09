@@ -1,4 +1,4 @@
-import type { CurriculumSelection, Segment } from '@/types/exam'
+import type { CurriculumPlanItem, CurriculumSelection, Segment } from '@/types/exam'
 import type { ExamGenerationResult, ExamQuestion } from './examSchema'
 import { getSaebApplicability } from '@/config/saebApplicability'
 import { isImageEligibleSubject } from '@/config/imageEligibleSubjects'
@@ -102,7 +102,7 @@ export function correctSingleQuestion(
 export function validateExamResult(
   result: ExamGenerationResult,
   curriculum: CurriculumSelection,
-  params: { questionCount: number; enforcePedagogicalCompleteness?: boolean },
+  params: { questionCount: number; enforcePedagogicalCompleteness?: boolean; contentPlan?: CurriculumPlanItem[] },
 ): ValidationResult {
   const issues: string[] = []
   const warnings: string[] = []
@@ -127,6 +127,15 @@ export function validateExamResult(
       `Proporção 60/40: esperado ${expectedSplit.objectiveCount} objetivas + ${expectedSplit.discursiveCount} descritivas, ` +
         `veio ${actualObjective} + ${actualDiscursive}.`,
     )
+  }
+
+  if (params.contentPlan?.length) {
+    for (const item of params.contentPlan.filter((candidate) => candidate.questionCount > 0)) {
+      const actual = correctedQuestions.filter((question) => question.curriculumUnitRowIndex === item.unitRowIndex).length
+      if (actual !== item.questionCount) {
+        issues.push(`Matriz da avaliação: capítulo ${item.unitRowIndex} deveria ter ${item.questionCount} questão(ões), mas veio com ${actual}.`)
+      }
+    }
   }
 
   if (curriculum.segment === 'anos-finais' && curriculum.gradeYear === 9) {

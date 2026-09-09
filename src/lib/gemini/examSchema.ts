@@ -23,6 +23,9 @@ const pedagogicalClassificationSchema = z.object({
 
 export const examQuestionSchema = z.object({
   number: z.number().int(),
+  // Vínculo opcional com a linha do planejamento escolar. Provas antigas
+  // continuam válidas; novas provas com matriz preenchem este campo.
+  curriculumUnitRowIndex: z.number().int().nullable().optional(),
   // 'ia' = gerada pelo Gemini (padrão). 'enem_bank' = questão real de uma
   // prova passada do ENEM, escolhida manualmente pela coordenação na tela
   // de geração — nunca regenerada, nunca editada pela IA.
@@ -139,6 +142,7 @@ export const GEMINI_RESPONSE_SCHEMA = {
         type: 'object',
         properties: {
           number: { type: 'integer' },
+          curriculumUnitRowIndex: { type: 'integer', nullable: true, description: 'rowIndex do capítulo do planejamento usado pela questão; obrigatório quando houver matriz da avaliação.' },
           type: { type: 'string', enum: ['objetiva', 'descritiva'] },
           weight: { type: 'number', minimum: 0.1, maximum: 100 },
           bloomLevel: { type: 'string', enum: [...BLOOM_LEVELS] },

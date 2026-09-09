@@ -1,6 +1,7 @@
 import { db } from '@/db/client'
 import { generationBatches, generationJobs, type GenerationJobType } from '@/db/schema'
 import { gerarProvaJobPayloadSchema, type GerarAtividadeJobPayload, type GerarProvaJobPayload, type GerarReforcoEnemJobPayload } from './types'
+import type { CurriculumPlanItem } from '@/types/exam'
 
 export type GerarProvaBatchInput = {
   segment: 'anos-iniciais' | 'anos-finais' | 'ensino-medio'
@@ -13,6 +14,7 @@ export type GerarProvaBatchInput = {
     questionCount: number
     enemBankQuestionIds?: number[]
     assessmentKind?: 'padrao' | 'enem'
+    contentPlan?: CurriculumPlanItem[]
   }
 }
 
@@ -31,6 +33,9 @@ export function buildGerarProvaJobPayloads(input: GerarProvaBatchInput): GerarPr
   if (bankIds.length > 0 && subjects.length > 1) {
     throw new BatchValidationError('Questões do banco ENEM só podem ser usadas gerando uma disciplina por vez.')
   }
+  if (input.config.contentPlan?.length && subjects.length > 1) {
+    throw new BatchValidationError('A matriz da avaliação é definida por disciplina; gere uma disciplina por vez para usá-la.')
+  }
 
   return subjects.map((subject) => {
     const parsed = gerarProvaJobPayloadSchema.safeParse({
@@ -43,6 +48,7 @@ export function buildGerarProvaJobPayloads(input: GerarProvaBatchInput): GerarPr
       enemBankQuestionIds: bankIds,
       classLabel: input.classLabel,
       assessmentKind: input.config.assessmentKind,
+      contentPlan: input.config.contentPlan,
     })
     if (!parsed.success) {
       throw new BatchValidationError(parsed.error.issues.map((i) => i.message).join(' '))

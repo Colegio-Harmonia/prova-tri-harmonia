@@ -9,6 +9,13 @@ import { llmAvailable } from '@/lib/gemini/llmClient'
 import { enqueueGerarProvaBatch, BatchValidationError } from '@/lib/queue/enqueue'
 import type { GerarProvaJobPayload } from '@/lib/queue/types'
 
+const curriculumPlanItemSchema = z.object({
+  unitRowIndex: z.number().int().positive(),
+  questionCount: z.number().int().min(0).max(15),
+  priority: z.enum(['alta', 'media', 'baixa']),
+  visualAid: z.enum(['auto', 'obrigatorio', 'sem_imagem']),
+})
+
 // Fila de geração (Subtarefa 1a): POST enfileira um batch (turma/ano + N
 // disciplinas → 1 job por disciplina) e devolve 202 na hora; quem executa
 // é o worker PM2 (scripts/generation-worker.ts). GET alimenta a aba
@@ -25,6 +32,7 @@ const postSchema = z.object({
     questionCount: z.number().int().min(0).max(15),
     enemBankQuestionIds: z.array(z.number().int()).max(15).optional(),
     assessmentKind: z.enum(['padrao', 'enem']).optional(),
+    contentPlan: z.array(curriculumPlanItemSchema).max(60).optional(),
   }),
 })
 

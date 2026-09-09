@@ -70,12 +70,6 @@ const ADEQUACY_OPTIONS: { value: 'adequada' | 'inadequada'; label: string }[] = 
   { value: 'adequada', label: 'Adequada' },
   { value: 'inadequada', label: 'Inadequada' },
 ]
-const DIFFICULTY_OPTIONS: { value: 'facil' | 'adequada' | 'dificil'; label: string }[] = [
-  { value: 'facil', label: 'Fácil' },
-  { value: 'adequada', label: 'Adequada' },
-  { value: 'dificil', label: 'Difícil' },
-]
-
 const STATUS_LABELS: Record<string, string> = {
   rascunho: 'Rascunho',
   atribuido: 'Atribuído',
@@ -206,7 +200,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
 
   async function handleReviewNote(
     questionNumber: number,
-    patch: { adequacy?: 'adequada' | 'inadequada' | null; difficulty?: 'facil' | 'adequada' | 'dificil' | null; comment?: string | null },
+    patch: { adequacy?: 'adequada' | 'inadequada' | null; comment?: string | null },
   ) {
     setSavingReview(questionNumber)
     setActionError((prev) => ({ ...prev, [questionNumber]: '' }))
@@ -679,25 +673,6 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
                             ? opt.value === 'adequada'
                               ? 'bg-harmonia-green text-white'
                               : 'bg-red-600 text-white'
-                            : 'border border-border bg-surface text-content-primary'
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-medium text-neutral-500">Dificuldade:</span>
-                    {DIFFICULTY_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.value}
-                        onClick={() => handleReviewNote(q.number, { difficulty: q.review?.difficulty === opt.value ? null : opt.value })}
-                        disabled={savingReview === q.number}
-                        className={`rounded px-2 py-1 text-xs font-medium disabled:opacity-60 ${
-                          q.review?.difficulty === opt.value
-                            ? opt.value === 'adequada'
-                              ? 'bg-harmonia-green text-white'
-                              : 'bg-amber-600 text-white'
                             : 'border border-border bg-surface text-content-primary'
                         }`}
                       >

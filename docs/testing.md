@@ -201,3 +201,8 @@ A Fase 10 deve auditar os fluxos críticos por teclado, contraste, foco,
 rótulos programáticos e leitor de tela. Toda correção mantém o ciclo branch ->
 Pull Request -> `develop` -> DEV e registra evidência real em produção quando
 for promovida, conforme `docs/git-workflow.md` e `docs/deployment.md`.
+# Matriz de Avaliação Pedagógica — 09/09/2026
+
+- `npm run typecheck`: aprovado.
+- Cobertura unitária adicionada para seleção/soma da matriz e análise de recurso visual em `src/lib/exams/contentPlan.test.ts`.
+- Validação manual pendente de ambiente autenticado: gerar uma prova do 9º ano com capítulo de geometria marcado como obrigatório e confirmar revisão, exportação e leitura do cartão-resposta.

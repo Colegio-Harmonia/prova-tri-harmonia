@@ -23,3 +23,8 @@
 **Fase 11.3 - Contratos de API e permissões:** validar respostas e bloqueios
 por papel em ambiente segregado. A pendência operacional de acessibilidade da
 Fase 10 entra na Subtarefa 11.4; ela não bloqueia a continuidade da Fase 11.
+# Matriz de Avaliação Pedagógica — concluída em 09/09/2026
+
+- Implementada matriz por planejamento/bimestre com quantidade, prioridade e requisito visual por capítulo.
+- Mantida compatibilidade do payload final das provas, exportação e cartões-resposta.
+- Próximo passo operacional: piloto pedagógico com 9º ano, 1º EM e 2º EM antes de ampliar para todas as turmas.

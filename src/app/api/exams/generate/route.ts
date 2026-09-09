@@ -12,6 +12,13 @@ import { aiFailureResponse } from '@/lib/ai/routeFailure'
 import { generateExamCore, ExamGenerationInputError, CurriculumReadError } from '@/lib/exams/generateExamCore'
 import { RequiredQuestionImageError } from '@/lib/images/questionImageService'
 
+const curriculumPlanItemSchema = z.object({
+  unitRowIndex: z.number().int().positive(),
+  questionCount: z.number().int().min(0).max(15),
+  priority: z.enum(['alta', 'media', 'baixa']),
+  visualAid: z.enum(['auto', 'obrigatorio', 'sem_imagem']),
+})
+
 // Geração síncrona (caminho original). A lógica de geração vive em
 // generateExamCore (compartilhada com o worker da fila — Subtarefa 1a);
 // esta rota só cuida de HTTP: auth, validação de body e mapeamento de
@@ -30,6 +37,7 @@ const bodySchema = z
     questionCount: z.number().int().min(0).max(15),
     enemBankQuestionIds: z.array(z.number().int()).max(15).optional().default([]),
     assessmentKind: z.enum(['padrao', 'enem']).optional(),
+    contentPlan: z.array(curriculumPlanItemSchema).max(60).optional(),
   })
   .refine((v) => v.questionCount + v.enemBankQuestionIds.length >= 12 && v.questionCount + v.enemBankQuestionIds.length <= 15, {
     message: 'O total de questões (geradas por IA + banco ENEM) precisa ficar entre 12 e 15.',

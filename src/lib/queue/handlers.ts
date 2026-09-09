@@ -235,6 +235,7 @@ async function executeGerarProva(job: ClaimedJob): Promise<JobExecutionResult> {
       questionCount: payload.questionCount,
       enemBankQuestionIds: payload.enemBankQuestionIds,
       assessmentKind: payload.assessmentKind,
+      contentPlan: payload.contentPlan,
     },
     job.requestedBy,
   )

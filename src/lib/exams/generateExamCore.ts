@@ -13,6 +13,8 @@ import { persistGeneratedQuestionClassifications } from '@/lib/pedagogical/gener
 import { generateValidatedStructuredContent } from '@/lib/gemini/structuredRepair'
 import { isPedagogicalQualityGateEnabled } from '@/lib/pedagogical/generationQualityGate'
 import { validateGeneratedExamPedagogicalFidelity } from '@/lib/pedagogical/generationQualityGateService'
+import { validateCurriculumPlan } from '@/lib/exams/contentPlan'
+import type { CurriculumPlanItem } from '@/types/exam'
 
 // Core da geração de prova, compartilhado entre a rota síncrona
 // (/api/exams/generate) e o worker da fila (job 'gerar_prova') — Subtarefa
@@ -40,6 +42,7 @@ export type GenerateExamCoreParams = {
   examKind?: Extract<ExamKind, 'prova' | 'atividade'>
   bnccCodes?: string[]
   classroomCourseId?: string | null
+  contentPlan?: CurriculumPlanItem[]
 }
 
 // Erros de entrada/recorte curricular (viram 422 na rota, mensagem legível
@@ -102,6 +105,13 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
     throw new ExamGenerationInputError('Nenhuma unidade curricular encontrada para os filtros selecionados.')
   }
 
+  try {
+    const planned = validateCurriculumPlan(curriculum.units, params.contentPlan, params.questionCount)
+    if (params.contentPlan?.length) curriculum = { ...curriculum, units: planned.selectedUnits }
+  } catch (error) {
+    throw new ExamGenerationInputError(error instanceof Error ? error.message : 'Matriz da avaliação inválida.')
+  }
+
   const selectedBnccCodes = [...new Set((params.bnccCodes ?? []).map((code) => code.trim().toUpperCase()).filter(Boolean))]
   const selectedBnccDescriptions = new Map<string, string>()
   if (examKind === 'atividade') {
@@ -129,7 +139,7 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
 
   if (params.questionCount > 0) {
     const qualityGateEnabled = isPedagogicalQualityGateEnabled()
-    const prompt = await buildExamPrompt(curriculum, { questionCount: params.questionCount, mode: examKind === 'atividade' ? 'atividade' : 'prova', selectedBnccCodes })
+    const prompt = await buildExamPrompt(curriculum, { questionCount: params.questionCount, mode: examKind === 'atividade' ? 'atividade' : 'prova', selectedBnccCodes, contentPlan: params.contentPlan })
     const generated = await generateValidatedStructuredContent<ExamGenerationResult, ExamGenerationResult>({
       context: 'exams/generate',
       prompt,
@@ -149,9 +159,9 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
       },
     })
 
-    const examWithImages = await attachImagesToExam(generated.value, qualityGateEnabled
-      ? { requireResolvedImages: true, maxAttemptsPerImage: 2 }
-      : undefined)
+    // Se uma questão declara imagem (por análise automática ou regra
+    // obrigatória da matriz), ela não pode seguir sem o recurso visual.
+    const examWithImages = await attachImagesToExam(generated.value, { requireResolvedImages: true, maxAttemptsPerImage: 2 })
     aiQuestions = examWithImages.questions
     warnings = generated.warnings
     if (generated.repaired) warnings.push(`Resposta da IA validada após reparo (${generated.attempts} tentativa(s)).`)

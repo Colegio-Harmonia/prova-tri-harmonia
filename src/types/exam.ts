@@ -46,6 +46,18 @@ export type CurriculumSelection = {
   unmappedWarnings: string[]
 }
 
+/**
+ * Desenho de prova escolhido pelo professor a partir do planejamento da
+ * escola. Os IDs são rowIndex da planilha: não muda o contrato da prova
+ * final, apenas registra como os itens foram solicitados.
+ */
+export type CurriculumPlanItem = {
+  unitRowIndex: number
+  questionCount: number
+  priority: 'alta' | 'media' | 'baixa'
+  visualAid: 'auto' | 'obrigatorio' | 'sem_imagem'
+}
+
 export type ColumnRoles = {
   tituloCapituloIdx: number | null
   conteudoIdx: number | null

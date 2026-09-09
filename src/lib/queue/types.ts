@@ -1,6 +1,13 @@
 import { z } from 'zod'
 import { ASSESSMENT_KINDS, type GenerationJobStatus } from '@/db/schema'
 
+const curriculumPlanItemSchema = z.object({
+  unitRowIndex: z.number().int().positive(),
+  questionCount: z.number().int().min(0).max(15),
+  priority: z.enum(['alta', 'media', 'baixa']),
+  visualAid: z.enum(['auto', 'obrigatorio', 'sem_imagem']),
+})
+
 // Payload do job 'gerar_prova' — espelha o body da rota síncrona
 // /api/exams/generate (mesmas regras: total de questões entre 12 e 15
 // somando IA + banco ENEM). O worker revalida com este schema antes de
@@ -16,6 +23,7 @@ export const gerarProvaJobPayloadSchema = z
     enemBankQuestionIds: z.array(z.number().int()).max(15).optional().default([]),
     classLabel: z.string().min(1).optional(),
     assessmentKind: z.enum(ASSESSMENT_KINDS).optional().default('padrao'),
+    contentPlan: z.array(curriculumPlanItemSchema).max(60).optional(),
   })
   .refine((v) => v.questionCount + v.enemBankQuestionIds.length >= 12 && v.questionCount + v.enemBankQuestionIds.length <= 15, {
     message: 'O total de questões (geradas por IA + banco ENEM) precisa ficar entre 12 e 15.',

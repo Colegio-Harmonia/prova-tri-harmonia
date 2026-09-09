@@ -1,4 +1,5 @@
-import type { CurriculumSelection, Segment } from '@/types/exam'
+import type { CurriculumPlanItem, CurriculumSelection, Segment } from '@/types/exam'
+import { shouldRequireVisualAid } from '@/lib/exams/contentPlan'
 import { getSaebApplicability } from '@/config/saebApplicability'
 import { getSaebDescriptorsForSubject } from '@/lib/sheets/bnccSaebMap'
 import { ANOS_INICIAIS_BLOOM_DISTRIBUTION } from '@/config/bloomDistribution'
@@ -11,6 +12,7 @@ export type ExamGenerationParams = {
   questionCount: number
   mode?: 'prova' | 'atividade'
   selectedBnccCodes?: string[]
+  contentPlan?: CurriculumPlanItem[]
 }
 
 export type QuestionSplit = { objectiveCount: number; discursiveCount: number }
@@ -186,6 +188,18 @@ export async function buildExamPrompt(curriculum: CurriculumSelection, params: E
   const selectedBnccInstruction = activity && params.selectedBnccCodes?.length
     ? `Esta atividade foi planejada para as habilidades BNCC ${params.selectedBnccCodes.join(', ')}. Use somente essas habilidades nos campos bnccCodes; se uma unidade não trouxer uma delas, não invente código.`
     : null
+  const contentPlanInstruction = params.contentPlan?.length
+    ? `MATRIZ DA AVALIAÇÃO (definida pelo professor, obrigatória):\n${params.contentPlan
+        .filter((item) => item.questionCount > 0)
+        .map((item) => {
+          const unit = curriculum.units.find((candidate) => candidate.rowIndex === item.unitRowIndex)
+          if (!unit) return null
+          const visual = item.visualAid === 'obrigatorio' || (item.visualAid === 'auto' && shouldRequireVisualAid(unit))
+          return `- Capítulo [${unit.rowIndex}] ${unit.tituloCapitulo}: exatamente ${item.questionCount} questão(ões); prioridade ${item.priority}; recurso visual ${visual ? 'OBRIGATÓRIO (needsImage:true e imageQuery preenchido)' : item.visualAid === 'sem_imagem' ? 'NÃO usar (needsImage:false)' : 'avaliar necessidade'}.`
+        })
+        .filter(Boolean)
+        .join('\n')}\nPara TODA questão, preencha curriculumUnitRowIndex com o número entre colchetes do capítulo usado. Respeite exatamente as quantidades por capítulo.`
+    : null
 
   return `Você é um especialista em avaliação pedagógica do Colégio Harmonia, gerando uma ${artifactLabel} para o ${gradeYear}º ano (${segment}), disciplina ${subject}${curriculum.bimester ? `, ${curriculum.bimester}º bimestre` : ''}.
 
@@ -205,6 +219,7 @@ ${selectedBnccInstruction ? `- ${selectedBnccInstruction}\n` : ''}${activity ? '
 - ${buildContextualizationInstruction()}
 - ${buildMathNotationInstruction()}
 - ${imageInstruction}${interpretationInstruction ? `\n- ${interpretationInstruction}` : ''}
+${contentPlanInstruction ? `- ${contentPlanInstruction}\n` : ''}
 
 CONTEÚDO CURRICULAR DISPONÍVEL PARA ESTA PROVA:
 ${unitsBlock}${styleExemplarsBlock ? `\n\n${styleExemplarsBlock}` : ''}
