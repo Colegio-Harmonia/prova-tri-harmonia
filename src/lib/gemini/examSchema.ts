@@ -61,7 +61,7 @@ export const examQuestionSchema = z.object({
     source: z.enum(['novo_saeb', 'classica', 'enem']).nullable().optional(),
     value: z.string().nullable().optional(),
     approximate: z.boolean().optional().default(false),
-  }),
+  }).default({ applicable: false, source: null, value: null, approximate: false }),
   needsImage: z.boolean().optional().default(false),
   imageQuery: z.string().nullable().optional(),
   // Filled after generation by questionImageService — never by Gemini

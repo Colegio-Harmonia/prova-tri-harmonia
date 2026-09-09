@@ -170,9 +170,10 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
             if (question.type !== slot.type) issues.push(`Questão ${slot.number}: esperado tipo "${slot.type}", veio "${question.type}".`)
             if (visualAid === 'obrigatorio' && (!question.needsImage || !question.imageQuery)) issues.push(`Questão ${slot.number}: recurso visual obrigatório não foi solicitado.`)
             if (qualityGateEnabled && !question.pedagogicalClassification.difficulty) issues.push(`Questão ${slot.number}: difficulty é obrigatória para geração com o gate pedagógico ativo.`)
-            if (issues.length || !qualityGateEnabled) return { value: question, issues, warnings: questionWarnings }
-            const fidelity = await validateGeneratedQuestionPedagogicalFidelity(unitCurriculum, question)
-            return { value: fidelity.question, issues: fidelity.issues, warnings: [...questionWarnings, ...fidelity.warnings] }
+            // A revisão cega pedagógica é feita uma única vez sobre a prova
+            // montada. Executá-la por item multiplica chamadas e torna uma
+            // divergência local capaz de abortar toda a prova.
+            return { value: question, issues, warnings: questionWarnings }
           },
         })
         warnings.push(...generated.warnings)
