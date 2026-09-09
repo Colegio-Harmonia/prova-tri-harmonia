@@ -237,6 +237,7 @@ export type SingleQuestionOpts = {
   reviewFeedback?: string | null
   /** Escolha explícita do revisor para a substituição da questão. */
   replacement?: ReplacementRequest
+  visualAid?: 'auto' | 'obrigatorio' | 'sem_imagem'
 }
 
 /**
@@ -267,6 +268,11 @@ export async function buildSingleQuestionPrompt(curriculum: CurriculumSelection,
   const replacementLine = opts.replacement
     ? `\n- ${replacementStrategyInstruction(opts.replacement)}`
     : ''
+  const visualAidLine = opts.visualAid === 'obrigatorio'
+    ? '\n- RECURSO VISUAL OBRIGATÓRIO: retorne needsImage:true e imageQuery específica. A questão deve depender pedagogicamente de figura, gráfico, tabela, mapa ou diagrama.'
+    : opts.visualAid === 'sem_imagem'
+      ? '\n- RECURSO VISUAL NÃO PERMITIDO: retorne needsImage:false e imageQuery:null.'
+      : ''
 
   return `Você é um especialista em avaliação pedagógica do Colégio Harmonia, gerando UMA ÚNICA questão de SUBSTITUIÇÃO pra uma prova já existente do ${gradeYear}º ano (${segment}), disciplina ${subject}${curriculum.bimester ? `, ${curriculum.bimester}º bimestre` : ''}.
 
@@ -283,7 +289,7 @@ REGRAS FIXAS (não negociáveis):
 - IMPORTANTE sobre a ordem de exibição: supportText SEMPRE aparece ANTES do statement na tela/documento final. Se o statement referenciar o supportText, use "acima"/"no texto" — NUNCA "abaixo". Prefira formas sem direção ("leia o texto e responda", "com base no texto").
 - ${buildContextualizationInstruction()}
 - ${buildMathNotationInstruction()}
-- ${imageInstruction}${interpretationInstruction ? `\n- ${interpretationInstruction}` : ''}
+- ${imageInstruction}${interpretationInstruction ? `\n- ${interpretationInstruction}` : ''}${visualAidLine}
 
 CONTEÚDO CURRICULAR DISPONÍVEL:
 ${unitsBlock}${styleExemplarsBlock ? `\n\n${styleExemplarsBlock}` : ''}

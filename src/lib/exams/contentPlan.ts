@@ -29,3 +29,23 @@ export function validateCurriculumPlan(
 
   return { selectedUnits: plan.filter((item) => item.questionCount > 0).map((item) => byRowIndex.get(item.unitRowIndex)!), plan }
 }
+
+export type PlannedQuestionSlot = {
+  number: number
+  unitRowIndex: number
+  type: 'objetiva' | 'descritiva'
+  visualAid: CurriculumPlanItem['visualAid']
+}
+
+/** A composição é decidida pelo sistema, nunca deixada para a IA. */
+export function buildPlannedQuestionSlots(plan: CurriculumPlanItem[], total: number): PlannedQuestionSlot[] {
+  const slots = plan.flatMap((item) => Array.from({ length: item.questionCount }, () => ({ unitRowIndex: item.unitRowIndex, visualAid: item.visualAid })))
+  if (slots.length !== total) throw new Error('A matriz não corresponde ao total de questões.')
+  const objectiveCount = Math.floor(total * 0.6)
+  return slots.map((slot, index) => ({
+    ...slot,
+    number: index + 1,
+    // Espalha os tipos pela prova e preserva exatamente a proporção 60/40.
+    type: Math.floor(((index + 1) * objectiveCount) / total) > Math.floor((index * objectiveCount) / total) ? 'objetiva' : 'descritiva',
+  }))
+}

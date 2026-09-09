@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { shouldRequireVisualAid, validateCurriculumPlan } from './contentPlan'
+import { buildPlannedQuestionSlots, shouldRequireVisualAid, validateCurriculumPlan } from './contentPlan'
 import type { CurriculumSelection } from '@/types/exam'
 
 const units: CurriculumSelection['units'] = [
@@ -20,5 +20,17 @@ describe('contentPlan', () => {
   it('identifica conteúdos cuja interpretação visual é parte do item', () => {
     expect(shouldRequireVisualAid(units[0])).toBe(true)
     expect(shouldRequireVisualAid(units[1])).toBe(true)
+  })
+
+  it('define a estrutura final sem depender da contagem retornada pela IA', () => {
+    const slots = buildPlannedQuestionSlots([
+      { unitRowIndex: 0, questionCount: 6, priority: 'alta', visualAid: 'auto' },
+      { unitRowIndex: 5, questionCount: 6, priority: 'media', visualAid: 'obrigatorio' },
+    ], 12)
+    expect(slots).toHaveLength(12)
+    expect(slots.filter((slot) => slot.type === 'objetiva')).toHaveLength(7)
+    expect(slots.filter((slot) => slot.type === 'descritiva')).toHaveLength(5)
+    expect(slots.filter((slot) => slot.unitRowIndex === 0)).toHaveLength(6)
+    expect(slots.filter((slot) => slot.visualAid === 'obrigatorio')).toHaveLength(6)
   })
 })

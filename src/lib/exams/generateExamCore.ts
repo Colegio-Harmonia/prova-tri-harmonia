@@ -4,16 +4,16 @@ import { scoringMethodForQuestions } from '@/lib/scoring/scoringPolicy'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
 import { TabResolutionError } from '@/lib/sheets/tabResolver'
 import { SheetNotConfiguredError } from '@/config/gradeSheets'
-import { buildExamPrompt } from '@/lib/gemini/promptBuilder'
-import { examGenerationResultSchema, GEMINI_RESPONSE_SCHEMA, type ExamGenerationResult, type ExamQuestion } from '@/lib/gemini/examSchema'
-import { validateExamResult } from '@/lib/gemini/examValidator'
+import { buildExamPrompt, buildSingleQuestionPrompt } from '@/lib/gemini/promptBuilder'
+import { examGenerationResultSchema, GEMINI_RESPONSE_SCHEMA, singleQuestionResultSchema, SINGLE_QUESTION_RESPONSE_SCHEMA, type ExamGenerationResult, type ExamQuestion, type SingleQuestionResult } from '@/lib/gemini/examSchema'
+import { correctSingleQuestion, validateExamResult } from '@/lib/gemini/examValidator'
 import { attachImagesToExam } from '@/lib/images/questionImageService'
 import { buildBankExamQuestions } from '@/lib/gemini/enemBankMerge'
 import { persistGeneratedQuestionClassifications } from '@/lib/pedagogical/generatedQuestionClassificationService'
 import { generateValidatedStructuredContent } from '@/lib/gemini/structuredRepair'
 import { isPedagogicalQualityGateEnabled } from '@/lib/pedagogical/generationQualityGate'
-import { validateGeneratedExamPedagogicalFidelity } from '@/lib/pedagogical/generationQualityGateService'
-import { validateCurriculumPlan } from '@/lib/exams/contentPlan'
+import { validateGeneratedExamPedagogicalFidelity, validateGeneratedQuestionPedagogicalFidelity } from '@/lib/pedagogical/generationQualityGateService'
+import { buildPlannedQuestionSlots, shouldRequireVisualAid, validateCurriculumPlan } from '@/lib/exams/contentPlan'
 import type { CurriculumPlanItem } from '@/types/exam'
 
 // Core da geração de prova, compartilhado entre a rota síncrona
@@ -139,8 +139,46 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
 
   if (params.questionCount > 0) {
     const qualityGateEnabled = isPedagogicalQualityGateEnabled()
-    const prompt = await buildExamPrompt(curriculum, { questionCount: params.questionCount, mode: examKind === 'atividade' ? 'atividade' : 'prova', selectedBnccCodes, contentPlan: params.contentPlan })
-    const generated = await generateValidatedStructuredContent<ExamGenerationResult, ExamGenerationResult>({
+    if (params.contentPlan?.length) {
+      const slots = buildPlannedQuestionSlots(params.contentPlan, params.questionCount)
+      const byRowIndex = new Map(curriculum.units.map((unit) => [unit.rowIndex, unit]))
+      const generatedQuestions: ExamQuestion[] = []
+      for (const slot of slots) {
+        const unit = byRowIndex.get(slot.unitRowIndex)
+        if (!unit) throw new ExamGenerationInputError(`Capítulo ${slot.unitRowIndex} não foi encontrado no planejamento.`)
+        const unitCurriculum = { ...curriculum, units: [unit] }
+        const visualAid = slot.visualAid === 'auto' && shouldRequireVisualAid(unit) ? 'obrigatorio' : slot.visualAid
+        const prompt = await buildSingleQuestionPrompt(unitCurriculum, {
+          type: slot.type,
+          questionNumber: slot.number,
+          avoidStatement: 'Não há questão anterior; crie um item original.',
+          visualAid,
+        })
+        const generated = await generateValidatedStructuredContent<SingleQuestionResult, ExamQuestion>({
+          context: `exams/generate-question-${slot.number}`,
+          prompt,
+          responseSchema: SINGLE_QUESTION_RESPONSE_SCHEMA,
+          zodSchema: singleQuestionResultSchema,
+          validate: async (parsedQuestion) => {
+            const candidate = { ...parsedQuestion.question, number: slot.number, curriculumUnitRowIndex: slot.unitRowIndex }
+            const { question, issues, warnings: questionWarnings } = correctSingleQuestion(candidate, unitCurriculum)
+            if (question.type !== slot.type) issues.push(`Questão ${slot.number}: esperado tipo "${slot.type}", veio "${question.type}".`)
+            if (visualAid === 'obrigatorio' && (!question.needsImage || !question.imageQuery)) issues.push(`Questão ${slot.number}: recurso visual obrigatório não foi solicitado.`)
+            if (qualityGateEnabled && !question.pedagogicalClassification.difficulty) issues.push(`Questão ${slot.number}: difficulty é obrigatória para geração com o gate pedagógico ativo.`)
+            if (issues.length || !qualityGateEnabled) return { value: question, issues, warnings: questionWarnings }
+            const fidelity = await validateGeneratedQuestionPedagogicalFidelity(unitCurriculum, question)
+            return { value: fidelity.question, issues: fidelity.issues, warnings: [...questionWarnings, ...fidelity.warnings] }
+          },
+        })
+        generatedQuestions.push(generated.value)
+        warnings.push(...generated.warnings)
+        if (generated.repaired) warnings.push(`Questão ${slot.number} validada após reparo (${generated.attempts} tentativa(s)).`)
+      }
+      aiQuestions = generatedQuestions
+      alternativesCount = params.segment === 'anos-iniciais' ? 4 : 5
+    } else {
+      const prompt = await buildExamPrompt(curriculum, { questionCount: params.questionCount, mode: examKind === 'atividade' ? 'atividade' : 'prova', selectedBnccCodes })
+      const generated = await generateValidatedStructuredContent<ExamGenerationResult, ExamGenerationResult>({
       context: 'exams/generate',
       prompt,
       responseSchema: GEMINI_RESPONSE_SCHEMA,
@@ -157,15 +195,16 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
           warnings: [...validation.warnings, ...fidelity.warnings],
         }
       },
-    })
-
+      })
+      aiQuestions = generated.value.questions
+      warnings = generated.warnings
+      if (generated.repaired) warnings.push(`Resposta da IA validada após reparo (${generated.attempts} tentativa(s)).`)
+      alternativesCount = generated.value.metadata.alternativesCount
+    }
     // Se uma questão declara imagem (por análise automática ou regra
     // obrigatória da matriz), ela não pode seguir sem o recurso visual.
-    const examWithImages = await attachImagesToExam(generated.value, { requireResolvedImages: true, maxAttemptsPerImage: 2 })
+    const examWithImages = await attachImagesToExam({ metadata: { segment: params.segment, gradeYear: params.gradeYear, subject: params.subject, bimester: params.bimester ?? null, questionCount: aiQuestions.length, objectiveCount: aiQuestions.filter((q) => q.type === 'objetiva').length, discursiveCount: aiQuestions.filter((q) => q.type === 'descritiva').length, alternativesCount }, questions: aiQuestions }, { requireResolvedImages: true, maxAttemptsPerImage: 2 })
     aiQuestions = examWithImages.questions
-    warnings = generated.warnings
-    if (generated.repaired) warnings.push(`Resposta da IA validada após reparo (${generated.attempts} tentativa(s)).`)
-    alternativesCount = examWithImages.metadata.alternativesCount
   }
 
   const bankQuestions = await buildBankExamQuestions(params.enemBankQuestionIds, aiQuestions.length + 1)
