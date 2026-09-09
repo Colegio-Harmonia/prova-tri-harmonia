@@ -19,3 +19,6 @@ Quando há matriz, a composição não é delegada a uma única resposta de IA. 
 ## Compatibilidade
 
 O recurso é aditivo e opcional. Provas e jobs antigos, sem `contentPlan`, continuam usando o recorte curricular anterior. A estrutura dos itens, alternativas, gabarito, numeração, exportação e leitura por scanner não é modificada.
+## Montagem e validação global
+
+Quando a prova usa matriz pedagógica, a geração não confia apenas na qualidade isolada de cada item. O motor cria candidatos extras nos pontos de maior risco de repetição, monta a melhor combinação por similaridade textual, valida as quotas determinísticas da matriz e faz uma auditoria editorial da prova completa. A auditoria apenas aponta números de questões problemáticas; o motor regenera somente esses itens uma vez, usando um contexto compacto dos demais. Imagens são criadas depois da seleção final. Esse processo não modifica o formato persistido de `questions`, gabarito, documentos ou scanner.

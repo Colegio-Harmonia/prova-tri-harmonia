@@ -13,7 +13,9 @@ import { persistGeneratedQuestionClassifications } from '@/lib/pedagogical/gener
 import { generateValidatedStructuredContent } from '@/lib/gemini/structuredRepair'
 import { isPedagogicalQualityGateEnabled } from '@/lib/pedagogical/generationQualityGate'
 import { validateGeneratedExamPedagogicalFidelity, validateGeneratedQuestionPedagogicalFidelity } from '@/lib/pedagogical/generationQualityGateService'
-import { buildPlannedQuestionSlots, shouldRequireVisualAid, validateCurriculumPlan } from '@/lib/exams/contentPlan'
+import { buildPlannedQuestionSlots, shouldRequireVisualAid, validateCurriculumPlan, type PlannedQuestionSlot } from '@/lib/exams/contentPlan'
+import { assembleBestExamCandidates, compactQuestionContext, validateExamAssembly, type QuestionCandidate } from '@/lib/exams/examQualityAssembly'
+import { auditFinalExamQuality } from '@/lib/exams/examQualityAudit'
 import type { CurriculumPlanItem } from '@/types/exam'
 
 // Core da geração de prova, compartilhado entre a rota síncrona
@@ -142,8 +144,10 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
     if (params.contentPlan?.length) {
       const slots = buildPlannedQuestionSlots(params.contentPlan, params.questionCount)
       const byRowIndex = new Map(curriculum.units.map((unit) => [unit.rowIndex, unit]))
-      const generatedQuestions: ExamQuestion[] = []
-      for (const slot of slots) {
+      const candidateCountByUnit = new Map<number, number>()
+      for (const slot of slots) candidateCountByUnit.set(slot.unitRowIndex, (candidateCountByUnit.get(slot.unitRowIndex) ?? 0) + 1)
+
+      const generateCandidate = async (slot: PlannedQuestionSlot, candidateNumber: number, avoidStatement: string, avoidContext?: string): Promise<QuestionCandidate> => {
         const unit = byRowIndex.get(slot.unitRowIndex)
         if (!unit) throw new ExamGenerationInputError(`Capítulo ${slot.unitRowIndex} não foi encontrado no planejamento.`)
         const unitCurriculum = { ...curriculum, units: [unit] }
@@ -151,7 +155,8 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
         const prompt = await buildSingleQuestionPrompt(unitCurriculum, {
           type: slot.type,
           questionNumber: slot.number,
-          avoidStatement: 'Não há questão anterior; crie um item original.',
+          avoidStatement,
+          avoidContext,
           visualAid,
         })
         const generated = await generateValidatedStructuredContent<SingleQuestionResult, ExamQuestion>({
@@ -170,11 +175,47 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
             return { value: fidelity.question, issues: fidelity.issues, warnings: [...questionWarnings, ...fidelity.warnings] }
           },
         })
-        generatedQuestions.push(generated.value)
         warnings.push(...generated.warnings)
-        if (generated.repaired) warnings.push(`Questão ${slot.number} validada após reparo (${generated.attempts} tentativa(s)).`)
+        if (generated.repaired) warnings.push(`Questão ${slot.number}, candidata ${candidateNumber}, validada após reparo (${generated.attempts} tentativa(s)).`)
+        return { slotNumber: slot.number, candidateNumber, question: generated.value }
       }
-      aiQuestions = generatedQuestions
+
+      const candidates: QuestionCandidate[] = []
+      for (const slot of slots) {
+        const first = await generateCandidate(slot, 1, 'Não há questão anterior; crie um item original.')
+        candidates.push(first)
+        // Uma candidata extra só onde o risco de repetição é maior: capítulo
+        // repetido ou item que depende de recurso visual. Assim não dobra o
+        // custo de provas com capítulos naturalmente diversos.
+        const needsAlternative = (candidateCountByUnit.get(slot.unitRowIndex) ?? 0) > 1 || slot.visualAid === 'obrigatorio'
+        if (needsAlternative) {
+          candidates.push(await generateCandidate(slot, 2, first.question.statement, compactQuestionContext(candidates.map((candidate) => candidate.question), slot.number)))
+        }
+      }
+
+      aiQuestions = assembleBestExamCandidates(slots, candidates)
+      const firstAudit = await auditFinalExamQuality(curriculum, slots, aiQuestions)
+      warnings.push(...firstAudit.warnings)
+      const blockingIssues = [...validateExamAssembly(aiQuestions, slots), ...firstAudit.issues].filter((issue) => issue.severity === 'bloqueante')
+
+      if (blockingIssues.length) {
+        const repairNumbers = [...new Set(blockingIssues.flatMap((issue) => issue.questionNumbers))]
+        warnings.push(`Revisão editorial global encontrou ${repairNumbers.length} questão(ões) para reparo pontual.`)
+        for (const number of repairNumbers) {
+          const slot = slots.find((candidate) => candidate.number === number)
+          const current = aiQuestions.find((candidate) => candidate.number === number)
+          if (!slot || !current) continue
+          const replacement = await generateCandidate(slot, 3, current.statement, compactQuestionContext(aiQuestions, number))
+          aiQuestions = aiQuestions.map((question) => question.number === number ? replacement.question : question)
+        }
+        const finalDeterministicIssues = validateExamAssembly(aiQuestions, slots).filter((issue) => issue.severity === 'bloqueante')
+        const finalAudit = await auditFinalExamQuality(curriculum, slots, aiQuestions)
+        warnings.push(...finalAudit.warnings)
+        const unresolved = [...finalDeterministicIssues, ...finalAudit.issues.filter((issue) => issue.severity === 'bloqueante')]
+        if (unresolved.length) {
+          throw new ExamGenerationInputError(`A revisão final da prova identificou problemas que não puderam ser corrigidos automaticamente: ${unresolved.map((issue) => `Q${issue.questionNumbers.join('/Q')}: ${issue.reason}`).join(' | ')}`)
+        }
+      }
       alternativesCount = params.segment === 'anos-iniciais' ? 4 : 5
     } else {
       const prompt = await buildExamPrompt(curriculum, { questionCount: params.questionCount, mode: examKind === 'atividade' ? 'atividade' : 'prova', selectedBnccCodes })

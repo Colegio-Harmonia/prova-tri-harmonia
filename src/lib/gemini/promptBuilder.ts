@@ -238,6 +238,8 @@ export type SingleQuestionOpts = {
   /** Escolha explícita do revisor para a substituição da questão. */
   replacement?: ReplacementRequest
   visualAid?: 'auto' | 'obrigatorio' | 'sem_imagem'
+  /** Resumo compacto dos outros itens já selecionados para evitar repetição. */
+  avoidContext?: string
 }
 
 /**
@@ -273,6 +275,9 @@ export async function buildSingleQuestionPrompt(curriculum: CurriculumSelection,
     : opts.visualAid === 'sem_imagem'
       ? '\n- RECURSO VISUAL NÃO PERMITIDO: retorne needsImage:false e imageQuery:null.'
       : ''
+  const avoidContextLine = opts.avoidContext
+    ? `\n- ITENS JÁ SELECIONADOS NA MESMA PROVA: não repita habilidade, contexto, números, situação-problema ou estratégia de resolução destes itens:\n${opts.avoidContext}`
+    : ''
 
   return `Você é um especialista em avaliação pedagógica do Colégio Harmonia, gerando UMA ÚNICA questão de SUBSTITUIÇÃO pra uma prova já existente do ${gradeYear}º ano (${segment}), disciplina ${subject}${curriculum.bimester ? `, ${curriculum.bimester}º bimestre` : ''}.
 
@@ -282,7 +287,7 @@ REGRAS FIXAS (não negociáveis):
 - Para capítulos marcados "NENHUMA" habilidade BNCC abaixo: gere a questão normalmente a partir do capítulo/conteúdo, mas retorne bnccCodes:[] e bnccStatus:"nao_mapeado" — NUNCA invente um código BNCC.
 - bnccSummary: uma frase curta resumindo a habilidade testada pela questão.
 - ${saebInstruction}
-- QUESTÃO ORIGINAL A SUBSTITUIR: "${opts.avoidStatement}". Nunca a copie nem a reformule superficialmente.${replacementLine}${feedbackLine}
+- QUESTÃO ORIGINAL A SUBSTITUIR: "${opts.avoidStatement}". Nunca a copie nem a reformule superficialmente.${replacementLine}${feedbackLine}${avoidContextLine}
 - Não inclua gabarito nem indicação de BNCC no texto do enunciado (statement).
 - ${buildPedagogicalClassificationInstruction()}
 - supportText é só texto — nunca descreva uma imagem dentro dele, use needsImage/imageQuery. Quando houver tabela, use Markdown completo e válido: cabeçalho com pipes, divisor com ao menos três hifens por coluna e uma ou mais linhas de dados.
