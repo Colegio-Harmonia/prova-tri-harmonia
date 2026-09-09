@@ -13,7 +13,8 @@ import { generateExamCore, ExamGenerationInputError, CurriculumReadError } from 
 import { RequiredQuestionImageError } from '@/lib/images/questionImageService'
 
 const curriculumPlanItemSchema = z.object({
-  unitRowIndex: z.number().int().positive(),
+  // rowIndex vem da planilha e pode começar em 0.
+  unitRowIndex: z.number().int().min(0),
   questionCount: z.number().int().min(0).max(15),
   priority: z.enum(['alta', 'media', 'baixa']),
   visualAid: z.enum(['auto', 'obrigatorio', 'sem_imagem']),

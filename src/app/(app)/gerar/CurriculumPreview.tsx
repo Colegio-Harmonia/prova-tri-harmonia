@@ -299,6 +299,15 @@ export default function CurriculumPreview() {
   const blockedSubjects = previews.filter((p) => subjectBlockReason(p) !== null)
   const canEnqueue = totalValid && contentPlanValid && previews.length > 0 && blockedSubjects.length === 0
 
+  function formatEnqueueValidationError(data: { error?: string; issues?: Array<{ path?: Array<string | number>; message?: string }> }) {
+    const issue = data.issues?.[0]
+    if (!issue) return data.error ?? 'Erro ao adicionar à fila.'
+    const path = issue.path?.join('.') ?? ''
+    if (path.includes('contentPlan')) return `Revise a matriz da avaliação: ${issue.message ?? 'há um capítulo inválido.'}`
+    if (path.includes('questionCount') || path.includes('enemBankQuestionIds')) return `Revise a quantidade de questões: ${issue.message ?? 'a composição é inválida.'}`
+    return `${data.error ?? 'Parâmetros inválidos'}: ${issue.message ?? 'revise os dados informados.'}`
+  }
+
   async function handleEnqueue() {
     setEnqueueing(true)
     setEnqueueError(null)
@@ -324,7 +333,7 @@ export default function CurriculumPreview() {
       })
       const data = await res.json()
       if (!res.ok) {
-        setEnqueueError(data.error ?? 'Erro ao adicionar à fila.')
+        setEnqueueError(formatEnqueueValidationError(data))
         return
       }
       setEnqueued({ batchId: data.batchId, jobs: data.jobs })
