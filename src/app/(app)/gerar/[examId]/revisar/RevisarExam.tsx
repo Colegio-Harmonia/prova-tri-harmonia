@@ -706,11 +706,14 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
                   )}
                   <div className="flex gap-2">
                     {q.image.approved ? (
-                      <button onClick={() => handleToggleImage(q.number, false)} disabled={!reviewEditable} className="rounded border border-border bg-surface px-2 py-1 font-medium disabled:opacity-60">Cancelar aceitação da imagem</button>
+                      <>
+                        <button onClick={() => handleToggleImage(q.number, false)} disabled={!reviewEditable} className="rounded border border-border bg-surface px-2 py-1 font-medium disabled:opacity-60">Cancelar aceitação da imagem</button>
+                        <button onClick={() => handleRequestImage(q.number, true)} disabled={!reviewEditable || requestingImage === q.number} className="rounded border border-border bg-surface px-2 py-1 font-medium disabled:opacity-60">{requestingImage === q.number ? 'Gerando nova imagem…' : 'Recusar e gerar nova'}</button>
+                      </>
                     ) : (
                       <>
                         <button onClick={() => handleToggleImage(q.number, true)} disabled={!reviewEditable} className="rounded bg-harmonia-green px-2 py-1 font-medium text-white disabled:opacity-60">Aceitar imagem</button>
-                        <button onClick={() => handleToggleImage(q.number, false)} disabled={!reviewEditable} className="rounded border border-border bg-surface px-2 py-1 font-medium disabled:opacity-60">Rejeitar imagem</button>
+                        <button onClick={() => handleRequestImage(q.number, true)} disabled={!reviewEditable || requestingImage === q.number} className="rounded border border-border bg-surface px-2 py-1 font-medium disabled:opacity-60">{requestingImage === q.number ? 'Gerando nova imagem…' : 'Recusar e gerar nova'}</button>
                       </>
                     )}
                     <button onClick={() => handleRemoveImage(q.number)} disabled={!reviewEditable} className="rounded border border-red-300 bg-surface px-2 py-1 font-medium text-red-700 disabled:opacity-60">Remover imagem</button>
