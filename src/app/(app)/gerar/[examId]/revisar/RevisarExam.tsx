@@ -92,6 +92,15 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_COLORS[status] ?? 'bg-neutral-100'}`}>{STATUS_LABELS[status] ?? status}</span>
 }
 
+function reviewPendingItems(payload: ExamGenerationResult): string[] {
+  return payload.questions.flatMap((question) => {
+    const pending: string[] = []
+    if (question.review?.adequacy !== 'adequada') pending.push(`Questão ${question.number} não aceita`)
+    if (question.image && !question.image.approved) pending.push(`Imagem da questão ${question.number} não aprovada`)
+    return pending
+  })
+}
+
 export default function RevisarExam({ examId, currentUserRole, currentUserId }: { examId: number; currentUserRole: string; currentUserId: number | null }) {
   const [exam, setExam] = useState<ExamRow | null>(null)
   const [loading, setLoading] = useState(true)
@@ -108,6 +117,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   const [actionError, setActionError] = useState<Record<number, string>>({})
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [expandedImageQuestion, setExpandedImageQuestion] = useState<number | null>(null)
+  const [reviewBlocker, setReviewBlocker] = useState<string[] | null>(null)
 
   const isCoordenacao = isStaffSuperuser(currentUserRole)
   const canAssignFormalExam = Boolean(
@@ -307,6 +317,13 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
 
 
   async function handleTransition(action: Action, assignedTo?: number, printWindow?: Window | null) {
+    if (action === 'concluir_revisao' && exam) {
+      const pending = reviewPendingItems(exam.generationPayload)
+      if (pending.length) {
+        setReviewBlocker(pending)
+        return
+      }
+    }
     setTransitioning(true)
     setError(null)
     let postTransitionError: string | null = null
@@ -366,10 +383,21 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   const canActOnOwnStep = isCoordenacao || isAssignee || isOwnActivity
   const canFinalizeActivity = canFinalizeOwnActivity(exam, currentUserId, isCoordenacao)
   const canMarkActivityApplied = canMarkOwnActivityApplied(exam, currentUserId, isCoordenacao)
+  const pendingReviewItems = reviewPendingItems(payload)
 
   return (
     <div className="space-y-6">
       <div aria-live="polite" className="sr-only">{actionMessage}</div>
+      {reviewBlocker && (
+        <div role="dialog" aria-modal="true" aria-labelledby="review-blocker-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setReviewBlocker(null)}>
+          <div className="w-full max-w-md rounded-xl bg-surface p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <h2 id="review-blocker-title" className="text-base font-semibold">Ainda não é possível concluir a revisão</h2>
+            <p className="mt-1 text-sm text-neutral-600">Faltam decisões humanas nos itens abaixo:</p>
+            <ul className="mt-3 space-y-1 text-sm">{reviewBlocker.map((item) => <li key={item}>• {item}</li>)}</ul>
+            <button onClick={() => setReviewBlocker(null)} className="mt-4 rounded bg-harmonia-green px-3 py-2 text-sm font-medium text-white">Continuar revisando</button>
+          </div>
+        </div>
+      )}
       <div className="space-y-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -571,6 +599,13 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
         </div>
       )}
 
+      {reviewEditable && pendingReviewItems.length > 0 && (
+        <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          <h2 className="font-semibold">Pendências de aprovação humana</h2>
+          <ul className="mt-2 flex flex-wrap gap-2">{pendingReviewItems.map((item) => <li key={item} className="rounded-full bg-white px-2.5 py-1 text-xs ring-1 ring-amber-200">{item}</li>)}</ul>
+        </section>
+      )}
+
       <div className="space-y-6">
         {payload.questions.map((q) => (
           <article key={q.number} className="relative overflow-hidden rounded-xl border border-border bg-surface p-5 text-sm text-content-primary shadow-sm">
@@ -616,20 +651,14 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
                     </a>
                   )}
                   <div className="flex gap-2">
-                    <button
-                      onClick={() => handleToggleImage(q.number, true)}
-                      disabled={!reviewEditable}
-                      className={`rounded px-2 py-1 font-medium ${q.image.approved ? 'bg-harmonia-green text-white' : 'border border-neutral-300'}`}
-                    >
-                      Aprovar
-                    </button>
-                    <button
-                      onClick={() => handleToggleImage(q.number, false)}
-                      disabled={!reviewEditable}
-                      className={`rounded px-2 py-1 font-medium ${!q.image.approved ? 'bg-neutral-700 text-white' : 'border border-neutral-300'}`}
-                    >
-                      Rejeitar
-                    </button>
+                    {q.image.approved ? (
+                      <button onClick={() => handleToggleImage(q.number, false)} disabled={!reviewEditable} className="rounded border border-border bg-surface px-2 py-1 font-medium disabled:opacity-60">Cancelar aceitação da imagem</button>
+                    ) : (
+                      <>
+                        <button onClick={() => handleToggleImage(q.number, true)} disabled={!reviewEditable} className="rounded bg-harmonia-green px-2 py-1 font-medium text-white disabled:opacity-60">Aceitar imagem</button>
+                        <button onClick={() => handleToggleImage(q.number, false)} disabled={!reviewEditable} className="rounded border border-border bg-surface px-2 py-1 font-medium disabled:opacity-60">Rejeitar imagem</button>
+                      </>
+                    )}
                   </div>
                 </div>
                 </div>
@@ -666,16 +695,15 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
               <div className="mt-4 space-y-3 rounded border border-border bg-surface-subtle p-3">
                 <p className="text-xs text-neutral-600">Decida esta questão para concluir a revisão.</p>
                 <div className="flex flex-wrap gap-2">
-                  <button onClick={() => handleAcceptQuestion(q.number)} disabled={savingReview === q.number} className="rounded bg-harmonia-green px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">
-                    {savingReview === q.number ? 'Salvando…' : 'Aceitar questão'}
-                  </button>
-                  {q.source !== 'enem_bank' && <button onClick={() => handleRegenerateQuestion(q.number)} disabled={regeneratingQuestion === q.number} className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">
-                    {regeneratingQuestion === q.number ? 'Gerando…' : 'Recusar e gerar nova'}
-                  </button>}
-                  {q.source !== 'enem_bank' && <button onClick={() => handleRegenerateQuestion(q.number)} disabled={regeneratingQuestion === q.number} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary disabled:opacity-60">Regenerar</button>}
-                  <button onClick={() => handleRequestImage(q.number)} disabled={requestingImage === q.number} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary disabled:opacity-60">
-                    {requestingImage === q.number ? 'Gerando imagem…' : q.image ? 'Gerar outra imagem' : 'Gerar imagem'}
-                  </button>
+                  {q.review?.adequacy === 'adequada' ? (
+                    <button onClick={() => handleReviewNote(q.number, { adequacy: null })} disabled={savingReview === q.number} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary disabled:opacity-60">Cancelar aceitação da questão</button>
+                  ) : (
+                    <>
+                      <button onClick={() => handleAcceptQuestion(q.number)} disabled={savingReview === q.number} className="rounded bg-harmonia-green px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">{savingReview === q.number ? 'Salvando…' : 'Aceitar questão'}</button>
+                      {q.source !== 'enem_bank' && <button onClick={() => handleRegenerateQuestion(q.number)} disabled={regeneratingQuestion === q.number} className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">{regeneratingQuestion === q.number ? 'Gerando…' : 'Recusar e gerar nova'}</button>}
+                      <button onClick={() => handleRequestImage(q.number)} disabled={requestingImage === q.number} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary disabled:opacity-60">{requestingImage === q.number ? 'Gerando imagem…' : q.image ? 'Gerar outra imagem' : 'Gerar imagem'}</button>
+                    </>
+                  )}
                 </div>
                 {imageConfirmation === q.number && <div className="flex flex-wrap items-center gap-2 rounded bg-amber-50 p-2 text-xs text-amber-900"><span>Esta questão não precisa de imagem. Gerar mesmo assim?</span><button onClick={() => handleRequestImage(q.number, true)} className="rounded bg-amber-700 px-2 py-1 font-medium text-white">Gerar mesmo assim</button><button onClick={() => setImageConfirmation(null)} className="underline">Cancelar</button></div>}
 

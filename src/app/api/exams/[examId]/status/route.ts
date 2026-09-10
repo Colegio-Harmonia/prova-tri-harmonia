@@ -106,9 +106,14 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
 
   if (action === 'concluir_revisao') {
     const payload = exam.generationPayload as ExamGenerationResult
-    const pendingReview = payload.questions.filter((question) => question.review?.adequacy !== 'adequada').map((question) => question.number)
+    const pendingReview = payload.questions.flatMap((question) => {
+      const pending: string[] = []
+      if (question.review?.adequacy !== 'adequada') pending.push(`Questão ${question.number}`)
+      if (question.image && !question.image.approved) pending.push(`Imagem da questão ${question.number}`)
+      return pending
+    })
     if (pendingReview.length) {
-      return NextResponse.json({ error: `Revise todas as questões antes de concluir. Pendentes: ${pendingReview.map((number) => `Q${number}`).join(', ')}.` }, { status: 409 })
+      return NextResponse.json({ error: `Revise todos os itens antes de concluir. Pendentes: ${pendingReview.join(', ')}.` }, { status: 409 })
     }
     await db
       .update(generatedExams)
