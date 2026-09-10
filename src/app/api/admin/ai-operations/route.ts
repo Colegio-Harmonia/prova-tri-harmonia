@@ -31,7 +31,12 @@ export async function GET(req: NextRequest) {
   const profileById = new Map(profiles.map((profile) => [profile.id, profile]))
   const resolved = operations.map((operation) => {
     if (operation.estimatedCostMicrousd !== null) return { ...operation, effectiveCostMicrousd: operation.estimatedCostMicrousd, costStatus: 'recorded' as const }
-    const profile = operation.modelProfileId ? profileById.get(operation.modelProfileId) : undefined
+    // Operações históricas podem não ter profileId (antes da telemetria
+    // completa). Reutilizamos somente um perfil com mesmo provedor/modelo;
+    // se não houver tarifa inequívoca, mantemos como não precificada.
+    const profile = operation.modelProfileId
+      ? profileById.get(operation.modelProfileId)
+      : profiles.find((candidate) => candidate.provider === operation.provider && candidate.model === operation.model)
     if (!profile) return { ...operation, effectiveCostMicrousd: null, costStatus: 'unpriced' as const }
     const value = profile.imageCostMicrousd ?? (profile.inputCostMicrousdPerMillion !== null && profile.outputCostMicrousdPerMillion !== null
       ? Math.round(((operation.promptTokens ?? 0) * profile.inputCostMicrousdPerMillion + (operation.completionTokens ?? 0) * profile.outputCostMicrousdPerMillion) / 1_000_000)
