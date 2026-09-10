@@ -49,12 +49,17 @@ function examCards(questions: ExamQuestion[]): string {
 export async function auditFinalExamQuality(curriculum: CurriculumSelection, slots: PlannedQuestionSlot[], questions: ExamQuestion[]): Promise<{ issues: ExamQualityIssue[]; warnings: string[] }> {
   const validNumbers = new Set(questions.map((question) => question.number))
   const matrix = slots.map((slot) => `Q${slot.number}: capítulo ${slot.unitRowIndex}, ${slot.type}, visual=${slot.visualAid}`).join('; ')
+  const subjectRules = curriculum.subject.trim().toLowerCase() === 'inglês' || curriculum.subject.trim().toLowerCase() === 'ingles'
+    ? `REGRAS OBRIGATÓRIAS DE INGLÊS NOS ANOS INICIAIS: o item deve medir vocabulário/compreensão/uso de inglês do capítulo, com situação infantil e vocabulário compatível com ${curriculum.gradeYear}º ano. Marque bloqueante se a resposta puder ser obtida principalmente por matemática/conhecimento de mundo em português, se introduzir contexto adulto ou vocabulário não preparado pelo capítulo, ou se uma resposta aberta exigir produção livre sem banco de palavras, modelo ou critério objetivo.`
+    : 'Verifique adequação da linguagem, da situação e da habilidade ao ano escolar informado.'
   const prompt = `Você é o revisor editorial FINAL de uma avaliação escolar. Não crie, reescreva nem sugira textos de questões. Analise a prova como conjunto e responda somente com o JSON do schema.
 
 CONTEXTO: ${curriculum.subject}, ${curriculum.gradeYear}º ano, ${curriculum.segment}${curriculum.bimester ? `, ${curriculum.bimester}º bimestre` : ''}.
 DESENHO IMUTÁVEL: ${matrix}
 
 MARQUE "bloqueante" SOMENTE quando houver evidência clara de: repetição substancial de habilidade/contexto/resolução, incoerência entre questões, ambiguidade que impede responder, quebra do capítulo/tipo definido, ou recurso visual necessário ausente. Use "alerta" para pontos de revisão humana não impeditivos. Não invente falhas. Se não houver bloqueio, approved:true e issues pode conter apenas alertas.
+
+${subjectRules}
 
 PROVA:
 ${examCards(questions)}`

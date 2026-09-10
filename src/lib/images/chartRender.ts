@@ -51,6 +51,11 @@ ${JSON.stringify(CHART_EXTRACTION_SCHEMA)}`
  * null aqui sem custo.
  */
 export async function tryRenderChart(query: string, questionContext: string): Promise<Buffer | null> {
+  // Não chame uma IA para "extrair dados" de uma ilustração de vocabulário
+  // (ex.: cachorro, mapa ou figura geométrica). O filtro lexical elimina a
+  // chamada cara e torna o caminho visual coerente antes da classificação.
+  const chartIntent = /\b(gr[aá]fico|chart|tabela|table|dados|data|barras|colunas|linha|pie|pizza|pesquisa|percentual|porcentagem)\b/i
+  if (!chartIntent.test(query)) return null
   let extraction: ChartExtraction | null
   try {
     extraction = await extractChartData(query, questionContext)

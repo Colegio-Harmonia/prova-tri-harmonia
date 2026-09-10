@@ -199,10 +199,16 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
         return { slotNumber: slot.number, candidateNumber, question: generated.value }
       }
 
+      // Itens são independentes nesta etapa. Limitar a concorrência reduz o
+      // tempo total sem saturar o provedor nem perder a auditoria global que
+      // acontece depois sobre a prova inteira.
+      const concurrency = Math.min(3, slots.length)
       const candidates: QuestionCandidate[] = []
-      for (const slot of slots) {
-        const first = await generateCandidate(slot, 1, 'Não há questão anterior; crie um item original.')
-        candidates.push(first)
+      for (let offset = 0; offset < slots.length; offset += concurrency) {
+        const group = await Promise.all(slots.slice(offset, offset + concurrency).map((slot) =>
+          generateCandidate(slot, 1, 'Não há questão anterior; crie um item original.'),
+        ))
+        candidates.push(...group)
       }
 
       aiQuestions = assembleBestExamCandidates(slots, candidates)

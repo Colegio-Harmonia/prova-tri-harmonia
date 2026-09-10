@@ -26,7 +26,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
   const authResult = await authorizeExamAccess(examId, session.user.email)
   if ('error' in authResult) return authResult.error
   const { exam } = authResult
-  const editableStatuses = ['rascunho', 'atribuido', 'em_andamento', 'revisao_concluida']
+  // `em_revisao` é o estado formal atual. Sem ele, a interface mostrava a
+  // aprovação de imagem mas o servidor a recusava, travando a prova.
+  const editableStatuses = ['rascunho', 'atribuido', 'em_andamento', 'revisao_concluida', 'em_revisao']
   if (!editableStatuses.includes(exam.status)) {
     return NextResponse.json({ error: 'Só é possível alterar imagens antes da prova ser aprovada.' }, { status: 409 })
   }

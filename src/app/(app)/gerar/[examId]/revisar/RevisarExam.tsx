@@ -381,7 +381,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
 
   const payload = exam.generationPayload
   const reviewEditable =
-    exam.status === 'rascunho' || exam.status === 'atribuido' || exam.status === 'em_andamento' || exam.status === 'revisao_concluida'
+    exam.status === 'rascunho' || exam.status === 'atribuido' || exam.status === 'em_andamento' || exam.status === 'revisao_concluida' || exam.status === 'em_revisao'
   const isAssignee = exam.assignedTo != null && exam.assignedTo === currentUserId
   const isOwnActivity = exam.examKind !== 'prova' && exam.createdBy === currentUserId
   const canActOnOwnStep = isCoordenacao || isAssignee || isOwnActivity
@@ -415,6 +415,18 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
             {exam.assigneeName && ` · ${exam.examKind === 'prova' ? 'atribuída a' : 'responsável'} ${exam.assigneeName}`}
           </p>
         </div>
+
+        {exam.examKind === 'prova' && exam.status === 'em_revisao' && (
+          <section className={`rounded-xl border p-4 ${pendingReviewItems.length ? 'border-amber-200 bg-amber-50' : 'border-harmonia-green/30 bg-harmonia-green/5'}`}>
+            <h2 className="text-sm font-semibold">Aprovação da prova</h2>
+            <p className="mt-1 text-sm text-neutral-700">
+              {pendingReviewItems.length
+                ? `Faltam ${pendingReviewItems.length} decisão(ões) humana(s). A aprovação definitiva só será liberada quando todos os itens abaixo estiverem aceitos ou substituídos.`
+                : 'Todas as questões e imagens necessárias foram aprovadas. A prova está pronta para aprovação definitiva.'}
+            </p>
+            {pendingReviewItems.length > 0 && <ul className="mt-2 list-inside list-disc text-sm text-amber-900">{pendingReviewItems.map((item) => <li key={item}>{item}</li>)}</ul>}
+          </section>
+        )}
 
         <div className="flex flex-wrap items-center gap-2">
           {exam.status === 'rascunho' && (
