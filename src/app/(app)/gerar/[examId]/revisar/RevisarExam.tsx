@@ -108,6 +108,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   const [actionError, setActionError] = useState<Record<number, string>>({})
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [expandedImageQuestion, setExpandedImageQuestion] = useState<number | null>(null)
+  const [activeReviewIndex, setActiveReviewIndex] = useState(0)
 
   const isCoordenacao = isStaffSuperuser(currentUserRole)
   const canAssignFormalExam = Boolean(
@@ -208,6 +209,28 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
       await load()
     } catch {
       setActionError((prev) => ({ ...prev, [questionNumber]: 'Falha de rede ao salvar revisão.' }))
+    } finally {
+      setSavingReview(null)
+    }
+  }
+
+  async function handleAcceptQuestion(questionNumber: number, totalQuestions: number) {
+    setSavingReview(questionNumber)
+    setActionError((prev) => ({ ...prev, [questionNumber]: '' }))
+    try {
+      const res = await fetch(`/api/exams/${examId}/review-note`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ questionNumber, adequacy: 'adequada' }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setActionError((prev) => ({ ...prev, [questionNumber]: data.error ?? 'Erro ao aceitar questão.' }))
+        return
+      }
+      setActiveReviewIndex((index) => Math.min(index + 1, totalQuestions - 1))
+      await load()
+    } catch {
+      setActionError((prev) => ({ ...prev, [questionNumber]: 'Falha de rede ao aceitar questão.' }))
     } finally {
       setSavingReview(null)
     }
@@ -323,6 +346,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   const canActOnOwnStep = isCoordenacao || isAssignee || isOwnActivity
   const canFinalizeActivity = canFinalizeOwnActivity(exam, currentUserId, isCoordenacao)
   const canMarkActivityApplied = canMarkOwnActivityApplied(exam, currentUserId, isCoordenacao)
+  const activeQuestion = payload.questions[Math.min(activeReviewIndex, Math.max(0, payload.questions.length - 1))]
 
   return (
     <div className="space-y-6">
@@ -529,7 +553,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
       )}
 
       <div className="space-y-3">
-        {payload.questions.map((q) => (
+        {payload.questions.filter((q) => !reviewEditable || q.number === activeQuestion?.number).map((q) => (
           <div key={q.number} className="rounded border border-border bg-surface p-4 text-sm text-content-primary">
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <span className="rounded bg-surface-subtle px-2 py-0.5 text-content-secondary">Nº {q.number}</span>
@@ -618,9 +642,9 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
 
             {reviewEditable && (
               <div className="mt-4 space-y-3 rounded border border-border bg-surface-subtle p-3">
-                <p className="text-xs text-neutral-600">Decida esta questão antes de concluir a revisão.</p>
+                <p className="text-xs text-neutral-600">Questão {Math.min(activeReviewIndex + 1, payload.questions.length)} de {payload.questions.length}. Aceite ou gere uma nova antes de avançar.</p>
                 <div className="flex flex-wrap gap-2">
-                  <button onClick={() => handleReviewNote(q.number, { adequacy: 'adequada' })} disabled={savingReview === q.number} className="rounded bg-harmonia-green px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">
+                  <button onClick={() => handleAcceptQuestion(q.number, payload.questions.length)} disabled={savingReview === q.number} className="rounded bg-harmonia-green px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">
                     {savingReview === q.number ? 'Salvando…' : 'Aceitar questão'}
                   </button>
                   {q.source !== 'enem_bank' && <button onClick={() => handleRegenerateQuestion(q.number)} disabled={regeneratingQuestion === q.number} className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">
