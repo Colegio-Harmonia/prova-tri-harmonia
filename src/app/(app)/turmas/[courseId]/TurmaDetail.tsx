@@ -3,273 +3,92 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { signIn } from 'next-auth/react'
-import type { CorrectionAnswer } from '@/types/correction'
-import { totalGrade } from '@/lib/corrections/totalGrade'
 
 type Course = { id: string; name: string; section: string | null; room: string | null; alternateLink: string }
-type Exam = {
-  id: number
-  subject: string
-  gradeYear: number
-  bimester: number | null
-  status: string
-  classroomCourseId: string | null
-}
-type Correction = { status: 'pendente' | 'revisado'; classroomStudentId: string | null; answers: CorrectionAnswer[] }
-type LaunchResult = { granted: number; skippedPending: number; skippedNoRoster: number; errors: Array<{ studentName: string; message: string }> }
+type Exam = { id: number; subject: string; gradeYear: number; bimester: number | null; status: string; createdAt: string }
+type Student = { classroomStudentId: string; name: string; email: string | null; photoUrl: string | null; corrected: number; averageGrade: number | null }
+type Data = { course: Course; exams: Exam[]; students: Student[]; performance: { studentCount: number; correctedStudents: number; averageGrade: number | null } }
+type ErrorState = { kind: 'google_not_connected' | 'reauth_required' | 'other'; message: string }
 
-const STATUS_LABELS: Record<string, string> = { aplicado: 'Aplicado', corrigido: 'Corrigido' }
+const STATUS_LABELS: Record<string, string> = {
+  rascunho: 'Em preparação', em_revisao: 'Aguardando aprovação', aprovada: 'Aprovada', impressa: 'Impressa', aplicado: 'Aplicada', corrigido: 'Corrigida',
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value))
+}
+
+function Initials({ name }: { name: string }) {
+  const initials = name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()
+  return <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-harmonia-green/10 text-xs font-semibold text-harmonia-green">{initials || '?'}</span>
+}
 
 export default function TurmaDetail({ courseId }: { courseId: string }) {
-  const [course, setCourse] = useState<Course | null>(null)
-  const [exams, setExams] = useState<Exam[] | null>(null)
-  const [selectedExamId, setSelectedExamId] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [googleErrorKind, setGoogleErrorKind] = useState<'google_not_connected' | 'reauth_required' | null>(null)
-
-  const [importing, setImporting] = useState(false)
-  const [importResult, setImportResult] = useState<{ examId: number; imported: number } | null>(null)
-
-  const [summary, setSummary] = useState<{ eligible: number; pending: number; noRoster: number } | null>(null)
-  const [showLaunchConfirm, setShowLaunchConfirm] = useState(false)
-  const [launching, setLaunching] = useState(false)
-  const [launchResult, setLaunchResult] = useState<LaunchResult | null>(null)
-
-  async function loadAll() {
-    try {
-      const [coursesRes, examsRes] = await Promise.all([
-        fetch('/api/classroom/courses').then((r) => r.json()),
-        fetch('/api/exams?examKind=prova').then((r) => r.json()),
-      ])
-      if (coursesRes.error) {
-        if (coursesRes.error === 'google_not_connected' || coursesRes.error === 'reauth_required') setGoogleErrorKind(coursesRes.error)
-        else setError(coursesRes.message ?? 'Erro ao carregar turma.')
-        return
-      }
-      const found = (coursesRes.courses as Course[]).find((c) => c.id === courseId)
-      setCourse(found ?? null)
-
-      if (examsRes.error) throw new Error(examsRes.error)
-      const candidates = (examsRes.exams as Exam[]).filter(
-        (e) => ['aplicado', 'corrigido'].includes(e.status) && (e.classroomCourseId === null || e.classroomCourseId === courseId),
-      )
-      setExams(candidates)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao carregar turma.')
-    }
-  }
+  const [data, setData] = useState<Data | null>(null)
+  const [error, setError] = useState<ErrorState | null>(null)
 
   useEffect(() => {
-    loadAll()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false
+    fetch(`/api/turmas/${courseId}`)
+      .then(async (response) => {
+        const body = await response.json()
+        if (cancelled) return
+        if (!response.ok) {
+          const kind = body.error === 'google_not_connected' || body.error === 'reauth_required' ? body.error : 'other'
+          setError({ kind, message: body.message ?? body.error ?? 'Não foi possível carregar a turma.' })
+          return
+        }
+        setData(body)
+      })
+      .catch(() => !cancelled && setError({ kind: 'other', message: 'Não foi possível carregar a turma.' }))
+    return () => { cancelled = true }
   }, [courseId])
 
-  useEffect(() => {
-    setImportResult(null)
-    setLaunchResult(null)
-    setShowLaunchConfirm(false)
-    setSummary(null)
-    if (!selectedExamId) return
-
-    fetch(`/api/exams/${selectedExamId}/corrections`)
-      .then((r) => r.json())
-      .then((body) => {
-        if (body.error) return
-        const corrections = body.corrections as Correction[]
-        const eligible = corrections.filter((c) => c.status === 'revisado' && c.classroomStudentId && totalGrade(c.answers) !== null).length
-        const pending = corrections.filter((c) => c.status !== 'revisado').length
-        const noRoster = corrections.filter((c) => c.status === 'revisado' && !c.classroomStudentId).length
-        setSummary({ eligible, pending, noRoster })
-      })
-      .catch(() => {})
-  }, [selectedExamId])
-
-  async function importForExam() {
-    if (!selectedExamId) return
-    setImporting(true)
-    setError(null)
-    setImportResult(null)
-    try {
-      const exam = exams?.find((e) => String(e.id) === selectedExamId)
-      if (exam && exam.classroomCourseId !== courseId) {
-        const linkRes = await fetch(`/api/exams/${selectedExamId}/link-course`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ classroomCourseId: courseId }),
-        })
-        const linkBody = await linkRes.json()
-        if (!linkRes.ok) throw new Error(linkBody.error ?? 'Erro ao vincular turma.')
-      }
-
-      const res = await fetch(`/api/exams/${selectedExamId}/corrections/import`, { method: 'POST' })
-      const body = await res.json()
-      if (!res.ok) {
-        if (body.error === 'google_not_connected' || body.error === 'reauth_required') setGoogleErrorKind(body.error)
-        throw new Error(body.message ?? body.error ?? 'Erro ao importar alunos.')
-      }
-      setImportResult({ examId: Number(selectedExamId), imported: body.imported })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao importar alunos.')
-    } finally {
-      setImporting(false)
-    }
-  }
-
-  async function launchGrades() {
-    if (!selectedExamId) return
-    setLaunching(true)
-    setError(null)
-    try {
-      const res = await fetch(`/api/exams/${selectedExamId}/return-grades`, { method: 'POST' })
-      const body = await res.json()
-      if (!res.ok) {
-        if (body.error === 'google_not_connected' || body.error === 'reauth_required') setGoogleErrorKind(body.error)
-        throw new Error(body.message ?? body.error ?? 'Erro ao lançar notas.')
-      }
-      setLaunchResult(body)
-      setShowLaunchConfirm(false)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao lançar notas.')
-    } finally {
-      setLaunching(false)
-    }
-  }
-
-  if (googleErrorKind) {
-    return (
-      <div className="rounded border border-amber-200 bg-amber-50 p-6 text-center text-sm text-amber-800">
-        <p>{googleErrorKind === 'reauth_required' ? 'Sua conexão com o Google expirou.' : 'Conecte sua conta Google.'}</p>
-        <button
-          type="button"
-          onClick={() => signIn('google', { callbackUrl: `/turmas/${courseId}` })}
-          className="mt-4 rounded bg-harmonia-green px-4 py-2 text-sm font-medium text-white"
-        >
-          {googleErrorKind === 'reauth_required' ? 'Entrar novamente com Google' : 'Conectar minha conta Google'}
-        </button>
-      </div>
-    )
-  }
-
-  if (!exams) return <p className="text-sm text-neutral-500">Carregando…</p>
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <Link href="/turmas" className="text-sm text-neutral-500 underline">← Minhas Turmas</Link>
-        <h1 className="mt-2 text-lg font-semibold">{course?.name ?? 'Turma'}</h1>
-        {course?.section && <p className="text-sm text-neutral-500">{course.section}</p>}
-        {course && (
-          <a href={course.alternateLink} target="_blank" rel="noopener noreferrer" className="text-sm text-harmonia-green underline">
-            Abrir no Google Classroom ↗
-          </a>
-        )}
-      </div>
-
-      {error && <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-
-      {exams.length === 0 ? (
-        <p className="text-sm text-neutral-500">Nenhuma prova aplicada dessa turma ainda.</p>
-      ) : (
-        <>
-          <div className="rounded border border-neutral-200 bg-white p-4">
-            <label className="text-sm font-medium">Prova</label>
-            <select
-              value={selectedExamId}
-              onChange={(e) => setSelectedExamId(e.target.value)}
-              className="mt-1 w-full rounded border border-neutral-300 px-2 py-2 text-sm"
-            >
-              <option value="">Selecione a prova…</option>
-              {exams.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.subject} — {e.gradeYear}º ano{e.bimester ? ` — ${e.bimester}º bim.` : ''} ({STATUS_LABELS[e.status] ?? e.status})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="rounded border border-neutral-200 bg-white p-4">
-              <p className="font-medium text-neutral-900">Importar alunos</p>
-              <p className="mt-1 text-xs text-neutral-500">Traz o roster da turma pra dentro da correção dessa prova.</p>
-              <button
-                type="button"
-                onClick={importForExam}
-                disabled={importing || !selectedExamId}
-                className="mt-3 w-full rounded bg-harmonia-green px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
-              >
-                {importing ? 'Importando…' : 'Importar alunos'}
-              </button>
-              {importResult && (
-                <p className="mt-2 text-xs text-harmonia-green">
-                  {importResult.imported} aluno(s) importado(s).{' '}
-                  <Link href={`/gerar/${importResult.examId}/corrigir`} className="underline">Ir pra correção →</Link>
-                </p>
-              )}
-            </div>
-
-            <div className="rounded border border-neutral-200 bg-white p-4">
-              <p className="font-medium text-neutral-900">Lançar notas no Classroom</p>
-              <p className="mt-1 text-xs text-neutral-500">Cria a atividade (se ainda não existir) e devolve a nota de quem já está &quot;Revisado&quot;.</p>
-
-              {selectedExamId && summary && (
-                <p className="mt-2 text-xs text-neutral-500">
-                  {summary.eligible} pronto(s) pra lançar
-                  {summary.pending > 0 && ` · ${summary.pending} ainda pendente(s) (serão pulados)`}
-                  {summary.noRoster > 0 && ` · ${summary.noRoster} revisado(s) sem vínculo com o roster`}
-                </p>
-              )}
-
-              {!showLaunchConfirm ? (
-                <button
-                  type="button"
-                  onClick={() => setShowLaunchConfirm(true)}
-                  disabled={!selectedExamId || !summary || summary.eligible === 0}
-                  className="mt-3 w-full rounded bg-harmonia-green px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
-                >
-                  Lançar notas no Classroom
-                </button>
-              ) : (
-                <div className="mt-3 space-y-2 rounded border border-amber-200 bg-amber-50 p-3">
-                  <p className="text-xs text-amber-800">
-                    Isso vai tornar {summary?.eligible} nota(s) visível(is) pros alunos no Classroom agora. Confirma?
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={launchGrades}
-                      disabled={launching}
-                      className="rounded bg-harmonia-green px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
-                    >
-                      {launching ? 'Lançando…' : 'Confirmar lançamento'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowLaunchConfirm(false)}
-                      disabled={launching}
-                      className="rounded border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {launchResult && (
-                <div className="mt-2 text-xs">
-                  <p className="text-harmonia-green">{launchResult.granted} nota(s) lançada(s) com sucesso.</p>
-                  {launchResult.errors.length > 0 && (
-                    <ul className="mt-1 list-disc pl-4 text-red-600">
-                      {launchResult.errors.map((e, i) => (
-                        <li key={i}>{e.studentName}: {e.message}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </>
-      )}
+  if (error) {
+    const needsGoogle = error.kind === 'google_not_connected' || error.kind === 'reauth_required'
+    return <div className="rounded-lg border border-amber-200 bg-amber-50 p-6 text-center text-sm text-amber-900">
+      <p>{error.message}</p>
+      {needsGoogle && <button type="button" onClick={() => signIn('google', { callbackUrl: `/turmas/${courseId}` })} className="mt-4 rounded-md bg-harmonia-green px-4 py-2 font-medium text-white">{error.kind === 'reauth_required' ? 'Entrar novamente com Google' : 'Conectar minha conta Google'}</button>}
+      {!needsGoogle && <Link href="/turmas" className="mt-4 inline-block text-harmonia-green underline">Voltar para turmas</Link>}
     </div>
-  )
+  }
+  if (!data) return <p className="text-sm text-content-secondary">Carregando turma…</p>
+
+  const { course, exams, students, performance } = data
+  return <div className="space-y-7">
+    <div>
+      <Link href="/turmas" className="text-sm text-content-secondary underline">← Turmas</Link>
+      <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
+        <div><h1 className="text-xl font-semibold text-content-primary">{course.name}</h1>{course.section && <p className="mt-1 text-sm text-content-secondary">{course.section}</p>}</div>
+        <a href={course.alternateLink} target="_blank" rel="noopener noreferrer" className="rounded-md border border-border px-3 py-2 text-sm font-medium text-content-primary hover:bg-surface-subtle">Abrir no Classroom ↗</a>
+      </div>
+    </div>
+
+    <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="rounded-xl border border-border bg-surface p-4"><p className="text-sm text-content-secondary">Provas vinculadas</p><p className="mt-1 text-2xl font-semibold text-content-primary">{exams.length}</p></div>
+      <div className="rounded-xl border border-border bg-surface p-4"><p className="text-sm text-content-secondary">Alunos no Classroom</p><p className="mt-1 text-2xl font-semibold text-content-primary">{performance.studentCount}</p></div>
+      <div className="rounded-xl border border-border bg-surface p-4"><p className="text-sm text-content-secondary">Média da turma</p><p className="mt-1 text-2xl font-semibold text-content-primary">{performance.averageGrade === null ? '—' : performance.averageGrade.toFixed(1)}</p><p className="text-xs text-content-muted">{performance.correctedStudents} aluno(s) com correção</p></div>
+    </section>
+
+    <section className="rounded-xl border border-border bg-surface">
+      <div className="border-b border-border px-5 py-4"><h2 className="font-semibold text-content-primary">Provas da turma</h2><p className="mt-1 text-sm text-content-secondary">Da mais recente para a mais antiga.</p></div>
+      <ul className="divide-y divide-border">
+        {exams.map((exam) => <li key={exam.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+          <div><p className="font-medium text-content-primary">{exam.subject} · {exam.gradeYear}º ano{exam.bimester ? ` · ${exam.bimester}º bimestre` : ''}</p><p className="mt-1 text-xs text-content-muted">Criada em {formatDate(exam.createdAt)}</p></div>
+          <div className="flex items-center gap-3"><span className="rounded-full bg-surface-subtle px-2.5 py-1 text-xs font-medium text-content-secondary">{STATUS_LABELS[exam.status] ?? exam.status}</span><Link href={`/gerar/${exam.id}/revisar`} className="text-sm font-medium text-harmonia-green hover:underline">Abrir prova →</Link></div>
+        </li>)}
+      </ul>
+    </section>
+
+    <section className="rounded-xl border border-border bg-surface">
+      <div className="border-b border-border px-5 py-4"><h2 className="font-semibold text-content-primary">Integrantes e desempenho</h2><p className="mt-1 text-sm text-content-secondary">Fotos e lista atualizadas pelo Google Classroom. A média considera somente provas já corrigidas.</p></div>
+      {students.length === 0 ? <p className="px-5 py-6 text-sm text-content-secondary">Nenhum aluno matriculado nesta turma no Classroom.</p> : <ul className="divide-y divide-border">
+        {students.map((student) => <li key={student.classroomStudentId} className="flex items-center gap-3 px-5 py-3">
+          {student.photoUrl ? <img src={student.photoUrl} alt="" referrerPolicy="no-referrer" className="h-10 w-10 shrink-0 rounded-full bg-surface-subtle object-cover" onError={(event) => { event.currentTarget.style.display = 'none' }} /> : <Initials name={student.name} />}
+          <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-content-primary">{student.name}</p>{student.email && <p className="truncate text-xs text-content-muted">{student.email}</p>}</div>
+          <div className="text-right"><p className="text-sm font-semibold text-content-primary">{student.averageGrade === null ? '—' : student.averageGrade.toFixed(1)}</p><p className="text-xs text-content-muted">{student.corrected} corrigida{student.corrected === 1 ? '' : 's'}</p></div>
+        </li>)}
+      </ul>}
+    </section>
+  </div>
 }

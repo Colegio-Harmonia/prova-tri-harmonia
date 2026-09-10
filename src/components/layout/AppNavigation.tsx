@@ -39,7 +39,7 @@ const primaryItems: NavigationItem[] = [
   { href: '/reforco', label: 'Reforço ENEM', icon: Target },
   { href: '/atividades', label: 'Atividades', icon: FileText },
   { href: '/status', label: 'Provas', icon: ClipboardList },
-  { href: '/turmas', label: 'Minhas turmas', icon: UsersRound },
+  { href: '/turmas', label: 'Turmas', icon: UsersRound },
   { href: '/desempenho', label: 'Desempenho', icon: BarChart3 },
 ]
 

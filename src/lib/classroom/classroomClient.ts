@@ -116,12 +116,13 @@ export type ClassroomStudent = {
   classroomStudentId: string
   name: string
   email: string | null
+  photoUrl: string | null
 }
 
 type StudentsListResponse = {
   students?: Array<{
     userId: string
-    profile?: { name?: { fullName?: string }; emailAddress?: string }
+    profile?: { name?: { fullName?: string }; emailAddress?: string; photoUrl?: string }
   }>
   nextPageToken?: string
 }
@@ -145,6 +146,7 @@ export async function listStudentsInCourse(accessToken: string, courseId: string
         classroomStudentId: s.userId,
         name: s.profile?.name?.fullName ?? '(sem nome)',
         email: s.profile?.emailAddress ?? null,
+        photoUrl: s.profile?.photoUrl ?? null,
       })
     }
     pageToken = data.nextPageToken
