@@ -16,11 +16,13 @@ export const IMAGE_ALTERNATIVE_PLACEHOLDER = '[alternativa apresentada como imag
 // string, mas questões importadas do ENEM violam isso). Coalescemos para ''
 // aqui, num ponto só, em vez de espalhar guardas por cada chamador.
 function matchLatexSegments(text: string) {
-  return [...text.matchAll(/\$([^$]+)\$/g)]
+  // Não confundir moeda brasileira ("R$ 30,00") com $...$ de LaTeX.
+  // Um delimitador matemático não pode vir logo depois de uma letra/dígito.
+  return [...text.matchAll(/(?<![\p{L}\p{N}])\$([^$]+)\$/gu)]
 }
 
 export function hasLatexSegments(text: string | null | undefined): boolean {
-  return /\$[^$]+\$/.test(text ?? '')
+  return /(?<![\p{L}\p{N}])\$[^$]+\$/u.test(text ?? '')
 }
 
 export function splitLatexSegments(text: string | null | undefined): TextSegment[] {
@@ -40,7 +42,7 @@ export function splitLatexSegments(text: string | null | undefined): TextSegment
 
 /** Fallback pra contextos só-texto (gabarito) — tira os $...$ sem tentar tipografar. */
 export function stripLatexDelimiters(text: string | null | undefined): string {
-  return (text ?? '').replace(/\$([^$]+)\$/g, '$1')
+  return (text ?? '').replace(/(?<![\p{L}\p{N}])\$([^$]+)\$/gu, '$1')
 }
 
 const CODECOGS_BASE = 'https://latex.codecogs.com'

@@ -32,6 +32,25 @@ function MathText({ text }: { text: string | null | undefined }) {
   )
 }
 
+// A geração pode usar Markdown para dados de apoio. O documento final já
+// transforma tabelas em imagem; aqui renderizamos uma tabela HTML para que
+// a aprovação humana nunca precise interpretar caracteres "|" crus.
+function SupportText({ text }: { text: string }) {
+  const lines = text.split('\n')
+  const dividerIndex = lines.findIndex((line, index) => index > 0 && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line))
+  if (dividerIndex <= 0) return <p className="mt-2 text-content-secondary"><MathText text={text} /></p>
+  const header = lines[dividerIndex - 1].split('|').map((cell) => cell.trim()).filter(Boolean)
+  const rows = lines.slice(dividerIndex + 1).filter((line) => line.includes('|')).map((line) => line.split('|').map((cell) => cell.trim()).filter(Boolean))
+  if (header.length < 2 || !rows.length || rows.some((row) => row.length !== header.length)) return <p className="mt-2 text-content-secondary"><MathText text={text} /></p>
+  const before = lines.slice(0, dividerIndex - 1).join('\n').trim()
+  const after = lines.slice(dividerIndex + 1 + rows.length).join('\n').trim()
+  return <div className="mt-2 space-y-2 text-content-secondary">
+    {before && <p><MathText text={before} /></p>}
+    <div className="overflow-x-auto rounded border border-border"><table className="min-w-full text-left text-sm"><thead className="bg-surface-subtle"> <tr>{header.map((cell, index) => <th key={index} className="border-b border-border px-3 py-2 font-medium"><MathText text={cell} /></th>)}</tr></thead><tbody>{rows.map((row, rowIndex) => <tr key={rowIndex} className="border-b border-border/70 last:border-0">{row.map((cell, index) => <td key={index} className="px-3 py-2"><MathText text={cell} /></td>)}</tr>)}</tbody></table></div>
+    {after && <p><MathText text={after} /></p>}
+  </div>
+}
+
 type ExamRow = {
   id: number
   segment: string
@@ -637,7 +656,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
               </span>
             </div>
 
-            {q.supportText && <p className="mt-2 text-content-secondary"><MathText text={q.supportText} /></p>}
+            {q.supportText && <SupportText text={q.supportText} />}
             <p className="mt-2 font-medium"><MathText text={q.statement} /></p>
 
             {q.image && (
