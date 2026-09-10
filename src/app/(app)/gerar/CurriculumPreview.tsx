@@ -86,7 +86,9 @@ function UnitList({ units, bnccFilter }: { units: CurriculumSelection['units']; 
   )
 }
 
-export default function CurriculumPreview() {
+type TeacherOption = { id: number; name: string; email: string }
+
+export default function CurriculumPreview({ coordinator, teachers }: { coordinator: boolean; teachers: TeacherOption[] }) {
   const [segment, setSegment] = useState<Segment>('anos-iniciais')
   const [gradeYear, setGradeYear] = useState<number>(SEGMENT_GRADES['anos-iniciais'][0])
   const [selectedSubjects, setSelectedSubjects] = useState<string[]>([SEGMENT_SUBJECTS['anos-iniciais'][0]])
@@ -103,6 +105,7 @@ export default function CurriculumPreview() {
   const [enqueueing, setEnqueueing] = useState(false)
   const [enqueueError, setEnqueueError] = useState<string | null>(null)
   const [enqueued, setEnqueued] = useState<EnqueuedInfo | null>(null)
+  const [assignedTo, setAssignedTo] = useState<number | ''>('')
 
   const [bankQuestions, setBankQuestions] = useState<BankQuestion[]>([])
   const [bankSelected, setBankSelected] = useState<Set<number>>(new Set())
@@ -328,6 +331,7 @@ export default function CurriculumPreview() {
             assessmentKind,
             ...(bimester !== '' ? { bimester } : {}),
             ...(singleSubject && contentPlan.length ? { contentPlan } : {}),
+            ...(coordinator && assignedTo !== '' ? { assignedTo } : {}),
           },
         }),
       })
@@ -396,6 +400,16 @@ export default function CurriculumPreview() {
             ))}
           </select>
         </div>
+
+        {coordinator && (
+          <div>
+            <label className="text-sm font-medium">Professor responsável</label>
+            <select value={assignedTo} onChange={(e) => setAssignedTo(e.target.value ? Number(e.target.value) : '')} className="mt-1 w-full rounded border border-neutral-300 px-2 py-1.5 text-sm">
+              <option value="">Selecione o e-mail do professor</option>
+              {teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name} — {teacher.email}</option>)}
+            </select>
+          </div>
+        )}
 
         <div>
           <label className="text-sm font-medium">Ano</label>

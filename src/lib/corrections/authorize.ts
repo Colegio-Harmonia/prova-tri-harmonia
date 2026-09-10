@@ -4,7 +4,7 @@ import { db } from '@/db/client'
 import { generatedExams, users } from '@/db/schema'
 import { isStaffSuperuser } from '@/lib/auth/roles'
 
-export const CORRECTABLE_STATUSES = ['aplicado', 'corrigido']
+export const CORRECTABLE_STATUSES = ['aplicado', 'parcialmente_corrigida', 'corrigido']
 
 // Compartilhado entre as rotas de correção (route.ts do App Router só pode
 // exportar handlers HTTP — helpers precisam morar fora daquele arquivo).

@@ -9,6 +9,7 @@ import type { CorrectionAnswer } from '@/types/correction'
 import { isStaffSuperuser } from '@/lib/auth/roles'
 import { persistSoloObservedForCorrection } from '@/lib/pedagogical/soloObservedClassificationService'
 import { enqueuePontuarProvaJob } from '@/lib/queue/enqueue'
+import { updateExamCorrectionStatus } from '@/lib/corrections/updateExamCorrectionStatus'
 
 const answerSchema = z.object({
   questionNumber: z.number().int(),
@@ -51,6 +52,9 @@ export async function PATCH(
   const isCoordenacao = isStaffSuperuser(currentUser.role)
   if (!isCoordenacao && exam.assignedTo !== currentUser.id) {
     return NextResponse.json({ error: 'Você não tem permissão pra corrigir essa prova.' }, { status: 403 })
+  }
+  if (!['aplicado', 'parcialmente_corrigida', 'corrigido'].includes(exam.status)) {
+    return NextResponse.json({ error: 'A correção fica disponível somente depois que o professor marca a prova como aplicada.' }, { status: 409 })
   }
 
   const correction = await db.query.examCorrections.findFirst({ where: eq(examCorrections.id, correctionId) })
@@ -98,6 +102,7 @@ export async function PATCH(
       console.warn('[corrections] falha ao enfileirar pontuação (segue sem):', err instanceof Error ? err.message : err)
     }
   }
+  await updateExamCorrectionStatus(examId)
 
   if (shouldClassifySoloObserved) {
     try {

@@ -8,12 +8,12 @@ import { generateExamDocs } from '@/lib/docs/generateExamDocs'
 import { sendChatAssignmentNotification, sendChatReviewReadyNotification } from '@/lib/notifications/googleChat'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { isStaffSuperuser } from '@/lib/auth/roles'
-import { enqueuePontuarProvaJob } from '@/lib/queue/enqueue'
 import { isSelfManagedActivity } from '@/lib/exams/activityWorkflow'
 import { SheetAssignmentsSnapshotError, snapshotSheetAssignments } from '@/lib/scan-sheets/sheetAssignments'
+import { enqueuePontuarProvaJob } from '@/lib/queue/enqueue'
 
 const bodySchema = z.object({
-  action: z.enum(['atribuir', 'iniciar_revisao', 'concluir_revisao', 'aprovar', 'marcar_impresso', 'marcar_aplicado', 'marcar_corrigido', 'finalizar_atividade', 'marcar_atividade_aplicada']),
+  action: z.enum(['atribuir', 'iniciar_revisao', 'aprovar_prova', 'concluir_revisao', 'aprovar', 'marcar_impresso', 'marcar_aplicado', 'marcar_corrigido', 'finalizar_atividade', 'marcar_atividade_aplicada']),
   assignedTo: z.number().int().optional(),
 })
 
@@ -28,8 +28,9 @@ type Action = z.infer<typeof bodySchema>['action']
 // corrigir are the assigned reviewer's own workflow steps).
 const TRANSITIONS: Record<Action, { from: ExamStatus; to: ExamStatus; assigneeAllowed: boolean; ownerAllowed?: boolean }> = {
   atribuir: { from: 'rascunho', to: 'atribuido', assigneeAllowed: false },
-  iniciar_revisao: { from: 'atribuido', to: 'em_andamento', assigneeAllowed: true },
-  concluir_revisao: { from: 'em_andamento', to: 'revisao_concluida', assigneeAllowed: true },
+  iniciar_revisao: { from: 'atribuido', to: 'em_revisao', assigneeAllowed: true },
+  aprovar_prova: { from: 'em_revisao', to: 'aprovado', assigneeAllowed: true },
+  concluir_revisao: { from: 'em_andamento', to: 'revisao_concluida', assigneeAllowed: true }, // histórico legado
   aprovar: { from: 'revisao_concluida', to: 'aprovado', assigneeAllowed: false },
   marcar_impresso: { from: 'aprovado', to: 'impresso', assigneeAllowed: false },
   marcar_aplicado: { from: 'impresso', to: 'aplicado', assigneeAllowed: true },
@@ -42,7 +43,7 @@ const TRANSITIONS: Record<Action, { from: ExamStatus; to: ExamStatus; assigneeAl
 }
 
 const ACTIVITY_ONLY_ACTIONS = new Set<Action>(['finalizar_atividade', 'marcar_atividade_aplicada'])
-const FORMAL_REVIEW_ACTIONS = new Set<Action>(['atribuir', 'iniciar_revisao', 'concluir_revisao', 'aprovar', 'marcar_impresso', 'marcar_aplicado'])
+const FORMAL_REVIEW_ACTIONS = new Set<Action>(['atribuir', 'iniciar_revisao', 'aprovar_prova', 'concluir_revisao', 'aprovar', 'marcar_impresso', 'marcar_aplicado'])
 
 export async function POST(req: NextRequest, props: { params: Promise<{ examId: string }> }) {
   const params = await props.params;
@@ -104,7 +105,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     return NextResponse.json({ ok: true, chatNotified: sent })
   }
 
-  if (action === 'concluir_revisao') {
+  if (action === 'aprovar_prova' || action === 'concluir_revisao') {
     const payload = exam.generationPayload as ExamGenerationResult
     const pendingReview = payload.questions.flatMap((question) => {
       const pending: string[] = []
@@ -115,11 +116,12 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     if (pendingReview.length) {
       return NextResponse.json({ error: `Revise todos os itens antes de concluir. Pendentes: ${pendingReview.join(', ')}.` }, { status: 409 })
     }
-    await db
+    if (action === 'concluir_revisao') await db
       .update(generatedExams)
       .set({ status: 'revisao_concluida', reviewReadyNotifiedAt: new Date() })
       .where(eq(generatedExams.id, examId))
 
+    if (action === 'concluir_revisao') {
     const recipients = await db.query.users.findMany({
       where: and(inArray(users.role, ['coordenacao', 'direcao']), eq(users.active, true), ne(users.id, currentUser.id)),
       columns: { email: true },
@@ -129,9 +131,10 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     const { sent } = await sendChatReviewReadyNotification(recipients.map((r) => r.email), currentUser.name, examLabel, reviewUrl)
 
     return NextResponse.json({ ok: true, chatNotified: sent })
+    }
   }
 
-  if (action === 'aprovar' || action === 'finalizar_atividade') {
+  if (action === 'aprovar_prova' || action === 'aprovar' || action === 'finalizar_atividade') {
     try {
       const payload = exam.generationPayload as ExamGenerationResult
       const result = await generateExamDocs(payload, {

@@ -56,7 +56,7 @@ type ExamRow = {
 }
 
 type UserOption = { id: number; name: string; email: string; role: string }
-type Action = 'atribuir' | 'iniciar_revisao' | 'concluir_revisao' | 'aprovar' | 'marcar_impresso' | 'marcar_aplicado' | 'marcar_corrigido' | 'finalizar_atividade' | 'marcar_atividade_aplicada'
+type Action = 'atribuir' | 'iniciar_revisao' | 'aprovar_prova' | 'concluir_revisao' | 'aprovar' | 'marcar_impresso' | 'marcar_aplicado' | 'marcar_corrigido' | 'finalizar_atividade' | 'marcar_atividade_aplicada'
 
 const IMAGE_SOURCE_LABELS: Record<string, string> = {
   busca: 'Encontrada (Wikimedia Commons)',
@@ -70,10 +70,12 @@ const STATUS_LABELS: Record<string, string> = {
   rascunho: 'Rascunho',
   atribuido: 'Atribuído',
   em_andamento: 'Em andamento',
+  em_revisao: 'Em revisão',
   revisao_concluida: 'Revisão concluída',
   aprovado: 'Aprovado',
   impresso: 'Impresso',
   aplicado: 'Aplicado',
+  parcialmente_corrigida: 'Parcialmente corrigida',
   corrigido: 'Corrigido',
 }
 
@@ -81,10 +83,12 @@ const STATUS_COLORS: Record<string, string> = {
   rascunho: 'bg-neutral-100 text-neutral-600',
   atribuido: 'bg-blue-50 text-blue-700',
   em_andamento: 'bg-amber-50 text-amber-700',
+  em_revisao: 'bg-amber-50 text-amber-700',
   revisao_concluida: 'bg-teal-50 text-teal-700',
   aprovado: 'bg-harmonia-green/10 text-harmonia-green',
   impresso: 'bg-neutral-700 text-white',
   aplicado: 'bg-violet-50 text-violet-700',
+  parcialmente_corrigida: 'bg-violet-50 text-violet-700',
   corrigido: 'bg-neutral-900 text-white',
 }
 
@@ -461,13 +465,13 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
             </button>
           )}
 
-          {canActOnOwnStep && exam.status === 'em_andamento' && (
+          {canActOnOwnStep && exam.status === 'em_revisao' && (
             <button
-              onClick={() => handleTransition('concluir_revisao')}
+              onClick={() => handleTransition('aprovar_prova')}
               disabled={transitioning}
               className="rounded bg-harmonia-green px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
             >
-              {transitioning ? 'Avisando…' : 'Concluir revisão e avisar coordenação'}
+              {transitioning ? 'Aprovando e gerando documentos…' : 'Aprovar prova e gerar documentos'}
             </button>
           )}
 
@@ -488,13 +492,14 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
             </div>
           )}
 
-          {isCoordenacao && exam.examKind === 'prova' && exam.status === 'aprovado' && (
+          {exam.examKind === 'prova' && (
             <button
               onClick={handlePrint}
-              disabled={transitioning}
+              disabled={transitioning || !isCoordenacao || !['aprovado', 'impresso', 'aplicado', 'parcialmente_corrigida', 'corrigido'].includes(exam.status)}
+              title={exam.status === 'aprovado' ? undefined : 'A impressão é liberada após a aprovação da prova.'}
               className="rounded bg-harmonia-green px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
             >
-              {transitioning ? 'Preparando impressão…' : exam.classroomCourseId ? 'Imprimir prova e cartões' : 'Marcar como impresso'}
+              {transitioning ? 'Preparando impressão…' : exam.classroomCourseId ? 'Imprimir prova e cartões' : 'Imprimir prova'}
             </button>
           )}
 
@@ -518,17 +523,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
             </button>
           )}
 
-          {canActOnOwnStep && exam.status === 'aplicado' && (
-            <button
-              onClick={() => handleTransition('marcar_corrigido')}
-              disabled={transitioning}
-              className="rounded bg-harmonia-green px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-            >
-              Marcar como corrigido
-            </button>
-          )}
-
-          {exam.examKind === 'prova' && canActOnOwnStep && ['aplicado', 'corrigido'].includes(exam.status) && (
+          {exam.examKind === 'prova' && canActOnOwnStep && ['aplicado', 'parcialmente_corrigida', 'corrigido'].includes(exam.status) && (
             <Link
               href={`/gerar/${examId}/corrigir`}
               className="min-h-10 whitespace-nowrap rounded border border-harmonia-green px-4 py-2 text-sm font-medium text-harmonia-green"

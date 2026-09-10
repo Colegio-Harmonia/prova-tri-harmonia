@@ -15,6 +15,7 @@ export type GerarProvaBatchInput = {
     enemBankQuestionIds?: number[]
     assessmentKind?: 'padrao' | 'enem'
     contentPlan?: CurriculumPlanItem[]
+    assignedTo?: number
   }
 }
 
@@ -49,6 +50,7 @@ export function buildGerarProvaJobPayloads(input: GerarProvaBatchInput): GerarPr
       classLabel: input.classLabel,
       assessmentKind: input.config.assessmentKind,
       contentPlan: input.config.contentPlan,
+      assignedTo: input.config.assignedTo,
     })
     if (!parsed.success) {
       throw new BatchValidationError(parsed.error.issues.map((i) => i.message).join(' '))

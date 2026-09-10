@@ -1,5 +1,6 @@
 import { db } from '@/db/client'
-import { generatedExams, type AssessmentKind, type ExamKind } from '@/db/schema'
+import { generatedExams, users, type AssessmentKind, type ExamKind } from '@/db/schema'
+import { isStaffSuperuser } from '@/lib/auth/roles'
 import { scoringMethodForQuestions } from '@/lib/scoring/scoringPolicy'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
 import { TabResolutionError } from '@/lib/sheets/tabResolver'
@@ -45,6 +46,7 @@ export type GenerateExamCoreParams = {
   bnccCodes?: string[]
   classroomCourseId?: string | null
   contentPlan?: CurriculumPlanItem[]
+  assignedTo?: number
 }
 
 // Erros de entrada/recorte curricular (viram 422 na rota, mensagem legível
@@ -85,6 +87,16 @@ export type GenerateExamCoreResult = {
 export async function generateExamCore(params: GenerateExamCoreParams, createdBy: number): Promise<GenerateExamCoreResult> {
   const assessmentKind = params.assessmentKind ?? 'padrao'
   const examKind = params.examKind ?? 'prova'
+  const creator = await db.query.users.findFirst({ where: (table, { eq }) => eq(table.id, createdBy), columns: { id: true, role: true } })
+  if (!creator) throw new ExamGenerationInputError('Usuário solicitante não encontrado.')
+  // Professor sempre recebe a própria prova. Coordenação precisa informar o
+  // professor responsável antes que a geração entre no fluxo formal.
+  const formalAssigneeId = examKind === 'prova' ? (isStaffSuperuser(creator.role) ? params.assignedTo : createdBy) : undefined
+  if (examKind === 'prova' && !formalAssigneeId) throw new ExamGenerationInputError('Selecione o professor responsável pela prova antes de gerar.')
+  if (formalAssigneeId) {
+    const assignee = await db.query.users.findFirst({ where: (table, { eq }) => eq(table.id, formalAssigneeId), columns: { id: true, active: true, role: true } })
+    if (!assignee?.active || assignee.role !== 'professor') throw new ExamGenerationInputError('O responsável selecionado precisa ser um professor ativo.')
+  }
   // Regra de negócio garantida aqui (não só na validação de borda): o
   // simulado ENEM pressupõe o banco/matriz do Ensino Médio.
   if (assessmentKind !== 'padrao' && params.segment !== 'ensino-medio') {
@@ -293,11 +305,13 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
       examKind,
       assessmentKind,
       scoringMethod: scoringMethodForQuestions(examWithBank.questions),
-      status: 'rascunho',
+      status: examKind === 'prova' ? 'atribuido' : 'rascunho',
       // Atividades são autogeridas pelo professor que as criou. O vínculo
       // facilita visibilidade e correção posterior, sem atribuição formal
       // ou notificação da coordenação.
-      ...(examKind === 'atividade'
+      ...(examKind === 'prova'
+        ? { assignedTo: formalAssigneeId, assignedBy: createdBy, assignedAt: new Date() }
+        : examKind === 'atividade'
         ? { assignedTo: createdBy, assignedBy: createdBy, assignedAt: new Date() }
         : {}),
       generationPayload,

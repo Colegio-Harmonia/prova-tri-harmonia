@@ -112,7 +112,11 @@ export const aiModelProfiles = pgTable('ai_model_profiles', {
 // ainda). atribuir/aprovar/marcar_impresso são coordenação-only;
 // iniciar_revisao/concluir_revisao/marcar_aplicado/marcar_corrigido podem
 // ser feitos pelo próprio atribuído OU coordenação.
-export const EXAM_STATUSES = ['rascunho', 'atribuido', 'em_andamento', 'revisao_concluida', 'aprovado', 'impresso', 'aplicado', 'corrigido'] as const
+// Provas formais: atribuído -> em_revisao -> aprovado -> impresso ->
+// aplicado -> parcialmente_corrigida/corrigido. Os estados antigos ficam
+// aceitos para ler históricos durante a migração, sem alterar documentos,
+// cartões-resposta ou scans já existentes.
+export const EXAM_STATUSES = ['rascunho', 'atribuido', 'em_andamento', 'revisao_concluida', 'em_revisao', 'aprovado', 'impresso', 'aplicado', 'parcialmente_corrigida', 'corrigido'] as const
 
 // Rótulo pedagógico da prova. A escala de correção NÃO vem deste rótulo:
 // TRI INEP é decidida pela presença de itens reais do banco ENEM e pela

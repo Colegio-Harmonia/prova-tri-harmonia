@@ -34,6 +34,7 @@ const postSchema = z.object({
     enemBankQuestionIds: z.array(z.number().int()).max(15).optional(),
     assessmentKind: z.enum(['padrao', 'enem']).optional(),
     contentPlan: z.array(curriculumPlanItemSchema).max(60).optional(),
+    assignedTo: z.number().int().positive().optional(),
   }),
 })
 
@@ -55,8 +56,14 @@ export async function POST(req: NextRequest) {
   const currentUser = await db.query.users.findFirst({ where: eq(users.email, session.user.email) })
   if (!currentUser) return NextResponse.json({ error: 'Usuário não encontrado' }, { status: 401 })
 
+  const requestedAssignee = parsed.data.config.assignedTo
+  const assignedTo = isStaffSuperuser(currentUser.role) ? requestedAssignee : currentUser.id
+  if (!assignedTo) return NextResponse.json({ error: 'Selecione o professor responsável antes de enviar as provas para a fila.' }, { status: 422 })
+  const assignee = await db.query.users.findFirst({ where: eq(users.id, assignedTo), columns: { id: true, role: true, active: true } })
+  if (!assignee?.active || assignee.role !== 'professor') return NextResponse.json({ error: 'O responsável selecionado precisa ser um professor ativo.' }, { status: 422 })
+
   try {
-    const enqueued = await enqueueGerarProvaBatch(parsed.data, currentUser.id)
+    const enqueued = await enqueueGerarProvaBatch({ ...parsed.data, config: { ...parsed.data.config, assignedTo } }, currentUser.id)
     return NextResponse.json(enqueued, { status: 202 })
   } catch (err) {
     if (err instanceof BatchValidationError) {
