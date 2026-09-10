@@ -8,6 +8,8 @@ import { isInsufficientScopeError, listMyCourses, listStudentsInCourse } from '@
 import { totalGrade } from '@/lib/corrections/totalGrade'
 import type { CorrectionAnswer } from '@/types/correction'
 
+const CLASSROOM_PROFILE_PHOTOS_SCOPE = 'https://www.googleapis.com/auth/classroom.profile.photos'
+
 export async function GET(_request: Request, { params }: { params: Promise<{ courseId: string }> }) {
   const { courseId } = await params
   const session = await auth()
@@ -65,6 +67,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ cou
       exams,
       students: studentsWithPerformance,
       performance: { studentCount: students.length, correctedStudents: studentsWithPerformance.filter((student) => student.corrected > 0).length, averageGrade },
+      photoAuthorizationRequired: !session.googleScopes?.split(/\s+/).includes(CLASSROOM_PROFILE_PHOTOS_SCOPE),
     })
   } catch (err) {
     if (isInsufficientScopeError(err)) return NextResponse.json({ error: 'reauth_required', message: 'Sua conta Google precisa autorizar de novo — entre com o Google outra vez.' }, { status: 401 })

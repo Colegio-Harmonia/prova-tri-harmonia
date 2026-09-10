@@ -7,7 +7,7 @@ import { signIn } from 'next-auth/react'
 type Course = { id: string; name: string; section: string | null; room: string | null; alternateLink: string }
 type Exam = { id: number; subject: string; gradeYear: number; bimester: number | null; status: string; createdAt: string }
 type Student = { classroomStudentId: string; name: string; email: string | null; photoUrl: string | null; corrected: number; averageGrade: number | null }
-type Data = { course: Course; exams: Exam[]; students: Student[]; performance: { studentCount: number; correctedStudents: number; averageGrade: number | null } }
+type Data = { course: Course; exams: Exam[]; students: Student[]; performance: { studentCount: number; correctedStudents: number; averageGrade: number | null }; photoAuthorizationRequired: boolean }
 type ErrorState = { kind: 'google_not_connected' | 'reauth_required' | 'other'; message: string }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -63,6 +63,11 @@ export default function TurmaDetail({ courseId }: { courseId: string }) {
         <a href={course.alternateLink} target="_blank" rel="noopener noreferrer" className="rounded-md border border-border px-3 py-2 text-sm font-medium text-content-primary hover:bg-surface-subtle">Abrir no Classroom ↗</a>
       </div>
     </div>
+
+    {data.photoAuthorizationRequired && <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+      <div><p className="font-semibold">Autorize as fotos do Classroom</p><p className="mt-1">O Google pede uma permissão específica para exibir as fotos dos alunos. Reconecte sua conta uma vez para liberá-las.</p></div>
+      <button type="button" onClick={() => signIn('google', { callbackUrl: `/turmas/${courseId}` })} className="shrink-0 rounded-md bg-harmonia-green px-3 py-2 font-medium text-white">Autorizar fotos</button>
+    </section>}
 
     <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
       <div className="rounded-xl border border-border bg-surface p-4"><p className="text-sm text-content-secondary">Provas vinculadas</p><p className="mt-1 text-2xl font-semibold text-content-primary">{exams.length}</p></div>

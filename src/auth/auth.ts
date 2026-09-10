@@ -28,6 +28,9 @@ const GOOGLE_SCOPES = [
   'profile',
   'https://www.googleapis.com/auth/classroom.courses.readonly',
   'https://www.googleapis.com/auth/classroom.rosters.readonly',
+  // O roster traz nomes, mas o Google só preenche `profile.photoUrl` com
+  // este escopo explícito. É necessário reconectar uma vez depois do deploy.
+  'https://www.googleapis.com/auth/classroom.profile.photos',
   'https://www.googleapis.com/auth/classroom.coursework.students',
   // Cria o Formulário que recebe as respostas das Atividades FI/FII.
   // Permite compartilhar, somente com a professora responsável, o Form
