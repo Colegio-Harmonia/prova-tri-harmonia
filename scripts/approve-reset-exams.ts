@@ -66,8 +66,9 @@ async function main() {
       failures.push({ id: exam.id, error: message })
       console.error(`[recover-approval] prova #${exam.id} falhou: ${message}`)
     }
-    // Evita rajadas de três cópias/edições de Docs por prova.
-    await sleep(4_000)
+    // Intervalo solicitado: evita rajadas de três cópias/edições de Docs
+    // por prova e respeita o limite do Google Drive.
+    await sleep(30_000)
   }
   if (failures.length) {
     console.error(JSON.stringify({ failures }))
