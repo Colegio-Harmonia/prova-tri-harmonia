@@ -152,12 +152,14 @@ export default function StatusList({
   examKind,
   collectionLabel: collectionLabelOverride,
   singularLabel: singularLabelOverride,
+  archivedOnly = false,
 }: {
   currentUserId: number | null
   isCoordenacao: boolean
   examKind: ExamKind
   collectionLabel?: string
   singularLabel?: string
+  archivedOnly?: boolean
 }) {
   const [exams, setExams] = useState<ExamRow[]>([])
   const [total, setTotal] = useState(0)
@@ -165,7 +167,7 @@ export default function StatusList({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [onlyMine, setOnlyMine] = useState(false)
-  const [showArchived, setShowArchived] = useState(false)
+  const showArchived = archivedOnly
   const [archiveActionId, setArchiveActionId] = useState<number | null>(null)
   const [refreshNonce, setRefreshNonce] = useState(0)
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
@@ -317,17 +319,7 @@ export default function StatusList({
       </div>
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <label className="flex min-h-10 items-center gap-2 text-sm text-content-secondary">
-          <input
-            type="checkbox"
-            checked={showArchived}
-            onChange={(e) => {
-              setShowArchived(e.target.checked)
-              setPage(1)
-            }}
-          />
-          Mostrar somente as arquivadas por mim
-        </label>
+        <p className="text-sm text-content-secondary">{archivedOnly ? 'Todas as provas arquivadas compartilhadas com você.' : 'Arquivar remove a prova da lista de todos os envolvidos.'}</p>
         {isCoordenacao && (
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <label className="flex min-h-10 items-center gap-2 text-sm text-content-secondary">
@@ -455,7 +447,7 @@ export default function StatusList({
                   disabled={archiveActionId === exam.id}
                   className="mt-4 min-h-10 rounded border border-border px-3 py-1.5 text-xs font-medium text-content-secondary hover:border-harmonia-green hover:text-harmonia-green disabled:opacity-50"
                 >
-                  {archiveActionId === exam.id ? 'Salvando…' : exam.archivedAt ? 'Restaurar esta prova' : 'Arquivar só para mim'}
+                  {archiveActionId === exam.id ? 'Salvando…' : exam.archivedAt ? 'Restaurar esta prova' : 'Arquivar'}
                 </button>
               </article>
             ))}

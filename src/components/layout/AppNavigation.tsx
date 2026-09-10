@@ -2,6 +2,7 @@
 
 import type { LucideIcon } from 'lucide-react'
 import {
+  Archive,
   BarChart3,
   ClipboardList,
   FileText,
@@ -39,6 +40,7 @@ const primaryItems: NavigationItem[] = [
   { href: '/reforco', label: 'Reforço ENEM', icon: Target },
   { href: '/atividades', label: 'Atividades', icon: FileText },
   { href: '/status', label: 'Provas', icon: ClipboardList },
+  { href: '/arquivadas', label: 'Arquivadas', icon: Archive },
   { href: '/turmas', label: 'Turmas', icon: UsersRound },
   { href: '/desempenho', label: 'Desempenho', icon: BarChart3 },
 ]

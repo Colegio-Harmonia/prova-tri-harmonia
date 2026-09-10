@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
-import { and, eq, exists, notExists, or, sql } from 'drizzle-orm'
+import { and, eq, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { EXAM_KINDS, examUserArchives, generatedExams, users } from '@/db/schema'
+import { EXAM_KINDS, generatedExams, users } from '@/db/schema'
 import { auth } from '@/auth/auth'
 import { isStaffSuperuser } from '@/lib/auth/roles'
 
@@ -29,11 +29,7 @@ export async function GET(req: Request) {
   if (examKind && (EXAM_KINDS as readonly string[]).includes(examKind)) {
     scopeConditions.push(eq(generatedExams.examKind, examKind as (typeof EXAM_KINDS)[number]))
   }
-  const archivedByCurrentUser = db
-    .select({ one: sql<number>`1` })
-    .from(examUserArchives)
-    .where(and(eq(examUserArchives.examId, generatedExams.id), eq(examUserArchives.userId, currentUser.id)))
-  scopeConditions.push(includeArchived ? exists(archivedByCurrentUser) : notExists(archivedByCurrentUser))
+  scopeConditions.push(includeArchived ? isNotNull(generatedExams.archivedAt) : isNull(generatedExams.archivedAt))
   const scope = scopeConditions.length ? and(...scopeConditions) : undefined
 
   const [subjectRows, yearRows] = await Promise.all([

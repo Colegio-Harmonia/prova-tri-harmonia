@@ -27,6 +27,7 @@ function getBreadcrumbs(pathname: string): Crumb[] {
   const current = [
     { href: '/gerar', label: 'Gerar prova' },
     { href: '/status', label: 'Provas' },
+    { href: '/arquivadas', label: 'Arquivadas' },
     { href: '/atividades', label: 'Atividades' },
     { href: '/turmas', label: 'Turmas' },
     { href: '/desempenho', label: 'Desempenho' },

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { and, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { auth } from '@/auth/auth'
 import { db } from '@/db/client'
-import { examUserArchives } from '@/db/schema'
+import { generatedExams } from '@/db/schema'
 import { authorizeExamAccess } from '@/lib/exams/authorizeExamAccess'
 
 async function resolveArchiveAccess(params: Promise<{ examId: string }>) {
@@ -18,27 +18,22 @@ async function resolveArchiveAccess(params: Promise<{ examId: string }>) {
   return { examId, currentUser: access.currentUser } as const
 }
 
-/** Arquiva somente para o usuário autenticado; é idempotente. */
+/** Arquiva a prova para todos os usuários que têm acesso a ela. */
 export async function POST(_req: NextRequest, props: { params: Promise<{ examId: string }> }) {
   const access = await resolveArchiveAccess(props.params)
   if ('error' in access) return access.error
 
-  await db
-    .insert(examUserArchives)
-    .values({ examId: access.examId, userId: access.currentUser.id })
-    .onConflictDoNothing({ target: [examUserArchives.userId, examUserArchives.examId] })
+  await db.update(generatedExams).set({ archivedAt: new Date() }).where(eq(generatedExams.id, access.examId))
 
   return NextResponse.json({ ok: true, archived: true })
 }
 
-/** Restaura a prova somente na visão do usuário autenticado; é idempotente. */
+/** Restaura a prova para todos os usuários que têm acesso a ela. */
 export async function DELETE(_req: NextRequest, props: { params: Promise<{ examId: string }> }) {
   const access = await resolveArchiveAccess(props.params)
   if ('error' in access) return access.error
 
-  await db
-    .delete(examUserArchives)
-    .where(and(eq(examUserArchives.examId, access.examId), eq(examUserArchives.userId, access.currentUser.id)))
+  await db.update(generatedExams).set({ archivedAt: null }).where(eq(generatedExams.id, access.examId))
 
   return NextResponse.json({ ok: true, archived: false })
 }

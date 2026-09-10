@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { and, desc, eq, exists, inArray, notExists, or, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { EXAM_KINDS, EXAM_STATUSES, examUserArchives, generatedExams, users } from '@/db/schema'
+import { EXAM_KINDS, EXAM_STATUSES, generatedExams, users } from '@/db/schema'
 import { auth } from '@/auth/auth'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import type { Segment } from '@/types/exam'
@@ -64,11 +64,7 @@ export async function GET(req: NextRequest) {
   if (examKind && (EXAM_KINDS as readonly string[]).includes(examKind)) {
     conditions.push(eq(generatedExams.examKind, examKind as (typeof EXAM_KINDS)[number]))
   }
-  const archivedByCurrentUser = db
-    .select({ one: sql<number>`1` })
-    .from(examUserArchives)
-    .where(and(eq(examUserArchives.examId, generatedExams.id), eq(examUserArchives.userId, currentUser.id)))
-  conditions.push(includeArchived ? exists(archivedByCurrentUser) : notExists(archivedByCurrentUser))
+  conditions.push(includeArchived ? isNotNull(generatedExams.archivedAt) : isNull(generatedExams.archivedAt))
   const where = conditions.length ? and(...conditions) : undefined
 
   const [rows, [{ total }]] = await Promise.all([
@@ -88,13 +84,6 @@ export async function GET(req: NextRequest) {
   ])
 
   const assigneeIds = [...new Set(rows.map((r) => r.assignedTo).filter((id): id is number => id != null))]
-  const archivedRows = rows.length
-    ? await db.query.examUserArchives.findMany({
-        where: and(eq(examUserArchives.userId, currentUser.id), inArray(examUserArchives.examId, rows.map((row) => row.id))),
-        columns: { examId: true, archivedAt: true },
-      })
-    : []
-  const archivedAtByExamId = new Map(archivedRows.map((archive) => [archive.examId, archive.archivedAt]))
   const assignees = assigneeIds.length
     ? await db.query.users.findMany({ where: inArray(users.id, assigneeIds), columns: { id: true, name: true } })
     : []
@@ -111,7 +100,7 @@ export async function GET(req: NextRequest) {
     return {
       ...row,
       assigneeName: row.assignedTo != null ? (assigneeNameById.get(row.assignedTo) ?? null) : null,
-      archivedAt: archivedAtByExamId.get(row.id) ?? null,
+      archivedAt: row.archivedAt,
       imageSummary: withImage.length ? { total: withImage.length, approved, pending: withImage.length - approved } : null,
     }
   })

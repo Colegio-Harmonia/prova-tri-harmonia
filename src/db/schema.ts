@@ -209,11 +209,13 @@ export const generatedExams = pgTable('generated_exams', {
   // Classroom" roda; reaproveitado em cliques seguintes pra não duplicar
   // atividade a cada tentativa.
   classroomCourseWorkId: text('classroom_coursework_id'),
+  // Arquivamento operacional compartilhado: quando uma prova é arquivada,
+  // ela sai da visão normal de todos os envolvidos e vai para Arquivadas.
+  archivedAt: timestamp('archived_at'),
 })
 
-// Arquivamento é uma preferência individual de organização, não uma etapa do
-// ciclo pedagógico da prova. Portanto não muda generated_exams.status nem
-// afeta provas, correções, documentos ou indicadores de outros usuários.
+// Legado de arquivamento individual. Mantido somente para preservar registros
+// históricos; o arquivamento atual vive em generated_exams.archived_at.
 export const examUserArchives = pgTable('exam_user_archives', {
   id: serial('id').primaryKey(),
   examId: integer('exam_id').references(() => generatedExams.id, { onDelete: 'cascade' }).notNull(),
