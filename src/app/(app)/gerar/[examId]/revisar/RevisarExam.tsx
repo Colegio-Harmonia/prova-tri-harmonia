@@ -108,7 +108,6 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   const [actionError, setActionError] = useState<Record<number, string>>({})
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [expandedImageQuestion, setExpandedImageQuestion] = useState<number | null>(null)
-  const [activeReviewIndex, setActiveReviewIndex] = useState(0)
 
   const isCoordenacao = isStaffSuperuser(currentUserRole)
   const canAssignFormalExam = Boolean(
@@ -116,6 +115,19 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
     exam.status === 'rascunho' &&
     (isCoordenacao || exam.createdBy === currentUserId),
   )
+
+  function patchQuestion(questionNumber: number, patch: Record<string, unknown>) {
+    setExam((current) => {
+      if (!current) return current
+      return {
+        ...current,
+        generationPayload: {
+          ...current.generationPayload,
+          questions: current.generationPayload.questions.map((question) => question.number === questionNumber ? { ...question, ...patch } : question),
+        },
+      }
+    })
+  }
 
   async function load() {
     setLoading(true)
@@ -178,12 +190,20 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ questionNumber, approved }),
       })
+      const data = await res.json()
       if (!res.ok) {
-        const data = await res.json()
         setError(data.error ?? 'Erro ao atualizar imagem.')
         return
       }
-      await load()
+      setExam((current) => {
+        if (!current) return current
+        const question = current.generationPayload.questions.find((item) => item.number === questionNumber)
+        if (!question?.image) return current
+        return {
+          ...current,
+          generationPayload: { ...current.generationPayload, questions: current.generationPayload.questions.map((item) => item.number === questionNumber ? { ...item, image: { ...question.image!, approved } } : item) },
+        }
+      })
     } catch {
       setError('Falha de rede ao atualizar imagem.')
     }
@@ -206,7 +226,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
         setActionError((prev) => ({ ...prev, [questionNumber]: data.error ?? 'Erro ao salvar revisão.' }))
         return
       }
-      await load()
+      patchQuestion(questionNumber, { review: data.review })
     } catch {
       setActionError((prev) => ({ ...prev, [questionNumber]: 'Falha de rede ao salvar revisão.' }))
     } finally {
@@ -214,7 +234,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
     }
   }
 
-  async function handleAcceptQuestion(questionNumber: number, totalQuestions: number) {
+  async function handleAcceptQuestion(questionNumber: number) {
     setSavingReview(questionNumber)
     setActionError((prev) => ({ ...prev, [questionNumber]: '' }))
     try {
@@ -227,8 +247,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
         setActionError((prev) => ({ ...prev, [questionNumber]: data.error ?? 'Erro ao aceitar questão.' }))
         return
       }
-      setActiveReviewIndex((index) => Math.min(index + 1, totalQuestions - 1))
-      await load()
+      patchQuestion(questionNumber, { review: data.review })
     } catch {
       setActionError((prev) => ({ ...prev, [questionNumber]: 'Falha de rede ao aceitar questão.' }))
     } finally {
@@ -250,7 +269,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
         setActionError((prev) => ({ ...prev, [questionNumber]: data.error ?? 'Erro ao trocar questão.' }))
         return
       }
-      await load()
+      patchQuestion(questionNumber, data.question)
     } catch {
       setActionError((prev) => ({ ...prev, [questionNumber]: 'Falha de rede ao trocar questão.' }))
     } finally {
@@ -259,6 +278,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   }
 
   async function handleRequestImage(questionNumber: number, force = false) {
+    if (force) setImageConfirmation(null)
     setRequestingImage(questionNumber)
     setActionError((prev) => ({ ...prev, [questionNumber]: '' }))
     try {
@@ -277,7 +297,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
         return
       }
       setImageConfirmation(null)
-      await load()
+      patchQuestion(questionNumber, { needsImage: true, image: data.image })
     } catch {
       setActionError((prev) => ({ ...prev, [questionNumber]: 'Falha de rede ao buscar imagem.' }))
     } finally {
@@ -346,7 +366,6 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   const canActOnOwnStep = isCoordenacao || isAssignee || isOwnActivity
   const canFinalizeActivity = canFinalizeOwnActivity(exam, currentUserId, isCoordenacao)
   const canMarkActivityApplied = canMarkOwnActivityApplied(exam, currentUserId, isCoordenacao)
-  const activeQuestion = payload.questions[Math.min(activeReviewIndex, Math.max(0, payload.questions.length - 1))]
 
   return (
     <div className="space-y-6">
@@ -552,11 +571,12 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
         </div>
       )}
 
-      <div className="space-y-3">
-        {payload.questions.filter((q) => !reviewEditable || q.number === activeQuestion?.number).map((q) => (
-          <div key={q.number} className="rounded border border-border bg-surface p-4 text-sm text-content-primary">
+      <div className="space-y-6">
+        {payload.questions.map((q) => (
+          <article key={q.number} className="relative overflow-hidden rounded-xl border border-border bg-surface p-5 text-sm text-content-primary shadow-sm">
+            <div className="absolute inset-y-0 left-0 w-1 bg-harmonia-green/70" />
             <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="rounded bg-surface-subtle px-2 py-0.5 text-content-secondary">Nº {q.number}</span>
+              <span className="rounded-full bg-harmonia-green px-2.5 py-1 font-semibold text-white">Questão {q.number}</span>
               {q.source === 'enem_bank' ? (
                 <span className="rounded bg-violet-50 px-2 py-0.5 font-medium text-violet-700">
                   Questão real — ENEM {q.enemBankRef?.year}
@@ -581,10 +601,10 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
             {q.image && (
               <div className="mt-3 rounded border border-border bg-surface-subtle p-3">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-                  <button type="button" onClick={() => setExpandedImageQuestion((current) => current === q.number ? null : q.number)} aria-expanded={expandedImageQuestion === q.number} aria-controls={`question-image-reader-${q.number}`} className="group shrink-0 self-start rounded border border-border bg-surface p-1 text-left">
+                  <button type="button" onClick={() => setExpandedImageQuestion(q.number)} aria-haspopup="dialog" className="group shrink-0 self-start rounded border border-border bg-surface p-1 text-left">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={q.image.previewUrl} alt={`Imagem de apoio da questão ${q.number}`} className="max-h-48 w-auto max-w-full rounded object-contain sm:max-h-56" />
-                    <span className="mt-1 block text-center text-xs font-medium text-content-secondary group-hover:text-harmonia-green">{expandedImageQuestion === q.number ? 'Fechar leitura' : 'Ampliar imagem'}</span>
+                    <span className="mt-1 block text-center text-xs font-medium text-content-secondary group-hover:text-harmonia-green">Ampliar imagem</span>
                   </button>
                   <div className="flex flex-col gap-1 text-xs">
                   <span className="text-neutral-500">
@@ -614,11 +634,13 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
                 </div>
                 </div>
                 {expandedImageQuestion === q.number && (
-                  <figure id={`question-image-reader-${q.number}`} className="mt-3 rounded border border-border bg-surface p-3">
-                    <figcaption className="mb-2 text-sm font-medium text-content-primary">Leitura ampliada da imagem de apoio</figcaption>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={q.image.previewUrl} alt={`Imagem de apoio ampliada da questão ${q.number}`} className="max-h-[75vh] w-full rounded object-contain" />
-                  </figure>
+                  <div role="dialog" aria-modal="true" aria-label={`Imagem ampliada da questão ${q.number}`} className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setExpandedImageQuestion(null)}>
+                    <figure className="max-h-full max-w-5xl rounded-lg bg-surface p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+                      <div className="mb-3 flex items-center justify-between gap-4"><figcaption className="text-sm font-medium text-content-primary">Imagem de apoio — questão {q.number}</figcaption><button onClick={() => setExpandedImageQuestion(null)} className="rounded border border-border px-2 py-1 text-xs">Fechar</button></div>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={q.image.previewUrl} alt={`Imagem de apoio ampliada da questão ${q.number}`} className="max-h-[80vh] max-w-full rounded object-contain" />
+                    </figure>
+                  </div>
                 )}
               </div>
             )}
@@ -642,9 +664,9 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
 
             {reviewEditable && (
               <div className="mt-4 space-y-3 rounded border border-border bg-surface-subtle p-3">
-                <p className="text-xs text-neutral-600">Questão {Math.min(activeReviewIndex + 1, payload.questions.length)} de {payload.questions.length}. Aceite ou gere uma nova antes de avançar.</p>
+                <p className="text-xs text-neutral-600">Decida esta questão para concluir a revisão.</p>
                 <div className="flex flex-wrap gap-2">
-                  <button onClick={() => handleAcceptQuestion(q.number, payload.questions.length)} disabled={savingReview === q.number} className="rounded bg-harmonia-green px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">
+                  <button onClick={() => handleAcceptQuestion(q.number)} disabled={savingReview === q.number} className="rounded bg-harmonia-green px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">
                     {savingReview === q.number ? 'Salvando…' : 'Aceitar questão'}
                   </button>
                   {q.source !== 'enem_bank' && <button onClick={() => handleRegenerateQuestion(q.number)} disabled={regeneratingQuestion === q.number} className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">
@@ -660,7 +682,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
                 {actionError[q.number] && <p className="text-xs text-red-600">{actionError[q.number]}</p>}
               </div>
             )}
-          </div>
+          </article>
         ))}
       </div>
     </div>
