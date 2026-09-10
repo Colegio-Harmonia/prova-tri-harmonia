@@ -64,15 +64,16 @@ describe('contratos administrativos de API', () => {
       { status: 'succeeded', totalTokens: 120, estimatedCostMicrousd: 35 },
       { status: 'failed', totalTokens: null, estimatedCostMicrousd: null },
     ])
+    mocks.findProfiles.mockResolvedValue([])
 
-    const response = await getAiOperations()
+    const response = await getAiOperations(new NextRequest('http://test.local/api/admin/ai-operations?period=all'))
 
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
-      summary: { total: 2, succeeded: 1, rejected: 0, failed: 1, totalTokens: 120, estimatedCostMicrousd: 35 },
+      summary: { total: 2, succeeded: 1, rejected: 0, failed: 1, totalTokens: 120, estimatedCostMicrousd: 35, unpriced: 1 },
       operations: [
-        { status: 'succeeded', totalTokens: 120, estimatedCostMicrousd: 35 },
-        { status: 'failed', totalTokens: null, estimatedCostMicrousd: null },
+        { status: 'succeeded', totalTokens: 120, estimatedCostMicrousd: 35, effectiveCostMicrousd: 35, costStatus: 'recorded' },
+        { status: 'failed', totalTokens: null, estimatedCostMicrousd: null, effectiveCostMicrousd: null, costStatus: 'unpriced' },
       ],
     })
   })

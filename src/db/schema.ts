@@ -82,6 +82,17 @@ export const aiOperations = pgTable('ai_operations', {
   statusCreatedAtIndex: index('ai_operations_status_created_at_idx').on(table.status, table.createdAt),
 }))
 
+// Reset administrativo do contador diário. Não apaga telemetria: apenas
+// define de quando em diante uma finalidade volta a consumir a cota.
+export const aiBudgetResets = pgTable('ai_budget_resets', {
+  id: serial('id').primaryKey(),
+  purpose: text('purpose', { enum: ['text_generation', 'image_generation', 'image_validation', 'scan_transcription'] }),
+  resetBy: integer('reset_by').references(() => users.id).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (table) => ({
+  purposeCreatedAtIndex: index('ai_budget_resets_purpose_created_at_idx').on(table.purpose, table.createdAt),
+}))
+
 // Perfis de execução editáveis somente pela gestão. Preços são snapshots de
 // contrato, nunca segredo; chaves continuam exclusivamente em variáveis do servidor.
 export const aiModelProfiles = pgTable('ai_model_profiles', {

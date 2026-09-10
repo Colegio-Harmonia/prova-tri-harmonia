@@ -1,6 +1,6 @@
-import { and, gte, isNull, lt, ne, or, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, isNull, lt, ne, or, sql } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { aiOperations } from '@/db/schema'
+import { aiBudgetResets, aiOperations } from '@/db/schema'
 
 export const AI_BUDGET_EXHAUSTED_CODE = 'daily_operation_budget_exhausted'
 export const DEFAULT_AI_DAILY_OPERATION_BUDGET = 50
@@ -64,6 +64,39 @@ export function nextAiBudgetWindowStart(now = new Date()) {
   return saoPauloWindow(now).end
 }
 
+export const AI_BUDGET_PURPOSES: AiBudgetPurpose[] = ['text_generation', 'image_generation', 'image_validation', 'scan_transcription']
+
+export function aiBudgetLimit(purpose: AiBudgetPurpose) {
+  return parseAiDailyOperationBudget(process.env[PURPOSE_ENV[purpose]] ?? process.env.AI_DAILY_OPERATION_BUDGET)
+}
+
+async function budgetResetStart(purpose: AiBudgetPurpose, start: Date) {
+  const reset = await db.query.aiBudgetResets.findFirst({
+    where: and(gte(aiBudgetResets.createdAt, start), or(isNull(aiBudgetResets.purpose), eq(aiBudgetResets.purpose, purpose))),
+    orderBy: [desc(aiBudgetResets.createdAt)],
+  })
+  return reset?.createdAt && reset.createdAt > start ? reset.createdAt : start
+}
+
+export async function getAiBudgetSnapshot(now = new Date()) {
+  const { start, end } = saoPauloWindow(now)
+  return Promise.all(AI_BUDGET_PURPOSES.map(async (purpose) => {
+    const usedSince = await budgetResetStart(purpose, start)
+    const operationScope = purpose === 'text_generation'
+      ? sql`${aiOperations.operation} NOT LIKE 'images/%' AND ${aiOperations.operation} NOT LIKE 'scans/%'`
+      : purpose === 'image_generation'
+        ? sql`${aiOperations.operation} LIKE 'images/%' AND ${aiOperations.operation} NOT LIKE 'images/validate%'`
+        : purpose === 'image_validation'
+          ? sql`${aiOperations.operation} LIKE 'images/validate%'`
+          : sql`${aiOperations.operation} LIKE 'scans/%'`
+    const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(aiOperations).where(and(
+      gte(aiOperations.createdAt, usedSince), lt(aiOperations.createdAt, end),
+      or(isNull(aiOperations.errorCode), ne(aiOperations.errorCode, AI_BUDGET_EXHAUSTED_CODE)), operationScope,
+    ))
+    return { purpose, limit: aiBudgetLimit(purpose), used: Number(row?.count ?? 0), resetAt: usedSince, nextResetAt: end }
+  }))
+}
+
 /**
  * Reserva uma chamada antes de contatar o provedor. O contador persistido
  * cobre reinícios; a reserva em memória evita que requisições concorrentes
@@ -72,7 +105,7 @@ export function nextAiBudgetWindowStart(now = new Date()) {
  */
 export async function reserveAiOperation(operation = 'text_generation', now = new Date()): Promise<AiOperationReservation> {
   const purpose = budgetPurposeForOperation(operation)
-  const limit = parseAiDailyOperationBudget(process.env[PURPOSE_ENV[purpose]] ?? process.env.AI_DAILY_OPERATION_BUDGET)
+  const limit = aiBudgetLimit(purpose)
   if (limit === 0) return { release: () => undefined }
 
   const { key: dayKey, start, end } = saoPauloWindow(now)
@@ -88,7 +121,7 @@ export async function reserveAiOperation(operation = 'text_generation', now = ne
     .select({ count: sql<number>`count(*)::int` })
     .from(aiOperations)
     .where(and(
-      gte(aiOperations.createdAt, start),
+      gte(aiOperations.createdAt, await budgetResetStart(purpose, start)),
       lt(aiOperations.createdAt, end),
       or(isNull(aiOperations.errorCode), ne(aiOperations.errorCode, AI_BUDGET_EXHAUSTED_CODE)),
       operationScope,
