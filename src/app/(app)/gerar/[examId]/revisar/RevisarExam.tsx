@@ -70,7 +70,7 @@ const STATUS_LABELS: Record<string, string> = {
   rascunho: 'Rascunho',
   atribuido: 'Atribuído',
   em_andamento: 'Em andamento',
-  em_revisao: 'Em revisão',
+  em_revisao: 'Em aprovação',
   revisao_concluida: 'Revisão concluída',
   aprovado: 'Aprovado',
   impresso: 'Impresso',
@@ -395,7 +395,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
       {reviewBlocker && (
         <div role="dialog" aria-modal="true" aria-labelledby="review-blocker-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setReviewBlocker(null)}>
           <div className="w-full max-w-md rounded-xl bg-surface p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <h2 id="review-blocker-title" className="text-base font-semibold">Ainda não é possível concluir a revisão</h2>
+            <h2 id="review-blocker-title" className="text-base font-semibold">Ainda não é possível aprovar a prova</h2>
             <p className="mt-1 text-sm text-neutral-600">Faltam decisões humanas nos itens abaixo:</p>
             <ul className="mt-3 space-y-1 text-sm">{reviewBlocker.map((item) => <li key={item}>• {item}</li>)}</ul>
             <button onClick={() => setReviewBlocker(null)} className="mt-4 rounded bg-harmonia-green px-3 py-2 text-sm font-medium text-white">Continuar revisando</button>
@@ -473,7 +473,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
               disabled={transitioning}
               className="rounded bg-harmonia-green px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
             >
-              Iniciar revisão
+              Iniciar aprovação
             </button>
           )}
 
@@ -700,7 +700,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
 
             {reviewEditable && (
               <div className="mt-4 space-y-3 rounded border border-border bg-surface-subtle p-3">
-                <p className="text-xs text-neutral-600">Decida esta questão para concluir a revisão.</p>
+                <p className="text-xs text-neutral-600">Decida esta questão para liberar a aprovação definitiva.</p>
                 <div className="flex flex-wrap gap-2">
                   {q.review?.adequacy === 'adequada' ? (
                     <button onClick={() => handleReviewNote(q.number, { adequacy: null })} disabled={savingReview === q.number} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary disabled:opacity-60">Cancelar aceitação da questão</button>

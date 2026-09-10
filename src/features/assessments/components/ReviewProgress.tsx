@@ -1,6 +1,6 @@
 import type { ExamKind } from '@/db/schema'
 
-const PROOF_STEPS = ['Atribuída', 'Em revisão', 'Aprovada', 'Impressa', 'Aplicada', 'Correção']
+const PROOF_STEPS = ['Atribuída', 'Em aprovação', 'Aprovada', 'Impressa', 'Aplicada', 'Correção']
 const PROOF_STATUSES = ['atribuido', 'em_revisao', 'aprovado', 'impresso', 'aplicado', 'parcialmente_corrigida', 'corrigido']
 const ACTIVITY_STEPS = ['Rascunho', 'Finalizada', 'Aplicada', 'Corrigida']
 const ACTIVITY_STATUSES = ['rascunho', 'aprovado', 'aplicado', 'corrigido']
