@@ -105,6 +105,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
   }
 
   if (action === 'concluir_revisao') {
+    const payload = exam.generationPayload as ExamGenerationResult
+    const pendingReview = payload.questions.filter((question) => question.review?.adequacy !== 'adequada').map((question) => question.number)
+    if (pendingReview.length) {
+      return NextResponse.json({ error: `Revise todas as questões antes de concluir. Pendentes: ${pendingReview.map((number) => `Q${number}`).join(', ')}.` }, { status: 409 })
+    }
     await db
       .update(generatedExams)
       .set({ status: 'revisao_concluida', reviewReadyNotifiedAt: new Date() })

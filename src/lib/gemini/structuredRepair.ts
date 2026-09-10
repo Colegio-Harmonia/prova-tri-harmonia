@@ -79,7 +79,7 @@ export async function generateValidatedStructuredContent<TParsed, TValue = TPars
   for (let attempt = 1; attempt <= attemptsLimit; attempt++) {
     let reservation: Awaited<ReturnType<typeof reserveAiOperation>> | undefined
     try {
-      reservation = await reserveAiOperation()
+      reservation = await reserveAiOperation(context)
       const completion = await generateStructuredCompletion(currentPrompt, responseSchema)
       const parsed = zodSchema.safeParse(completion.value)
 

@@ -14,13 +14,11 @@ import {
   type SingleQuestionResult,
 } from '@/lib/gemini/examSchema'
 import { correctSingleQuestion } from '@/lib/gemini/examValidator'
-import { RequiredQuestionImageError, resolveQuestionImage } from '@/lib/images/questionImageService'
+import { resolveQuestionImage } from '@/lib/images/questionImageService'
 import { authorizeExamAccess } from '@/lib/exams/authorizeExamAccess'
 import { persistGeneratedQuestionClassifications } from '@/lib/pedagogical/generatedQuestionClassificationService'
 import { generateValidatedStructuredContent, StructuredGenerationError } from '@/lib/gemini/structuredRepair'
 import { aiFailureResponse } from '@/lib/ai/routeFailure'
-import { isPedagogicalQualityGateEnabled } from '@/lib/pedagogical/generationQualityGate'
-import { validateGeneratedQuestionPedagogicalFidelity } from '@/lib/pedagogical/generationQualityGateService'
 import {
   REPLACEMENT_STRATEGIES,
   findExcludedTopicsInQuestion,
@@ -70,7 +68,6 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
   }
 
   try {
-    const qualityGateEnabled = isPedagogicalQualityGateEnabled()
     const curriculum = await getCurriculumForExam({
       segment: exam.segment,
       gradeYear: exam.gradeYear,
@@ -111,12 +108,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
             issues.push(`A questão ainda contém o(s) tópico(s) que deveriam ser excluídos: ${foundExcludedTopics.join(', ')}.`)
           }
         }
-        if (qualityGateEnabled && !question.pedagogicalClassification.difficulty) {
-          issues.push(`Questão ${question.number}: difficulty é obrigatória para geração com o gate pedagógico ativo.`)
-        }
-        if (issues.length || !qualityGateEnabled) return { value: question, issues, warnings }
-        const fidelity = await validateGeneratedQuestionPedagogicalFidelity(curriculum, question)
-        return { value: fidelity.question, issues: fidelity.issues, warnings: [...warnings, ...fidelity.warnings] }
+        return { value: question, issues, warnings }
       },
     })
 
@@ -131,9 +123,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
           resolved = await resolveQuestionImage(question.imageQuery, question.statement)
         }
       }
-      if (!resolved && qualityGateEnabled) {
-        throw new RequiredQuestionImageError([question.number])
-      }
+      // A indisponibilidade visual não descarta uma questão válida. O
+      // revisor pode solicitar a imagem novamente na própria tela.
       if (resolved) question = { ...question, image: { ...resolved, approved: false } }
     }
 
@@ -164,12 +155,6 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
   } catch (err) {
     if (err instanceof StructuredGenerationError) {
       return aiFailureResponse(err, 'A IA não retornou uma questão válida após as tentativas de reparo.')
-    }
-    if (err instanceof RequiredQuestionImageError) {
-      return NextResponse.json({
-        error: 'A questão solicitou recurso visual, mas ele não ficou disponível após as tentativas automáticas. A questão anterior foi preservada.',
-        questionNumbers: err.questionNumbers,
-      }, { status: 502 })
     }
     console.error('[exams/regenerate-question] erro:', err)
     return aiFailureResponse(err, 'Erro ao gerar questão de substituição.')

@@ -27,7 +27,7 @@ export async function claimNextJob(jobTypes?: GenerationJobType[]): Promise<Clai
     SET status = 'gerando', started_at = now(), attempts = attempts + 1
     WHERE id = (
       SELECT id FROM generation_jobs
-      WHERE status = 'pendente'
+      WHERE status = 'pendente' AND (available_at IS NULL OR available_at <= now())
       ${jobTypeFilter}
       ORDER BY priority, id
       LIMIT 1
@@ -77,6 +77,14 @@ export async function failJob(job: Pick<ClaimedJob, 'id' | 'attempts' | 'maxAtte
   return nextStatus
 }
 
+/** Cota não é falha do pedido: devolve o job à fila sem consumir tentativa. */
+export async function deferJobForAiBudget(job: Pick<ClaimedJob, 'id' | 'attempts'>, availableAt: Date, message: string): Promise<void> {
+  await db.update(generationJobs).set({
+    status: 'pendente', attempts: Math.max(0, job.attempts - 1), availableAt,
+    errorMessage: message.slice(0, 2000), startedAt: null, finishedAt: null,
+  }).where(and(eq(generationJobs.id, job.id), eq(generationJobs.status, 'gerando')))
+}
+
 // Recuperação de crash: job preso em 'gerando' além do limite (worker caiu
 // no meio) volta pra fila se ainda tem tentativa, senão vira erro. Rodado
 // na subida do worker e periodicamente durante o loop.
@@ -117,7 +125,7 @@ export async function cancelJob(jobId: number): Promise<boolean> {
 export async function retryJob(jobId: number): Promise<boolean> {
   const rows = await db
     .update(generationJobs)
-    .set({ status: 'pendente', attempts: 0, errorMessage: null, startedAt: null, finishedAt: null })
+    .set({ status: 'pendente', attempts: 0, errorMessage: null, startedAt: null, finishedAt: null, availableAt: null })
     .where(and(eq(generationJobs.id, jobId), eq(generationJobs.status, 'erro')))
     .returning({ id: generationJobs.id })
   return rows.length > 0

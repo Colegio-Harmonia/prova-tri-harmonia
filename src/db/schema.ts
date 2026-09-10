@@ -766,6 +766,8 @@ export const generationJobs = pgTable('generation_jobs', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
   startedAt: timestamp('started_at'),
   finishedAt: timestamp('finished_at'),
+  // Job adiado por cota de IA; a fila o retoma após este instante.
+  availableAt: timestamp('available_at'),
 }, (table) => ({
   // Índice parcial usado pelo claim do worker (FOR UPDATE SKIP LOCKED).
   pollIdx: index('generation_jobs_poll_idx').on(table.status, table.priority, table.id).where(sql`${table.status} = 'pendente'`),

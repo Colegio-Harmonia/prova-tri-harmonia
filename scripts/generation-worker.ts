@@ -14,8 +14,9 @@ import path from 'node:path'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/client'
 import { GENERATION_JOB_TYPES, users } from '../src/db/schema'
-import { claimNextJob, completeJob, failJob, requeueStaleJobs, type ClaimedJob } from '../src/lib/queue/claim'
+import { claimNextJob, completeJob, deferJobForAiBudget, failJob, requeueStaleJobs, type ClaimedJob } from '../src/lib/queue/claim'
 import { executeJob, gerarProvaJobLabel } from '../src/lib/queue/handlers'
+import { AiBudgetExceededError, nextAiBudgetWindowStart } from '../src/lib/ai/operationBudget'
 import { sendChatGenerationJobNotification } from '../src/lib/notifications/googleChat'
 
 const POLL_MS = 3_000
@@ -81,6 +82,12 @@ async function runOnce(job: ClaimedJob) {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
+    if (err instanceof AiBudgetExceededError) {
+      const availableAt = nextAiBudgetWindowStart()
+      await deferJobForAiBudget(job, availableAt, `${message} A geração será retomada automaticamente após ${availableAt.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}.`)
+      console.warn(`[worker] job #${job.id} aguardando cota de ${err.purpose}; tentativa preservada.`)
+      return
+    }
     const nextStatus = await failJob(job, message)
     console.error(`[worker] job #${job.id} falhou (${nextStatus === 'pendente' ? 'vai retentar' : 'erro definitivo'}): ${message}`)
     // Falha definitiva só vira DM em job disparado pelo usuário — job

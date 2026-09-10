@@ -41,7 +41,7 @@ export async function generateIllustration(query: string, context: string, expec
       : ' NÃO crie folha de atividade. NÃO inclua enunciado, instruções, títulos, letras, números, legendas, balões de fala ou qualquer texto. A instrução e qualquer texto verificável serão exibidos fora da imagem pela aplicação.')
 
   try {
-    reservation = await reserveAiOperation()
+    reservation = await reserveAiOperation('images/generate-illustration')
     if (profile.provider === 'openai') {
       const { data } = await axios.post(OPENAI_IMAGES_URL, openAiImageGenerationPayload(model, prompt), {
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },

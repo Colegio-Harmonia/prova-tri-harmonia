@@ -113,6 +113,7 @@ export async function GET(req: NextRequest) {
       createdAt: generationJobs.createdAt,
       startedAt: generationJobs.startedAt,
       finishedAt: generationJobs.finishedAt,
+      availableAt: generationJobs.availableAt,
     })
     .from(generationJobs)
     .innerJoin(users, eq(users.id, generationJobs.requestedBy))
@@ -143,6 +144,7 @@ export async function GET(req: NextRequest) {
         createdAt: row.createdAt,
         startedAt: row.startedAt,
         finishedAt: row.finishedAt,
+        availableAt: row.availableAt,
       }
     }),
   })

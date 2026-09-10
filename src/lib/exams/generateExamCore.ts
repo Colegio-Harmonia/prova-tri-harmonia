@@ -12,7 +12,7 @@ import { buildBankExamQuestions } from '@/lib/gemini/enemBankMerge'
 import { persistGeneratedQuestionClassifications } from '@/lib/pedagogical/generatedQuestionClassificationService'
 import { generateValidatedStructuredContent } from '@/lib/gemini/structuredRepair'
 import { isPedagogicalQualityGateEnabled } from '@/lib/pedagogical/generationQualityGate'
-import { validateGeneratedExamPedagogicalFidelity, validateGeneratedQuestionPedagogicalFidelity } from '@/lib/pedagogical/generationQualityGateService'
+import { validateGeneratedExamPedagogicalFidelity } from '@/lib/pedagogical/generationQualityGateService'
 import { buildPlannedQuestionSlots, shouldRequireVisualAid, validateCurriculumPlan, type PlannedQuestionSlot } from '@/lib/exams/contentPlan'
 import { assembleBestExamCandidates, compactQuestionContext, validateExamAssembly, type QuestionCandidate } from '@/lib/exams/examQualityAssembly'
 import { auditFinalExamQuality } from '@/lib/exams/examQualityAudit'
@@ -144,9 +144,6 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
     if (params.contentPlan?.length) {
       const slots = buildPlannedQuestionSlots(params.contentPlan, params.questionCount)
       const byRowIndex = new Map(curriculum.units.map((unit) => [unit.rowIndex, unit]))
-      const candidateCountByUnit = new Map<number, number>()
-      for (const slot of slots) candidateCountByUnit.set(slot.unitRowIndex, (candidateCountByUnit.get(slot.unitRowIndex) ?? 0) + 1)
-
       const generateCandidate = async (slot: PlannedQuestionSlot, candidateNumber: number, avoidStatement: string, avoidContext?: string): Promise<QuestionCandidate> => {
         const unit = byRowIndex.get(slot.unitRowIndex)
         if (!unit) throw new ExamGenerationInputError(`Capítulo ${slot.unitRowIndex} não foi encontrado no planejamento.`)
@@ -176,7 +173,9 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
               question = { ...question, needsImage: true, imageQuery: question.imageQuery?.trim() || fallbackQuery }
               questionWarnings.push(`Questão ${slot.number}: recurso visual obrigatório foi normalizado a partir do capítulo.`)
             }
-            if (qualityGateEnabled && !question.pedagogicalClassification.difficulty) issues.push(`Questão ${slot.number}: difficulty é obrigatória para geração com o gate pedagógico ativo.`)
+            // Difficulty não é requisito de aprovação da prova. O professor
+            // não escolhe essa escala na composição e ela não pode tornar um
+            // item curricularmente válido inviável por mera omissão da IA.
             // A revisão cega pedagógica é feita uma única vez sobre a prova
             // montada. Executá-la por item multiplica chamadas e torna uma
             // divergência local capaz de abortar toda a prova.
@@ -192,13 +191,6 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
       for (const slot of slots) {
         const first = await generateCandidate(slot, 1, 'Não há questão anterior; crie um item original.')
         candidates.push(first)
-        // Uma candidata extra só onde o risco de repetição é maior: capítulo
-        // repetido ou item que depende de recurso visual. Assim não dobra o
-        // custo de provas com capítulos naturalmente diversos.
-        const needsAlternative = (candidateCountByUnit.get(slot.unitRowIndex) ?? 0) > 1 || slot.visualAid === 'obrigatorio'
-        if (needsAlternative) {
-          candidates.push(await generateCandidate(slot, 2, first.question.statement, compactQuestionContext(candidates.map((candidate) => candidate.question), slot.number)))
-        }
       }
 
       aiQuestions = assembleBestExamCandidates(slots, candidates)

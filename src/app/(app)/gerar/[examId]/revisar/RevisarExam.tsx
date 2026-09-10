@@ -66,10 +66,6 @@ const IMAGE_SOURCE_LABELS: Record<string, string> = {
   enem: 'Original da prova do ENEM (mesma imagem aplicada na época)',
 }
 
-const ADEQUACY_OPTIONS: { value: 'adequada' | 'inadequada'; label: string }[] = [
-  { value: 'adequada', label: 'Adequada' },
-  { value: 'inadequada', label: 'Inadequada' },
-]
 const STATUS_LABELS: Record<string, string> = {
   rascunho: 'Rascunho',
   atribuido: 'Atribuído',
@@ -107,14 +103,8 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
 
   const [regeneratingQuestion, setRegeneratingQuestion] = useState<number | null>(null)
   const [savingReview, setSavingReview] = useState<number | null>(null)
-  const [commentDrafts, setCommentDrafts] = useState<Record<number, string>>({})
-  const [imageQueryDrafts, setImageQueryDrafts] = useState<Record<number, string>>({})
-  const [imageTextDrafts, setImageTextDrafts] = useState<Record<number, string>>({})
-  const [imageUrlDrafts, setImageUrlDrafts] = useState<Record<number, string>>({})
-  const [imageRequestOpen, setImageRequestOpen] = useState<number | null>(null)
-  const [imageRequestMode, setImageRequestMode] = useState<'buscar' | 'url'>('buscar')
   const [requestingImage, setRequestingImage] = useState<number | null>(null)
-  const [importingImage, setImportingImage] = useState<number | null>(null)
+  const [imageConfirmation, setImageConfirmation] = useState<number | null>(null)
   const [actionError, setActionError] = useState<Record<number, string>>({})
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [expandedImageQuestion, setExpandedImageQuestion] = useState<number | null>(null)
@@ -223,25 +213,20 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
     }
   }
 
-  async function handleRegenerateQuestion(questionNumber: number, currentComment: string | null) {
+  async function handleRegenerateQuestion(questionNumber: number) {
     setRegeneratingQuestion(questionNumber)
     setActionError((prev) => ({ ...prev, [questionNumber]: '' }))
     try {
       const res = await fetch(`/api/exams/${examId}/regenerate-question`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ questionNumber, reviewFeedback: currentComment || null }),
+        body: JSON.stringify({ questionNumber }),
       })
       const data = await res.json()
       if (!res.ok) {
         setActionError((prev) => ({ ...prev, [questionNumber]: data.error ?? 'Erro ao trocar questão.' }))
         return
       }
-      setCommentDrafts((prev) => {
-        const next = { ...prev }
-        delete next[questionNumber]
-        return next
-      })
       await load()
     } catch {
       setActionError((prev) => ({ ...prev, [questionNumber]: 'Falha de rede ao trocar questão.' }))
@@ -250,23 +235,25 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
     }
   }
 
-  async function handleRequestImage(questionNumber: number) {
-    const query = imageQueryDrafts[questionNumber]?.trim()
-    if (!query) return
+  async function handleRequestImage(questionNumber: number, force = false) {
     setRequestingImage(questionNumber)
     setActionError((prev) => ({ ...prev, [questionNumber]: '' }))
     try {
       const res = await fetch(`/api/exams/${examId}/request-image`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ questionNumber, query, expectedText: imageTextDrafts[questionNumber]?.trim() || undefined }),
+        body: JSON.stringify({ questionNumber, force }),
       })
       const data = await res.json()
+      if (data.needsConfirmation) {
+        setImageConfirmation(questionNumber)
+        return
+      }
       if (!res.ok) {
         setActionError((prev) => ({ ...prev, [questionNumber]: data.error ?? 'Erro ao buscar imagem.' }))
         return
       }
-      setImageRequestOpen(null)
+      setImageConfirmation(null)
       await load()
     } catch {
       setActionError((prev) => ({ ...prev, [questionNumber]: 'Falha de rede ao buscar imagem.' }))
@@ -275,35 +262,6 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
     }
   }
 
-  async function handleImportImageUrl(questionNumber: number) {
-    const url = imageUrlDrafts[questionNumber]?.trim()
-    if (!url) return
-    setImportingImage(questionNumber)
-    setActionError((prev) => ({ ...prev, [questionNumber]: '' }))
-    try {
-      const res = await fetch(`/api/exams/${examId}/import-image`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ questionNumber, url }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        setActionError((prev) => ({ ...prev, [questionNumber]: data.error ?? 'Erro ao importar imagem.' }))
-        return
-      }
-      setImageRequestOpen(null)
-      setImageUrlDrafts((prev) => {
-        const next = { ...prev }
-        delete next[questionNumber]
-        return next
-      })
-      await load()
-    } catch {
-      setActionError((prev) => ({ ...prev, [questionNumber]: 'Falha de rede ao importar imagem.' }))
-    } finally {
-      setImportingImage(null)
-    }
-  }
 
   async function handleTransition(action: Action, assignedTo?: number, printWindow?: Window | null) {
     setTransitioning(true)
@@ -660,131 +618,20 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
 
             {reviewEditable && (
               <div className="mt-4 space-y-3 rounded border border-border bg-surface-subtle p-3">
-                <div className="flex flex-wrap items-center gap-4">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-medium text-neutral-500">Adequação:</span>
-                    {ADEQUACY_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.value}
-                        onClick={() => handleReviewNote(q.number, { adequacy: q.review?.adequacy === opt.value ? null : opt.value })}
-                        disabled={savingReview === q.number}
-                        className={`rounded px-2 py-1 text-xs font-medium disabled:opacity-60 ${
-                          q.review?.adequacy === opt.value
-                            ? opt.value === 'adequada'
-                              ? 'bg-harmonia-green text-white'
-                              : 'bg-red-600 text-white'
-                            : 'border border-border bg-surface text-content-primary'
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
+                <p className="text-xs text-neutral-600">Decida esta questão antes de concluir a revisão.</p>
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => handleReviewNote(q.number, { adequacy: 'adequada' })} disabled={savingReview === q.number} className="rounded bg-harmonia-green px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">
+                    {savingReview === q.number ? 'Salvando…' : 'Aceitar questão'}
+                  </button>
+                  {q.source !== 'enem_bank' && <button onClick={() => handleRegenerateQuestion(q.number)} disabled={regeneratingQuestion === q.number} className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">
+                    {regeneratingQuestion === q.number ? 'Gerando…' : 'Recusar e gerar nova'}
+                  </button>}
+                  {q.source !== 'enem_bank' && <button onClick={() => handleRegenerateQuestion(q.number)} disabled={regeneratingQuestion === q.number} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary disabled:opacity-60">Regenerar</button>}
+                  <button onClick={() => handleRequestImage(q.number)} disabled={requestingImage === q.number} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary disabled:opacity-60">
+                    {requestingImage === q.number ? 'Gerando imagem…' : q.image ? 'Gerar outra imagem' : 'Gerar imagem'}
+                  </button>
                 </div>
-
-                <div className="flex items-start gap-2">
-                  <textarea
-                    value={commentDrafts[q.number] ?? q.review?.comment ?? ''}
-                    onChange={(e) => setCommentDrafts((prev) => ({ ...prev, [q.number]: e.target.value }))}
-                    placeholder="Comentário para a coordenação (opcional)…"
-                    rows={2}
-                    className="flex-1 rounded border border-border bg-surface px-2 py-1 text-xs text-content-primary"
-                  />
-                  {commentDrafts[q.number] !== undefined && commentDrafts[q.number] !== (q.review?.comment ?? '') && (
-                    <button
-                      onClick={() => handleReviewNote(q.number, { comment: commentDrafts[q.number] || null })}
-                      disabled={savingReview === q.number}
-                      className="rounded bg-harmonia-green px-2 py-1 text-xs font-medium text-white disabled:opacity-60"
-                    >
-                      {savingReview === q.number ? 'Salvando…' : 'Salvar'}
-                    </button>
-                  )}
-                </div>
-
-                {q.source !== 'enem_bank' && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      onClick={() => handleRegenerateQuestion(q.number, commentDrafts[q.number] ?? q.review?.comment ?? null)}
-                      disabled={regeneratingQuestion === q.number}
-                      className="rounded border border-border bg-surface px-2 py-1 text-xs font-medium text-content-primary disabled:opacity-60"
-                    >
-                      {regeneratingQuestion === q.number ? 'Trocando…' : 'Trocar só essa questão'}
-                    </button>
-
-                    {imageRequestOpen === q.number ? (
-                      <div className="flex flex-col gap-1.5">
-                        <div className="flex items-center gap-1 text-xs">
-                          <button
-                            onClick={() => setImageRequestMode('buscar')}
-                            className={`rounded px-2 py-0.5 font-medium ${imageRequestMode === 'buscar' ? 'bg-action-primary text-action-primary-foreground' : 'border border-border bg-surface text-content-primary'}`}
-                          >
-                            Buscar/gerar
-                          </button>
-                          <button
-                            onClick={() => setImageRequestMode('url')}
-                            className={`rounded px-2 py-0.5 font-medium ${imageRequestMode === 'url' ? 'bg-action-primary text-action-primary-foreground' : 'border border-border bg-surface text-content-primary'}`}
-                          >
-                            Importar por link
-                          </button>
-                          <button onClick={() => setImageRequestOpen(null)} className="ml-1 text-neutral-400 underline">
-                            cancelar
-                          </button>
-                        </div>
-
-                        {imageRequestMode === 'buscar' ? (
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <input
-                              type="text"
-                              value={imageQueryDrafts[q.number] ?? ''}
-                              onChange={(e) => setImageQueryDrafts((prev) => ({ ...prev, [q.number]: e.target.value }))}
-                              placeholder="ex: mapa político da América do Sul, gráfico de barras…"
-                              className="w-64 rounded border border-neutral-300 px-2 py-1 text-xs"
-                            />
-                            <input
-                              type="text"
-                              value={imageTextDrafts[q.number] ?? ''}
-                              onChange={(e) => setImageTextDrafts((prev) => ({ ...prev, [q.number]: e.target.value }))}
-                              placeholder="Texto exato na imagem (opcional)"
-                              className="w-64 rounded border border-neutral-300 px-2 py-1 text-xs"
-                            />
-                            {imageTextDrafts[q.number]?.trim() && <span className="text-xs text-content-secondary">Usa DALL-E + validação Claude Vision.</span>}
-                            <button
-                              onClick={() => handleRequestImage(q.number)}
-                              disabled={requestingImage === q.number || !imageQueryDrafts[q.number]?.trim()}
-                              className="rounded bg-harmonia-green px-2 py-1 text-xs font-medium text-white disabled:opacity-60"
-                            >
-                              {requestingImage === q.number ? 'Buscando…' : 'Buscar/gerar'}
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1.5">
-                            <input
-                              type="url"
-                              value={imageUrlDrafts[q.number] ?? ''}
-                              onChange={(e) => setImageUrlDrafts((prev) => ({ ...prev, [q.number]: e.target.value }))}
-                              placeholder="https://... link direto pra imagem (mapa, gráfico, foto que você já achou)"
-                              className="w-72 rounded border border-neutral-300 px-2 py-1 text-xs"
-                            />
-                            <button
-                              onClick={() => handleImportImageUrl(q.number)}
-                              disabled={importingImage === q.number || !imageUrlDrafts[q.number]?.trim()}
-                              className="rounded bg-harmonia-green px-2 py-1 text-xs font-medium text-white disabled:opacity-60"
-                            >
-                              {importingImage === q.number ? 'Importando…' : 'Importar'}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => setImageRequestOpen(q.number)}
-                        className="rounded border border-border bg-surface px-2 py-1 text-xs font-medium text-content-primary"
-                      >
-                        {q.image ? 'Trocar imagem/gráfico/mapa' : '+ Adicionar imagem/gráfico/mapa'}
-                      </button>
-                    )}
-                  </div>
-                )}
+                {imageConfirmation === q.number && <div className="flex flex-wrap items-center gap-2 rounded bg-amber-50 p-2 text-xs text-amber-900"><span>Esta questão não precisa de imagem. Gerar mesmo assim?</span><button onClick={() => handleRequestImage(q.number, true)} className="rounded bg-amber-700 px-2 py-1 font-medium text-white">Gerar mesmo assim</button><button onClick={() => setImageConfirmation(null)} className="underline">Cancelar</button></div>}
 
                 {actionError[q.number] && <p className="text-xs text-red-600">{actionError[q.number]}</p>}
               </div>

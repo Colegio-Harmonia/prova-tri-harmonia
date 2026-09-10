@@ -10,8 +10,9 @@ import { authorizeExamAccess } from '@/lib/exams/authorizeExamAccess'
 
 const bodySchema = z.object({
   questionNumber: z.number().int(),
-  query: z.string().min(1),
+  query: z.string().min(1).optional(),
   expectedText: z.string().trim().min(1).max(600).optional(),
+  force: z.boolean().optional().default(false),
 })
 
 // Diferente de needsImage/imageQuery (decidido pela IA e limitado a
@@ -43,14 +44,28 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
   const question = payload.questions.find((q) => q.number === parsed.data.questionNumber)
   if (!question) return NextResponse.json({ error: 'Questão não encontrada.' }, { status: 404 })
 
+  // A primeira ação usa a análise já feita na geração da questão. Quando o
+  // item não exige visual, o professor recebe uma confirmação clara antes
+  // de gastar uma geração de imagem por escolha deliberada.
+  if (!parsed.data.force && !question.needsImage && !question.imageQuery) {
+    return NextResponse.json({
+      needsConfirmation: true,
+      message: 'A análise pedagógica indica que esta questão não precisa de imagem. Deseja gerar mesmo assim?',
+    })
+  }
+
+  const query = parsed.data.query?.trim() || question.imageQuery?.trim() ||
+    `${exam.subject}: ${question.bnccSummary ?? question.statement.slice(0, 220)}. Ilustração didática sem texto.`
+
   try {
-    const resolved = await resolveQuestionImage(parsed.data.query, question.statement, parsed.data.expectedText)
+    const questionContext = [question.supportText, question.statement, question.alternatives?.map((a) => `${a.letter}) ${a.text}`).join('\n')].filter(Boolean).join('\n')
+    const resolved = await resolveQuestionImage(query, questionContext, parsed.data.expectedText)
     if (!resolved) {
       return NextResponse.json({ error: 'Não foi possível encontrar nem gerar uma imagem para essa busca.' }, { status: 502 })
     }
 
     question.needsImage = true
-    question.imageQuery = parsed.data.query
+    question.imageQuery = query
     // Uma imagem pedida manualmente pelo revisor já é, por definição, uma
     // escolha humana — mas ainda passa pelo mesmo par aprovar/rejeitar da
     // tela de revisão antes de ir pro documento final (nunca aprovado

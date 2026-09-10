@@ -111,7 +111,7 @@ export async function transcribeDiscursiveAnswer(params: { image: Buffer; mimeTy
   let reservation: Awaited<ReturnType<typeof reserveAiOperation>> | undefined
   const startedAt = Date.now()
   try {
-    reservation = await reserveAiOperation()
+    reservation = await reserveAiOperation('scans/transcribe-discursive')
     const data = profile.provider === 'anthropic'
       ? (await axios.post(ANTHROPIC_MESSAGES_URL, {
           model: profile.model,

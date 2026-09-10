@@ -122,7 +122,7 @@ export async function generateStructuredContent(prompt: string, schema: object =
   let reservation: Awaited<ReturnType<typeof reserveAiOperation>> | undefined
   let profile: ActiveAiModel | undefined
   try {
-    reservation = await reserveAiOperation()
+    reservation = await reserveAiOperation(operation ?? 'text_generation')
     const completion = await generateStructuredCompletion(prompt, schema)
     profile = completion.profile
     if (operation) await recordAiOperation({ operation, provider: completion.provider, model: completion.model, status: 'succeeded', attempt: 1, durationMs: completion.durationMs, usage: completion.usage, modelProfileId: completion.profile.id, estimatedCostMicrousd: estimateAiCostMicrousd({ model: completion.profile, promptTokens: completion.usage.promptTokens, completionTokens: completion.usage.completionTokens }) })

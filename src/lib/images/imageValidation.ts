@@ -69,7 +69,7 @@ Texto exigido dentro da imagem: ${params.expectedText ? `"${params.expectedText}
 Rejeite a imagem se houver painel, diagrama ou elemento essencial incompleto; texto ilegível, truncado ou com palavras inventadas; ou se ela não servir ao brief. Quando houver texto exigido, confirme se ele está completo e legível; quando não houver, qualquer instrução de prova dentro da imagem deve ser rejeitada. Responda somente JSON com usable, layoutComplete, containsInstructionalText, textLegible, textMatchesExpected e reason.`
 
   try {
-    reservation = await reserveAiOperation()
+    reservation = await reserveAiOperation('images/validate-generated-image')
     const { data } = profile.provider === 'anthropic'
       ? await axios.post(ANTHROPIC_MESSAGES_URL, {
           model,
