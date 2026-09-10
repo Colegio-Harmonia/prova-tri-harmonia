@@ -9,7 +9,12 @@ import { authorizeExamAccess } from '@/lib/exams/authorizeExamAccess'
 
 const bodySchema = z.object({
   questionNumber: z.number().int(),
-  approved: z.boolean(),
+  approved: z.boolean().optional(),
+  remove: z.boolean().optional().default(false),
+}).superRefine((data, ctx) => {
+  if (!data.remove && typeof data.approved !== 'boolean') {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Informe a decisão da imagem.' })
+  }
 })
 
 export async function POST(req: NextRequest, props: { params: Promise<{ examId: string }> }) {
@@ -37,9 +42,19 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
   const question = payload.questions.find((q) => q.number === parsed.data.questionNumber)
   if (!question?.image) return NextResponse.json({ error: 'Questão não tem imagem associada.' }, { status: 404 })
 
-  question.image.approved = parsed.data.approved
+  if (parsed.data.remove) {
+    // Remover é uma decisão humana explícita: a questão volta a não usar
+    // recurso visual e deixa de gerar pendência de aprovação de imagem.
+    // O arquivo no Drive não é apagado pois pode ser um item reutilizado;
+    // só o vínculo desta questão é removido.
+    question.image = null
+    question.needsImage = false
+    question.imageQuery = null
+  } else {
+    question.image.approved = parsed.data.approved!
+  }
 
   await db.update(generatedExams).set({ generationPayload: payload }).where(eq(generatedExams.id, examId))
 
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true, removed: parsed.data.remove })
 }

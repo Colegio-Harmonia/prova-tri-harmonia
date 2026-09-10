@@ -242,6 +242,34 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
     }
   }
 
+  async function handleRemoveImage(questionNumber: number) {
+    setError(null)
+    try {
+      const res = await fetch(`/api/exams/${examId}/toggle-image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ questionNumber, remove: true }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.error ?? 'Erro ao remover imagem.')
+        return
+      }
+      setExam((current) => {
+        if (!current) return current
+        return {
+          ...current,
+          generationPayload: {
+            ...current.generationPayload,
+            questions: current.generationPayload.questions.map((item) => item.number === questionNumber ? { ...item, image: null, needsImage: false, imageQuery: null } : item),
+          },
+        }
+      })
+    } catch {
+      setError('Falha de rede ao remover imagem.')
+    }
+  }
+
   async function handleReviewNote(
     questionNumber: number,
     patch: { adequacy?: 'adequada' | 'inadequada' | null; comment?: string | null },
@@ -685,6 +713,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
                         <button onClick={() => handleToggleImage(q.number, false)} disabled={!reviewEditable} className="rounded border border-border bg-surface px-2 py-1 font-medium disabled:opacity-60">Rejeitar imagem</button>
                       </>
                     )}
+                    <button onClick={() => handleRemoveImage(q.number)} disabled={!reviewEditable} className="rounded border border-red-300 bg-surface px-2 py-1 font-medium text-red-700 disabled:opacity-60">Remover imagem</button>
                   </div>
                 </div>
                 </div>
