@@ -752,7 +752,7 @@ Toda geração de prova produz **3 documentos**:
   fazem sentido em documento impresso (cores de destaque, tipografia,
   cabeçalho), respeitando que impressão em P&B/tons de cinza é comum em
   escola — não depender só da cor pra diferenciar elementos.
-- Logo: `/assets/logo-harmonia.png` — logo recebido (triângulo verde +
+- Logo: `/public/brand/harmonia-logo-color.png` — logo recebido (triângulo verde +
   texto "Colégio Harmonia" em cinza, fundo transparente/branco). É um logo
   quadrado com ícone acima do texto — no cabeçalho da prova (topo
   esquerdo), usar em tamanho compacto; se o layout do cabeçalho precisar

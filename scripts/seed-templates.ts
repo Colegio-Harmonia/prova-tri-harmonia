@@ -14,7 +14,7 @@ import { getDriveClient, getDocsClient, findOrCreateFolder } from '../src/lib/do
 import { applyA4PageSize } from '../src/lib/docs/pageSetup'
 
 async function uploadLogo(drive: ReturnType<typeof getDriveClient>, folderId: string): Promise<string> {
-  const logoPath = path.resolve(__dirname, '../assets/logo-harmonia.png')
+  const logoPath = path.resolve(__dirname, '../public/brand/harmonia-logo-color.png')
   const { data } = await drive.files.create({
     requestBody: { name: 'logo-harmonia.png', parents: [folderId] },
     media: { mimeType: 'image/png', body: fs.createReadStream(logoPath) },
