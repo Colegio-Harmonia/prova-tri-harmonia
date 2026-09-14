@@ -24,9 +24,9 @@ export function RechartsBarChart({ title, categories, values, colors, subtitle, 
   if (!data.length) return null
 
   return (
-    <div className="rounded border border-neutral-200 bg-white p-4">
-      <p id={titleId} className="text-sm font-medium text-neutral-700">{title}</p>
-      {subtitle && <p className="text-xs text-neutral-400">{subtitle}</p>}
+    <div className="rounded border border-border bg-surface p-4 text-content-secondary">
+      <p id={titleId} className="text-sm font-medium text-content-primary">{title}</p>
+      {subtitle && <p className="text-xs text-content-muted">{subtitle}</p>}
       <div
         role="img"
         aria-labelledby={titleId}
@@ -36,14 +36,19 @@ export function RechartsBarChart({ title, categories, values, colors, subtitle, 
       >
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} layout="vertical" margin={{ top: 4, right: 32, bottom: 4, left: 0 }}>
-            <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
-            <YAxis type="category" dataKey="category" width={108} tick={{ fontSize: 11 }} />
-            <Tooltip cursor={{ fill: 'rgb(0 134 73 / 0.08)' }} />
+            <XAxis type="number" allowDecimals={false} stroke="currentColor" tick={{ fontSize: 11, fill: 'currentColor' }} />
+            <YAxis type="category" dataKey="category" width={108} stroke="currentColor" tick={{ fontSize: 11, fill: 'currentColor' }} />
+            <Tooltip
+              cursor={{ fill: 'rgb(var(--color-action-primary) / 0.08)' }}
+              contentStyle={{ backgroundColor: 'rgb(var(--color-surface-raised))', border: '1px solid rgb(var(--color-border))', borderRadius: '0.5rem', color: 'rgb(var(--color-content-primary))' }}
+              labelStyle={{ color: 'rgb(var(--color-content-primary))' }}
+              itemStyle={{ color: 'rgb(var(--color-content-secondary))' }}
+            />
             <Bar dataKey="value" radius={[0, 4, 4, 0]} isAnimationActive={false}>
               {data.map((entry) => (
                 <Cell key={entry.category} fill={entry.color} />
               ))}
-              <LabelList dataKey="value" position="right" fill="#374151" fontSize={11} />
+              <LabelList dataKey="value" position="right" fill="currentColor" fontSize={11} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>

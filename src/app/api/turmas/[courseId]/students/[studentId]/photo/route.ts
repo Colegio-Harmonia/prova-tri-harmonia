@@ -36,7 +36,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ cou
     const source = new URL(student.photoUrl)
     if (!source.hostname.endsWith('.googleusercontent.com')) return new NextResponse(null, { status: 404 })
 
-    const photo = await fetch(source, { headers: { Authorization: `Bearer ${session.googleAccessToken}` } })
+    // URLs de foto do Classroom podem redirecionar para outro host do
+    // Google. Alguns desses redirects removem o Authorization; tentar
+    // primeiro a URL assinada sem header e depois com token cobre os dois
+    // formatos devolvidos pela API.
+    let photo = await fetch(source, { redirect: 'follow' })
+    if (!photo.ok) photo = await fetch(source, { headers: { Authorization: `Bearer ${session.googleAccessToken}` }, redirect: 'follow' })
     if (!photo.ok || !photo.body) return new NextResponse(null, { status: photo.status === 401 || photo.status === 403 ? 404 : 502 })
     const contentType = photo.headers.get('content-type')
     if (!contentType?.startsWith('image/')) return new NextResponse(null, { status: 502 })

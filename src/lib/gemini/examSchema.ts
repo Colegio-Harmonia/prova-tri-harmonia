@@ -21,6 +21,19 @@ const pedagogicalClassificationSchema = z.object({
   difficulty: z.enum(['facil', 'media', 'dificil']).nullable().optional(),
 })
 
+// Ficha técnica interna. Ela é persistida junto da questão, mas não é
+// exibida na prova: serve para manter enunciado, solução, gabarito e visual
+// ancorados no mesmo modelo verificável.
+export const solutionBlueprintSchema = z.object({
+  domain: z.enum(['linear_system', 'rectangular_prism_volume', 'average_speed', 'percentage', 'ratio_proportion', 'other']),
+  variables: z.array(z.object({ symbol: z.string().min(1).max(12), meaning: z.string().min(1) })).default([]),
+  equations: z.array(z.string().min(1)).default([]),
+  values: z.record(z.string(), z.number()).default({}),
+  calculationSteps: z.array(z.string().min(1)).min(1),
+  derivedAnswer: z.string().min(1),
+  visualSpec: z.enum(['none', 'blank_coordinate_plane', 'coordinate_plane', 'chart']).default('none'),
+}).nullable().optional()
+
 export const examQuestionSchema = z.object({
   number: z.number().int(),
   // Vínculo opcional com a linha do planejamento escolar. Provas antigas
@@ -43,6 +56,7 @@ export const examQuestionSchema = z.object({
   correctLetter: z.string().nullable().optional(),
   expectedAnswer: z.string().nullable().optional(),
   gradingCriteria: z.string().nullable().optional(),
+  solutionBlueprint: solutionBlueprintSchema,
   // Resolução passo a passo com foco pedagógico (Módulo 3 — atividade de
   // reforço ENEM): gerada pelo DeepSeek DEPOIS da seleção das questões do
   // banco, nunca pela geração de prova comum. Vai pro documento "Gabarito
@@ -69,7 +83,7 @@ export const examQuestionSchema = z.object({
   // examValidator's hard-reset of this block for ineligible subjects).
   image: z
     .object({
-      source: z.enum(['busca', 'gerada', 'grafico', 'importado', 'enem']),
+      source: z.enum(['busca', 'gerada', 'grafico', 'diagrama', 'quimica', 'importado', 'enem']),
       driveFileId: z.string(),
       previewUrl: z.string(),
       approved: z.boolean(),
@@ -103,6 +117,10 @@ export const examGenerationResultSchema = z.object({
     objectiveCount: z.number().int(),
     discursiveCount: z.number().int(),
     alternativesCount: z.number().int(),
+    qualityTest: z.object({
+      version: z.string(), checkedAt: z.string(), repairedQuestionNumbers: z.array(z.number().int()), warnings: z.array(z.string()),
+      reports: z.array(z.object({ phase: z.string(), results: z.array(z.object({ questionNumber: z.number().int(), approved: z.boolean(), verdictReason: z.string().optional(), checks: z.array(z.object({ criterion: z.string(), status: z.enum(['aprovado', 'reprovado', 'não_aplicável']), evidence: z.string() })).optional(), answerKeyAudit: z.object({ declaredLetter: z.string().nullable(), independentlyDerivedLetter: z.string().nullable(), matchesDeclared: z.boolean(), evidence: z.string() }).nullable().optional(), issues: z.array(z.object({ severity: z.enum(['bloqueante', 'alerta']), reason: z.string() })) })) })).optional(),
+    }).optional(),
   }),
   questions: z.array(examQuestionSchema),
 })
@@ -160,6 +178,19 @@ export const GEMINI_RESPONSE_SCHEMA = {
           correctLetter: { type: 'string', nullable: true },
           expectedAnswer: { type: 'string', nullable: true },
           gradingCriteria: { type: 'string', nullable: true },
+          solutionBlueprint: {
+            type: 'object', nullable: true,
+            properties: {
+              domain: { type: 'string', enum: ['linear_system', 'rectangular_prism_volume', 'average_speed', 'percentage', 'ratio_proportion', 'other'] },
+              variables: { type: 'array', items: { type: 'object', properties: { symbol: { type: 'string' }, meaning: { type: 'string' } }, required: ['symbol', 'meaning'] } },
+              equations: { type: 'array', items: { type: 'string' } },
+              values: { type: 'object', additionalProperties: { type: 'number' } },
+              calculationSteps: { type: 'array', items: { type: 'string' } },
+              derivedAnswer: { type: 'string' },
+              visualSpec: { type: 'string', enum: ['none', 'blank_coordinate_plane', 'coordinate_plane', 'chart'] },
+            },
+            required: ['domain', 'variables', 'equations', 'values', 'calculationSteps', 'derivedAnswer', 'visualSpec'],
+          },
           bnccCodes: { type: 'array', items: { type: 'string' } },
           bnccStatus: { type: 'string', enum: ['mapeado', 'nao_mapeado'] },
           bnccSummary: { type: 'string', nullable: true, description: 'Resumo curto (uma frase) da habilidade testada, para a coluna "Habilidade" do Mapa da prova.' },
@@ -204,7 +235,7 @@ export const GEMINI_RESPONSE_SCHEMA = {
             required: ['applicable', 'approximate'],
           },
         },
-        required: ['number', 'type', 'weight', 'bloomLevel', 'statement', 'bnccCodes', 'bnccStatus', 'pedagogicalClassification', 'saeb', 'needsImage', 'alternatives', 'correctLetter'],
+        required: ['number', 'type', 'weight', 'bloomLevel', 'statement', 'bnccCodes', 'bnccStatus', 'pedagogicalClassification', 'saeb', 'needsImage', 'alternatives', 'correctLetter', 'solutionBlueprint'],
       },
     },
   },

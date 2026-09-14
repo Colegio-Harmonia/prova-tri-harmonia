@@ -85,14 +85,32 @@ Razoes calculadas com WCAG relative luminance. Texto normal exige ao menos
 
 | Par semantico | Claro | Escuro |
 | --- | ---: | ---: |
-| content-primary em surface | 15.70:1 | 14.27:1 |
-| content-secondary em surface | 8.28:1 | 10.29:1 |
-| content-muted em surface | 4.90:1 | 6.97:1 |
+| content-primary em surface | 15.70:1 | 11.85:1 |
+| content-secondary em surface | 8.28:1 | 8.56:1 |
+| content-muted em surface | 4.90:1 | 5.68:1 |
 | action-primary-foreground em action-primary | 4.66:1 | 6.33:1 |
 | content-inverse em action-danger | 6.21:1 | 5.98:1 |
 | content-inverse em status-success | 4.99:1 | 7.89:1 |
 | content-inverse em status-warning | 4.61:1 | 8.54:1 |
 | content-inverse em status-info | 5.75:1 | 7.67:1 |
+
+### Tints de status
+
+Alem da cor cheia de status, cada intencao expoe `status-<tom>-surface`,
+`status-<tom>-content` e `status-<tom>-border` em `src/app/globals.css`, com
+equivalentes claro e escuro. Eles substituem os tints literais do Tailwind
+(`bg-amber-50`, `text-red-700`) em alertas, faixas e cartoes de ocorrencia,
+que nao mudavam de cor no tema escuro.
+
+| Par semantico | Claro | Escuro |
+| --- | ---: | ---: |
+| status-success-content em status-success-surface | 5.59:1 | 8.52:1 |
+| status-warning-content em status-warning-surface | 6.37:1 | 9.13:1 |
+| status-danger-content em status-danger-surface | 6.80:1 | 8.12:1 |
+| status-info-content em status-info-surface | 7.15:1 | 8.45:1 |
+
+Os quatro pares atendem AA nos dois temas; a verificacao automatizada vive em
+`npm run test:theme-tokens`.
 
 ### Matriz de primitives
 

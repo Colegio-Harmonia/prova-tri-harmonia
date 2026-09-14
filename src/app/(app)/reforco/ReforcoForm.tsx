@@ -50,11 +50,11 @@ export default function ReforcoForm() {
       setSkills([])
       return
     }
-    fetch(`/api/enem-bank/skills?area=${area}`)
+    fetch('/api/enem-bank/skills?area=' + encodeURIComponent(area) + '&subject=' + encodeURIComponent(subject))
       .then((res) => res.json())
       .then((data) => setSkills(data.skills ?? []))
       .catch(() => setSkills([]))
-  }, [area])
+  }, [area, subject])
 
   // Turmas do Classroom são opcionais aqui — sem conexão Google o select
   // simplesmente não aparece (a publicação pode ser feita depois).

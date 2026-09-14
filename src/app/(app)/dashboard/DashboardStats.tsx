@@ -23,16 +23,16 @@ export default function DashboardStats() {
 
   if (error) {
     return (
-      <p className="text-sm text-red-600">
+      <p className="text-sm text-status-danger-content">
         {error instanceof ApiError ? error.message : 'Falha ao carregar estatísticas.'}
       </p>
     )
   }
-  if (isPending || !stats) return <p className="text-sm text-neutral-500">Carregando…</p>
+  if (isPending || !stats) return <p className="text-sm text-content-muted">Carregando…</p>
 
   if (stats.total === 0) {
     return (
-      <div className="rounded border border-neutral-200 bg-white p-8 text-center text-sm text-neutral-500">
+      <div className="rounded border border-border bg-surface p-8 text-center text-sm text-content-muted">
         Nenhuma prova gerada ainda. Assim que você gerar a primeira, as estatísticas aparecem aqui.
       </div>
     )

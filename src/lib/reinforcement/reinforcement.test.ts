@@ -70,4 +70,17 @@ describe('distributeAcrossSkills', () => {
     const ids = result.selected.map((c) => c.id)
     expect(new Set(ids).size).toBe(ids.length)
   })
+
+  it('não fixa a fila em um único ano quando há candidatos de anos diferentes', () => {
+    const candidates = new Map([[
+      'H3',
+      [
+        { ...candidate(1, 'H3'), year: 2025 },
+        { ...candidate(2, 'H3'), year: 2024 },
+        { ...candidate(3, 'H3'), year: 2015 },
+      ],
+    ]])
+    const result = distributeAcrossSkills(candidates, 3)
+    expect(new Set(result.selected.map((item) => item.year))).toEqual(new Set([2025, 2024, 2015]))
+  })
 })

@@ -90,7 +90,7 @@ export default function TurmaDetail({ courseId }: { courseId: string }) {
       {students.length === 0 ? <p className="px-5 py-6 text-sm text-content-secondary">Nenhum aluno matriculado nesta turma no Classroom.</p> : <ul className="divide-y divide-border">
         {students.map((student) => <li key={student.classroomStudentId} className="flex items-center gap-3 px-5 py-3">
           {student.photoUrl ? <img src={`/api/turmas/${courseId}/students/${encodeURIComponent(student.classroomStudentId)}/photo`} alt="" className="h-10 w-10 shrink-0 rounded-full bg-surface-subtle object-cover" onError={(event) => { event.currentTarget.style.display = 'none' }} /> : <Initials name={student.name} />}
-          <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-content-primary">{student.name}</p>{student.email && <p className="truncate text-xs text-content-muted">{student.email}</p>}</div>
+          <Link href={`/turmas/${courseId}/alunos/${encodeURIComponent(student.classroomStudentId)}`} className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-content-primary hover:text-harmonia-green hover:underline">{student.name}</p>{student.email && <p className="truncate text-xs text-content-muted">{student.email}</p>}</Link>
           <div className="text-right"><p className="text-sm font-semibold text-content-primary">{student.averageGrade === null ? '—' : student.averageGrade.toFixed(1)}</p><p className="text-xs text-content-muted">{student.corrected} corrigida{student.corrected === 1 ? '' : 's'}</p></div>
         </li>)}
       </ul>}

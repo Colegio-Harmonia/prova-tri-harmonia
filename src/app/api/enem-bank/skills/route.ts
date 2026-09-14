@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { sql } from 'drizzle-orm'
 import { db } from '@/db/client'
 import { auth } from '@/auth/auth'
+import { getEnemAreaForSubject, getEnemCompetenciesForSubject } from '@/config/enemAreaMap'
 
 const AREAS = ['linguagens', 'matematica', 'ciencias-natureza', 'ciencias-humanas']
 
@@ -17,9 +18,14 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url)
   const area = searchParams.get('area')
+  const subject = searchParams.get('subject')
   if (!area || !AREAS.includes(area)) {
     return NextResponse.json({ error: 'Parâmetro "area" inválido ou ausente.' }, { status: 400 })
   }
+  if (subject && getEnemAreaForSubject(subject) !== area) {
+    return NextResponse.json({ error: 'A disciplina informada não corresponde à área ENEM.' }, { status: 400 })
+  }
+  const allowedCompetencies = subject ? getEnemCompetenciesForSubject(subject) : null
 
   const rows = await db.execute<{ code: string; description: string; number: number }>(
     sql`
@@ -32,8 +38,11 @@ export async function GET(req: NextRequest) {
     `,
   )
 
+  const visibleRows = (rows as Array<{ code: string; description: string; number: number }>)
+    .filter((r) => !allowedCompetencies || allowedCompetencies.includes(r.number))
+
   return NextResponse.json({
-    skills: (rows as Array<{ code: string; description: string; number: number }>).map((r) => ({
+    skills: visibleRows.map((r) => ({
       code: r.code,
       description: r.description,
       competencyNumber: r.number,

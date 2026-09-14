@@ -1,6 +1,6 @@
 import { db } from '@/db/client'
 import { generatedExams } from '@/db/schema'
-import { getEnemAreaForSubject } from '@/config/enemAreaMap'
+import { getEnemAreaForSubject, getEnemCompetenciesForSubject, isEnemSkillAllowedForSubject } from '@/config/enemAreaMap'
 import { buildBankExamQuestions } from '@/lib/gemini/enemBankMerge'
 import { ExamGenerationInputError } from '@/lib/exams/generateExamCore'
 import { selectReinforcementQuestions } from './selectQuestions'
@@ -45,11 +45,19 @@ export async function generateReinforcementCore(params: ReinforcementCoreParams,
     throw new ExamGenerationInputError('Selecione pelo menos uma habilidade INEP (H1-H30).')
   }
 
+  const incompatibleSkills = skillCodes.filter((code) => !isEnemSkillAllowedForSubject(params.subject, code))
+  if (incompatibleSkills.length) {
+    throw new ExamGenerationInputError(
+      'As habilidades ' + incompatibleSkills.join(', ') + ' não pertencem à disciplina ' + params.subject + '. Ajuste a seleção de habilidades.',
+    )
+  }
+
   const selection = await selectReinforcementQuestions({
     area,
     skillCodes,
     count: params.questionCount,
     year: params.enemQuestionYear,
+    competencyNumbers: getEnemCompetenciesForSubject(params.subject),
   })
   if (!selection.selected.length) {
     throw new ExamGenerationInputError(

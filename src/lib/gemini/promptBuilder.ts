@@ -96,10 +96,17 @@ export function buildSaebInstruction(curriculum: CurriculumSelection): string {
   }. Preencha saeb.source:"classica" e saeb.value com o CÓDIGO exato escolhido da lista acima (ex: "D7", "H10", "2N1.3", "B3"), nunca um tópico genérico nem um código inventado fora da lista.`
 }
 
+function isChemistrySubject(subject: string): boolean {
+  return /^(química|quimica)$/i.test(subject.trim())
+}
+
 export function buildImageInstruction(subject: string): string {
-  return isImageEligibleSubject(subject)
-    ? `Para questões onde uma imagem de apoio (diagrama, mapa, ilustração, foto) tornaria a questão mais clara ou pedagogicamente melhor: needsImage:true e imageQuery com uma consulta de busca curta e específica em português (ex: "célula animal diagrama partes", "mapa político da Europa 1945", "ciclo da água ilustração"). Nem toda questão precisa de imagem — use com critério. Não descreva a imagem no statement, só no imageQuery.`
-    : `Esta disciplina não está habilitada para imagens nesta versão — sempre retorne needsImage:false e imageQuery:null.`
+  if (!isImageEligibleSubject(subject)) {
+    return `Esta disciplina não está habilitada para imagens nesta versão — sempre retorne needsImage:false e imageQuery:null.`
+  }
+  const base = `Para questões onde uma imagem de apoio (diagrama, mapa, ilustração, foto) tornaria a questão mais clara ou pedagogicamente melhor: needsImage:true e imageQuery com uma consulta de busca curta e específica em português (ex: "célula animal diagrama partes", "mapa político da Europa 1945", "ciclo da água ilustração"). O imageQuery precisa descrever um recurso visual CONCRETO e desenhável (com coordenadas, valores ou forma exata quando aplicável para que o gráfico seja determinístico), nunca apenas o nome do capítulo ou do tópico curricular. Se você não conseguir especificar o visual de forma concreta, prefira needsImage:false e escreva a questão SEM depender de figura — nunca diga "observe o gráfico/diagrama ao lado" sem ter certeza de que a figura será gerada. Nem toda questão precisa de imagem — use com critério. Não descreva a imagem no statement, só no imageQuery.`
+  const chemistry = ` Em QUÍMICA ORGÂNICA (cadeias carbônicas e funções orgânicas — hidrocarbonetos, álcool, éter, aldeído, cetona, ácido carboxílico, éster, amina, amida, haleto, aromáticos): quando a estrutura da molécula for relevante, retorne needsImage:true e escreva no imageQuery o nome do composto seguido do SMILES canônico entre parênteses, no formato "(SMILES: ...)" — ex.: "estrutura da cadeia carbônica do etanol (SMILES: CCO)", "grupo funcional do ácido acético (SMILES: CC(=O)O)", "anel aromático do benzeno (SMILES: c1ccccc1)". Um renderizador valida e desenha o SMILES; só inclua quando tiver certeza da estrutura do composto citado — se não tiver, descreva a estrutura em palavras, sem SMILES.`
+  return isChemistrySubject(subject) ? `${base}${chemistry}` : base
 }
 
 export function buildUnitsBlock(curriculum: CurriculumSelection): string {
@@ -147,7 +154,12 @@ Bom: "Um artesão de joias recebeu uma encomenda para criar um pingente de ouro 
  * então a IA precisa marcar a fórmula nesse formato pra virar imagem.
  */
 function buildMathNotationInstruction(): string {
-  return `Toda expressão matemática com expoente, fração, raiz, subscrito, somatório, ou qualquer notação que não seja texto corrido simples DEVE vir em LaTeX delimitado por $...$ — nunca em ASCII solto. Exemplos: "$3 \\cdot 2^{n-1}$" (não "3*2^(n-1)" nem "3 * 2^(n-1)"), "$\\frac{a+b}{2}$" (não "(a+b)/2"), "$\\sqrt{x^2+1}$" (não "raiz(x^2+1)"). Operações simples sem elevado/fração/raiz (ex: "x + 5 = 12") podem ficar em texto normal, sem $...$. Use em statement, supportText e em cada alternativa que precisar.`
+  return `Toda expressão matemática com expoente, fração, raiz, subscrito, somatório, ou qualquer notação que não seja texto corrido simples DEVE vir em LaTeX delimitado por $...$ — nunca em ASCII solto. Como a saída é JSON, toda barra do LaTeX deve ser escapada: escreva \\\\times, \\\\text e \\\\frac no JSON (duas barras); nunca escreva \\times, \\text ou \\frac com uma única barra, pois \t vira TAB. Exemplos: "$3 \\cdot 2^{n-1}$" (não "3*2^(n-1)" nem "3 * 2^(n-1)"), "$\\frac{a+b}{2}$" (não "(a+b)/2"), "$\\sqrt{x^2+1}$" (não "raiz(x^2+1)"). Operações simples sem elevado/fração/raiz (ex: "x + 5 = 12") podem ficar em texto normal, sem $...$. Fórmula molecular, íons e notação química ficam INTEIROS em um único $...$ — "$C_4H_8O$", "$H_2SO_4$", "$SO_4^{2-}$" — NUNCA cerque só o subscrito: "C$_4$H$_8$O" está errado e renderiza um subscrito solto. Use em statement, supportText e em cada alternativa que precisar.`
+}
+
+function buildSolutionBlueprintInstruction(subject: string): string {
+  if (!/^(matemática|matematica)$/i.test(subject.trim())) return 'solutionBlueprint:null para disciplinas sem cálculo matemático como objeto central.'
+  return `FICHA TÉCNICA INTERNA OBRIGATÓRIA (solutionBlueprint): ela NÃO aparece para o aluno, mas é usada para validar a questão. Preencha domain, variables, equations, values, calculationSteps, derivedAnswer e visualSpec antes de redigir o item. Use domain linear_system para sistemas na forma canônica "ax+by=c" (sem frações; elimine denominadores), rectangular_prism_volume com values length/width/height/unitFactor, average_speed com distance/time, percentage com base/percent, ratio_proportion ou other. derivedAnswer deve registrar os valores numéricos calculados. Em objetivas, a alternativa correctLetter deve conter exatamente o resultado de derivedAnswer. Em descritivas, expectedAnswer e gradingCriteria são obrigatórios e devem usar a mesma solução. Se o estudante precisa desenhar o gráfico, visualSpec deve ser blank_coordinate_plane: nunca desenhe a solução para ele.`
 }
 
 function buildPedagogicalClassificationInstruction(): string {
@@ -208,8 +220,8 @@ REGRAS FIXAS (não negociáveis):
 - Questões descritivas NUNCA têm "alternatives" ou "correctLetter" preenchidos.
 - Questões objetivas SEMPRE têm exatamente ${alternativesCount} alternativas e um "correctLetter" válido, com distratores plausíveis (não óbvios).
 - ${bloomGuidance(segment, gradeYear)}
-${selectedBnccInstruction ? `- ${selectedBnccInstruction}\n` : ''}${activity ? '- A atividade deve ser apropriada à faixa etária, contextualizada e pronta para revisão docente antes da publicação.\n' : ''}- Para capítulos marcados "NENHUMA" habilidade BNCC abaixo: gere a questão normalmente a partir do capítulo/conteúdo, mas retorne bnccCodes:[] e bnccStatus:"nao_mapeado" — NUNCA invente um código BNCC.
-- Para capítulos marcados "NENHUMA" habilidade BNCC abaixo: gere a questão normalmente a partir do capítulo/conteúdo, mas retorne bnccCodes:[] e bnccStatus:"nao_mapeado" — NUNCA invente um código BNCC.
+${selectedBnccInstruction ? `- ${selectedBnccInstruction}\n` : ''}${activity ? '- A atividade deve ser apropriada à faixa etária, contextualizada e pronta para revisão docente antes da publicação.\n' : ''}- Para capítulos marcados "NENHUMA" habilidade BNCC abaixo: gere a questão normalmente a partir do capítulo/conteúdo, mas retorne bnccCodes:[] e bnccStatus:"nao_mapeado" — NUNCA invente um código BNCC — e NUNCA use descritor SAEB/Prova Brasil (D1, D2, D26) em bnccCodes; código BNCC segue o formato EF08MA01, EM13MAT101 ou EI03ET01.
+- Para capítulos marcados "NENHUMA" habilidade BNCC abaixo: gere a questão normalmente a partir do capítulo/conteúdo, mas retorne bnccCodes:[] e bnccStatus:"nao_mapeado" — NUNCA invente um código BNCC — e NUNCA use descritor SAEB/Prova Brasil (D1, D2, D26) em bnccCodes; código BNCC segue o formato EF08MA01, EM13MAT101 ou EI03ET01.
 - bnccSummary: uma frase curta resumindo a habilidade testada pela questão (para a coluna "Habilidade" do Mapa da prova) — mesmo quando bnccStatus for "nao_mapeado", descreva a habilidade testada com base no conteúdo, sem inventar um código.
 - ${saebInstruction}
 - Não inclua gabarito nem indicação de BNCC no texto do enunciado (statement) — esses campos vão em campos estruturados separados.
@@ -218,6 +230,7 @@ ${selectedBnccInstruction ? `- ${selectedBnccInstruction}\n` : ''}${activity ? '
 - IMPORTANTE sobre a ordem de exibição: supportText SEMPRE aparece ANTES do statement na tela/documento final (texto de apoio primeiro, pergunta depois). Se o statement referenciar o supportText, use "acima"/"no texto" — NUNCA "abaixo" (o texto nunca vem depois da pergunta). Prefira formas sem direção ("leia o texto e responda", "com base no texto") pra não depender de posição nenhuma.
 - ${buildContextualizationInstruction()}
 - ${buildMathNotationInstruction()}
+- ${buildSolutionBlueprintInstruction(subject)}
 - ${imageInstruction}${interpretationInstruction ? `\n- ${interpretationInstruction}` : ''}
 ${contentPlanInstruction ? `- ${contentPlanInstruction}\n` : ''}
 
@@ -284,7 +297,7 @@ export async function buildSingleQuestionPrompt(curriculum: CurriculumSelection,
 REGRAS FIXAS (não negociáveis):
 - Gere exatamente 1 questão, tipo "${opts.type}": ${typeRule}.
 - ${bloomGuidance(segment, gradeYear)}
-- Para capítulos marcados "NENHUMA" habilidade BNCC abaixo: gere a questão normalmente a partir do capítulo/conteúdo, mas retorne bnccCodes:[] e bnccStatus:"nao_mapeado" — NUNCA invente um código BNCC.
+- Para capítulos marcados "NENHUMA" habilidade BNCC abaixo: gere a questão normalmente a partir do capítulo/conteúdo, mas retorne bnccCodes:[] e bnccStatus:"nao_mapeado" — NUNCA invente um código BNCC — e NUNCA use descritor SAEB/Prova Brasil (D1, D2, D26) em bnccCodes; código BNCC segue o formato EF08MA01, EM13MAT101 ou EI03ET01.
 - bnccSummary: uma frase curta resumindo a habilidade testada pela questão.
 - ${saebInstruction}
 - QUESTÃO ORIGINAL A SUBSTITUIR: "${opts.avoidStatement}". Nunca a copie nem a reformule superficialmente.${replacementLine}${feedbackLine}${avoidContextLine}
@@ -294,6 +307,7 @@ REGRAS FIXAS (não negociáveis):
 - IMPORTANTE sobre a ordem de exibição: supportText SEMPRE aparece ANTES do statement na tela/documento final. Se o statement referenciar o supportText, use "acima"/"no texto" — NUNCA "abaixo". Prefira formas sem direção ("leia o texto e responda", "com base no texto").
 - ${buildContextualizationInstruction()}
 - ${buildMathNotationInstruction()}
+- ${buildSolutionBlueprintInstruction(subject)}
 - ${imageInstruction}${interpretationInstruction ? `\n- ${interpretationInstruction}` : ''}${visualAidLine}
 
 CONTEÚDO CURRICULAR DISPONÍVEL:

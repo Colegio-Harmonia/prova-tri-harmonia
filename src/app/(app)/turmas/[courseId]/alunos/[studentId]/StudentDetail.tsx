@@ -1,0 +1,25 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import { signIn } from 'next-auth/react'
+
+type Exam = { id: number; subject: string; gradeYear: number; bimester: number | null; status: string; createdAt: string; appliedAt: string | null; correctionStatus: string; grade: number | null; answered: number; totalQuestions: number; correctedAt: string | null }
+type Data = { course: { id: string; name: string; section: string | null }; student: { classroomStudentId: string; name: string; email: string | null; photoUrl: string | null }; exams: Exam[]; statistics: { exams: number; graded: number; averageGrade: number | null; delivered: number } }
+
+function Initials({ name }: { name: string }) { return <span className="flex h-20 w-20 items-center justify-center rounded-full bg-harmonia-green/10 text-xl font-semibold text-harmonia-green">{name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}</span> }
+
+export default function StudentDetail({ courseId, studentId }: { courseId: string; studentId: string }) {
+  const [data, setData] = useState<Data | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => { fetch(`/api/turmas/${courseId}/students/${encodeURIComponent(studentId)}`).then(async (response) => { const body = await response.json(); if (!response.ok) { setError(body.message ?? 'Não foi possível carregar o aluno.'); return } setData(body) }).catch(() => setError('Não foi possível carregar o aluno.')) }, [courseId, studentId])
+  if (error) return <div className="rounded-lg border border-amber-200 bg-amber-50 p-6 text-center text-sm text-amber-900"><p>{error}</p><button type="button" onClick={() => signIn('google', { callbackUrl: `/turmas/${courseId}/alunos/${encodeURIComponent(studentId)}` })} className="mt-4 rounded bg-harmonia-green px-4 py-2 font-medium text-white">Conectar novamente</button></div>
+  if (!data) return <p className="text-sm text-content-secondary">Carregando aluno…</p>
+  const { course, student, exams, statistics } = data
+  return <div className="space-y-7">
+    <Link href={`/turmas/${courseId}`} className="text-sm text-content-secondary underline">← {course.name}</Link>
+    <section className="flex flex-wrap items-center gap-4 rounded-xl border border-border bg-surface p-5">{student.photoUrl ? <img src={`/api/turmas/${courseId}/students/${encodeURIComponent(studentId)}/photo`} alt="" className="h-20 w-20 rounded-full object-cover" onError={(event) => { event.currentTarget.style.display = 'none' }} /> : <Initials name={student.name} />}<div><h1 className="text-xl font-semibold text-content-primary">{student.name}</h1>{student.email && <p className="mt-1 text-sm text-content-secondary">{student.email}</p>}<p className="mt-1 text-xs text-content-muted">Estatísticas individuais da turma</p></div></section>
+    <section className="grid grid-cols-2 gap-3 sm:grid-cols-4"><div className="rounded-xl border border-border bg-surface p-4"><p className="text-sm text-content-secondary">Provas</p><p className="mt-1 text-2xl font-semibold">{statistics.exams}</p></div><div className="rounded-xl border border-border bg-surface p-4"><p className="text-sm text-content-secondary">Entregues</p><p className="mt-1 text-2xl font-semibold">{statistics.delivered}</p></div><div className="rounded-xl border border-border bg-surface p-4"><p className="text-sm text-content-secondary">Corrigidas</p><p className="mt-1 text-2xl font-semibold">{statistics.graded}</p></div><div className="rounded-xl border border-border bg-surface p-4"><p className="text-sm text-content-secondary">Média</p><p className="mt-1 text-2xl font-semibold">{statistics.averageGrade === null ? '—' : statistics.averageGrade.toFixed(1)}</p></div></section>
+    <section className="rounded-xl border border-border bg-surface"><div className="border-b border-border px-5 py-4"><h2 className="font-semibold text-content-primary">Provas entregues</h2><p className="mt-1 text-sm text-content-secondary">Histórico de provas vinculadas a esta turma e situação da correção.</p></div>{exams.length === 0 ? <p className="p-5 text-sm text-content-secondary">Nenhuma prova vinculada a esta turma.</p> : <ul className="divide-y divide-border">{exams.map((exam) => <li key={exam.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-4"><div><p className="font-medium text-content-primary">{exam.subject} · {exam.gradeYear}º ano{exam.bimester ? ` · ${exam.bimester}º bimestre` : ''}</p><p className="mt-1 text-xs text-content-secondary">{exam.correctionStatus === 'não entregue' ? 'Não entregue' : exam.correctionStatus === 'revisado' ? `Corrigida · ${exam.grade === null ? 'sem nota' : exam.grade.toFixed(1)}` : 'Entregue · aguardando correção'}{exam.totalQuestions ? ` · ${exam.answered}/${exam.totalQuestions} respostas` : ''}</p></div><Link href={`/gerar/${exam.id}/corrigir`} className="text-sm font-medium text-harmonia-green hover:underline">Abrir correções →</Link></li>)}</ul>}</section>
+  </div>
+}

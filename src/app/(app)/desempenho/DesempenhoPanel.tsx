@@ -194,17 +194,17 @@ function formatPercent(score: number | null) {
 }
 
 function statusBadgeClass(status: BnccStatus) {
-  if (status === 'dominio') return 'bg-emerald-50 text-emerald-700'
-  if (status === 'desenvolvimento') return 'bg-sky-50 text-sky-700'
-  if (status === 'intervencao') return 'bg-red-50 text-red-700'
-  return 'bg-amber-50 text-amber-700'
+  if (status === 'dominio') return 'bg-status-success-surface text-status-success-content'
+  if (status === 'desenvolvimento') return 'bg-status-info-surface text-status-info-content'
+  if (status === 'intervencao') return 'bg-status-danger-surface text-status-danger-content'
+  return 'bg-status-warning-surface text-status-warning-content'
 }
 
 function StatTile({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded border border-neutral-200 bg-white p-4">
-      <p className="text-sm text-neutral-500">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-neutral-900">{value}</p>
+    <div className="rounded border border-border bg-surface p-4">
+      <p className="text-sm text-content-muted">{label}</p>
+      <p className="mt-1 text-2xl font-semibold text-content-primary">{value}</p>
     </div>
   )
 }
@@ -212,7 +212,7 @@ function StatTile({ label, value }: { label: string; value: string | number }) {
 function ReportReading({ overall, bySubject }: { overall: Performance['overall']; bySubject: GroupStats }) {
   if (!overall || overall.count < 3) {
     return (
-      <div className="rounded border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+      <div className="rounded border border-status-warning-border bg-status-warning-surface p-4 text-sm text-status-warning-content">
         A leitura orientada será exibida quando houver ao menos 3 correções revisadas no recorte. Antes disso, os números servem apenas como registro, não como comparação.
       </div>
     )
@@ -245,16 +245,16 @@ function GroupBars({ title, data, order }: { title: string; data: GroupStats; or
   if (entries.length === 0) return null
 
   return (
-    <div className="rounded border border-neutral-200 bg-white p-4">
-      <p className="text-sm font-medium text-neutral-700">{title}</p>
+    <div className="rounded border border-border bg-surface p-4">
+      <p className="text-sm font-medium text-content-secondary">{title}</p>
       <div className="mt-3 space-y-2">
         {entries.map(([key, stat]) => (
           <div key={key} className="flex items-center gap-3">
-            <span className="w-32 shrink-0 truncate text-xs text-neutral-500">{BLOOM_LABELS[key] ?? key}</span>
-            <div className="h-2 flex-1 rounded-full bg-neutral-100">
+            <span className="w-32 shrink-0 truncate text-xs text-content-muted">{BLOOM_LABELS[key] ?? key}</span>
+            <div className="h-2 flex-1 rounded-full bg-surface-subtle">
               <div className="h-2 rounded-full bg-harmonia-green" style={{ width: `${((stat.avg ?? 0) / 10) * 100}%` }} />
             </div>
-            <span className="w-16 shrink-0 text-right text-xs text-neutral-600">{formatPercent(stat.avg)} ({stat.count})</span>
+            <span className="w-16 shrink-0 text-right text-xs text-content-secondary">{formatPercent(stat.avg)} ({stat.count})</span>
           </div>
         ))}
       </div>
@@ -264,16 +264,16 @@ function GroupBars({ title, data, order }: { title: string; data: GroupStats; or
 
 function Recommendations({ title, items }: { title: string; items: string[] }) {
   return (
-    <div className="mt-4 rounded border border-sky-200 bg-sky-50 p-3">
-      <p className="text-sm font-semibold text-sky-950">{title}</p>
+    <div className="mt-4 rounded border border-status-info-border bg-status-info-surface p-3">
+      <p className="text-sm font-semibold text-status-info-content">{title}</p>
       {items.length > 0 ? (
-        <ul className="mt-2 space-y-1 text-xs text-sky-900">
+        <ul className="mt-2 space-y-1 text-xs text-status-info-content">
           {items.map((item) => <li key={item}>• {item}</li>)}
         </ul>
       ) : (
-        <p className="mt-2 text-xs text-sky-900">Não há sinal de intervenção com amostra mínima neste recorte.</p>
+        <p className="mt-2 text-xs text-status-info-content">Não há sinal de intervenção com amostra mínima neste recorte.</p>
       )}
-      <p className="mt-2 text-[11px] text-sky-800">Sugestões pedagógicas, não diagnóstico individual. Revise com o contexto da turma e do estudante.</p>
+      <p className="mt-2 text-[11px] text-status-info-content">Sugestões pedagógicas, não diagnóstico individual. Revise com o contexto da turma e do estudante.</p>
     </div>
   )
 }
@@ -307,15 +307,15 @@ function BnccRecommendations({ data }: { data: BnccDashboardData }) {
 
 function BloomDashboard({ data }: { data: Record<string, BloomStats> }) {
   return (
-    <div className="rounded border border-neutral-200 bg-white p-4">
+    <div className="rounded border border-border bg-surface p-4">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <p className="text-sm font-medium text-neutral-800">Dashboard Bloom</p>
-          <p className="mt-1 text-xs text-neutral-500">
+          <p className="text-sm font-medium text-content-primary">Dashboard Bloom</p>
+          <p className="mt-1 text-xs text-content-muted">
             Percentual por item: objetiva vale 10/0; discursiva usa a nota final em escala 0-10.
           </p>
         </div>
-        <span className="text-xs text-neutral-400">Amostra mínima recomendada: 6 itens por nível</span>
+        <span className="text-xs text-content-muted">Amostra mínima recomendada: 6 itens por nível</span>
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -333,47 +333,47 @@ function BloomDashboard({ data }: { data: Record<string, BloomStats> }) {
           const latest = stat.evolution.slice(-3)
 
           return (
-            <div key={level} className="rounded-lg border border-neutral-100 bg-neutral-50 p-3">
+            <div key={level} className="rounded-lg border border-border bg-surface-subtle p-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm font-semibold text-neutral-900">{BLOOM_LABELS[level]}</p>
-                  <p className="mt-1 text-xs text-neutral-500">{CONFIDENCE_LABELS[stat.confidence]} · amostra {stat.sampleSize}</p>
+                  <p className="text-sm font-semibold text-content-primary">{BLOOM_LABELS[level]}</p>
+                  <p className="mt-1 text-xs text-content-muted">{CONFIDENCE_LABELS[stat.confidence]} · amostra {stat.sampleSize}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-2xl font-semibold text-neutral-900">
+                  <p className="text-2xl font-semibold text-content-primary">
                     {stat.accuracyPercent ?? '—'}{stat.accuracyPercent !== null ? '%' : ''}
                   </p>
-                  <p className="text-xs text-neutral-500">acerto</p>
+                  <p className="text-xs text-content-muted">acerto</p>
                 </div>
               </div>
 
-              <div className="mt-3 h-2 rounded-full bg-white">
+              <div className="mt-3 h-2 rounded-full bg-surface">
                 <div className="h-2 rounded-full bg-harmonia-green" style={{ width: `${stat.accuracyPercent ?? 0}%` }} />
               </div>
 
               <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
                 <div>
-                  <p className="text-neutral-400">Questões</p>
-                  <p className="font-medium text-neutral-700">{stat.itemCount}</p>
+                  <p className="text-content-muted">Questões</p>
+                  <p className="font-medium text-content-secondary">{stat.itemCount}</p>
                 </div>
                 <div>
-                  <p className="text-neutral-400">Acertos eq.</p>
-                  <p className="font-medium text-neutral-700">{stat.equivalentCorrect.toFixed(1)}</p>
+                  <p className="text-content-muted">Acertos eq.</p>
+                  <p className="font-medium text-content-secondary">{stat.equivalentCorrect.toFixed(1)}</p>
                 </div>
                 <div>
-                  <p className="text-neutral-400">Média</p>
-                  <p className="font-medium text-neutral-700">{stat.averageScore?.toFixed(1) ?? '—'}</p>
+                  <p className="text-content-muted">Média</p>
+                  <p className="font-medium text-content-secondary">{stat.averageScore?.toFixed(1) ?? '—'}</p>
                 </div>
               </div>
 
               {stat.insufficientSample && (
-                <p className="mt-3 rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">
+                <p className="mt-3 rounded bg-status-warning-surface px-2 py-1 text-xs text-status-warning-content">
                   Amostra insuficiente: use como sinal inicial, não como conclusão forte.
                 </p>
               )}
 
               {latest.length > 0 && (
-                <p className="mt-3 text-xs text-neutral-500">
+                <p className="mt-3 text-xs text-content-muted">
                   Evolução recente: {latest.map((p) => `${p.period}: ${p.accuracyPercent ?? '—'}% (${p.count})`).join(' · ')}
                 </p>
               )}
@@ -391,15 +391,15 @@ function DokDashboard({ data }: { data: Record<string, DokStats> }) {
   const hasDok4 = (data.DOK_4?.itemCount ?? 0) > 0
 
   return (
-    <div className="rounded border border-neutral-200 bg-white p-4">
+    <div className="rounded border border-border bg-surface p-4">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <p className="text-sm font-medium text-neutral-800">Dashboard DOK</p>
-          <p className="mt-1 text-xs text-neutral-500">
+          <p className="text-sm font-medium text-content-primary">Dashboard DOK</p>
+          <p className="mt-1 text-xs text-content-muted">
             DOK mede profundidade de conhecimento exigida pela questão; o desempenho usa a nota/acerto corrigido do aluno.
           </p>
         </div>
-        <span className="text-xs text-neutral-400">DOK 4 só aparece quando houver itens classificados nesse nível</span>
+        <span className="text-xs text-content-muted">DOK 4 só aparece quando houver itens classificados nesse nível</span>
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -418,49 +418,49 @@ function DokDashboard({ data }: { data: Record<string, DokStats> }) {
           const topSubjects = stat.subjectDistribution.slice(0, 3)
 
           return (
-            <div key={level} className="rounded-lg border border-neutral-100 bg-neutral-50 p-3">
+            <div key={level} className="rounded-lg border border-border bg-surface-subtle p-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm font-semibold text-neutral-900">{DOK_LABELS[level]}</p>
-                  <p className="mt-1 text-xs text-neutral-500">{CONFIDENCE_LABELS[stat.confidence]} · amostra {stat.sampleSize}</p>
+                  <p className="text-sm font-semibold text-content-primary">{DOK_LABELS[level]}</p>
+                  <p className="mt-1 text-xs text-content-muted">{CONFIDENCE_LABELS[stat.confidence]} · amostra {stat.sampleSize}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-2xl font-semibold text-neutral-900">
+                  <p className="text-2xl font-semibold text-content-primary">
                     {stat.accuracyPercent ?? '—'}{stat.accuracyPercent !== null ? '%' : ''}
                   </p>
-                  <p className="text-xs text-neutral-500">acerto</p>
+                  <p className="text-xs text-content-muted">acerto</p>
                 </div>
               </div>
 
-              <div className="mt-3 h-2 rounded-full bg-white">
+              <div className="mt-3 h-2 rounded-full bg-surface">
                 <div className="h-2 rounded-full bg-harmonia-green" style={{ width: `${stat.accuracyPercent ?? 0}%` }} />
               </div>
 
               <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                 <div>
-                  <p className="text-neutral-400">Itens</p>
-                  <p className="font-medium text-neutral-700">{stat.itemCount}</p>
+                  <p className="text-content-muted">Itens</p>
+                  <p className="font-medium text-content-secondary">{stat.itemCount}</p>
                 </div>
                 <div>
-                  <p className="text-neutral-400">Acertos eq.</p>
-                  <p className="font-medium text-neutral-700">{stat.equivalentCorrect.toFixed(1)}</p>
+                  <p className="text-content-muted">Acertos eq.</p>
+                  <p className="font-medium text-content-secondary">{stat.equivalentCorrect.toFixed(1)}</p>
                 </div>
               </div>
 
               {topSubjects.length > 0 && (
-                <p className="mt-3 text-xs text-neutral-500">
+                <p className="mt-3 text-xs text-content-muted">
                   Disciplinas: {topSubjects.map((s) => `${s.subject} (${s.count})`).join(' · ')}
                 </p>
               )}
 
               {stat.insufficientSample && (
-                <p className="mt-3 rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">
+                <p className="mt-3 rounded bg-status-warning-surface px-2 py-1 text-xs text-status-warning-content">
                   Amostra insuficiente: não tire conclusão forte deste nível ainda.
                 </p>
               )}
 
               {latest.length > 0 && (
-                <p className="mt-3 text-xs text-neutral-500">
+                <p className="mt-3 text-xs text-content-muted">
                   Evolução recente: {latest.map((p) => `${p.period}: ${p.accuracyPercent ?? '—'}% (${p.count})`).join(' · ')}
                 </p>
               )}
@@ -470,7 +470,7 @@ function DokDashboard({ data }: { data: Record<string, DokStats> }) {
       </div>
 
       {!hasDok4 && (
-        <p className="mt-4 rounded bg-neutral-50 px-3 py-2 text-xs text-neutral-500">
+        <p className="mt-4 rounded bg-surface-subtle px-3 py-2 text-xs text-content-muted">
           DOK 4 oculto: não há itens classificados como DOK 4 nesta amostra. Isso é esperado em provas comuns; DOK 4 costuma exigir projeto, investigação ou produção extensa.
         </p>
       )}
@@ -483,20 +483,20 @@ function BnccGroupList({ title, data }: { title: string; data: BnccGroupStats[] 
   if (data.length === 0) return null
 
   return (
-    <div className="rounded-lg border border-neutral-100 bg-neutral-50 p-3">
-      <p className="text-sm font-semibold text-neutral-900">{title}</p>
+    <div className="rounded-lg border border-border bg-surface-subtle p-3">
+      <p className="text-sm font-semibold text-content-primary">{title}</p>
       <div className="mt-3 space-y-3">
         {data.slice(0, 6).map((group) => (
           <div key={group.name}>
             <div className="flex items-center justify-between gap-3 text-xs">
-              <span className="truncate text-neutral-600">{group.name}</span>
+              <span className="truncate text-content-secondary">{group.name}</span>
               <span className={`shrink-0 rounded px-2 py-0.5 ${statusBadgeClass(group.status)}`}>{BNCC_STATUS_LABELS[group.status]}</span>
             </div>
             <div className="mt-1 flex items-center gap-2">
-              <div className="h-2 flex-1 rounded-full bg-white">
+              <div className="h-2 flex-1 rounded-full bg-surface">
                 <div className="h-2 rounded-full bg-harmonia-green" style={{ width: `${group.accuracyPercent ?? 0}%` }} />
               </div>
-              <span className="w-20 shrink-0 text-right text-xs text-neutral-500">
+              <span className="w-20 shrink-0 text-right text-xs text-content-muted">
                 {group.accuracyPercent ?? '—'}{group.accuracyPercent !== null ? '%' : ''} ({group.itemCount})
               </span>
             </div>
@@ -511,15 +511,15 @@ function BnccDashboard({ data }: { data: BnccDashboardData }) {
   const visibleSkills = data.skills.slice(0, 12)
 
   return (
-    <div className="rounded border border-neutral-200 bg-white p-4">
+    <div className="rounded border border-border bg-surface p-4">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <p className="text-sm font-medium text-neutral-800">Dashboard BNCC</p>
-          <p className="mt-1 text-xs text-neutral-500">
+          <p className="text-sm font-medium text-content-primary">Dashboard BNCC</p>
+          <p className="mt-1 text-xs text-content-muted">
             Agrupa desempenho por habilidade BNCC vinculada à questão corrigida. Questões com mais de uma habilidade contam uma vez para cada habilidade.
           </p>
         </div>
-        <span className="text-xs text-neutral-400">Intervenção: abaixo de 60% com amostra mínima de 3 itens vinculados</span>
+        <span className="text-xs text-content-muted">Intervenção: abaixo de 60% com amostra mínima de 3 itens vinculados</span>
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -529,7 +529,7 @@ function BnccDashboard({ data }: { data: BnccDashboardData }) {
       </div>
 
       {data.summary.mappedSkillCount === 0 ? (
-        <p className="mt-4 rounded bg-neutral-50 px-3 py-2 text-xs text-neutral-500">
+        <p className="mt-4 rounded bg-surface-subtle px-3 py-2 text-xs text-content-muted">
           Nenhuma habilidade BNCC mapeada nas correções revisadas desta amostra.
         </p>
       ) : (
@@ -544,53 +544,53 @@ function BnccDashboard({ data }: { data: BnccDashboardData }) {
               const latest = skill.evolution.slice(-3)
 
               return (
-                <div key={skill.code} className="rounded-lg border border-neutral-100 bg-neutral-50 p-3">
+                <div key={skill.code} className="rounded-lg border border-border bg-surface-subtle p-3">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-mono text-sm font-semibold text-neutral-900">{skill.code}</p>
+                        <p className="font-mono text-sm font-semibold text-content-primary">{skill.code}</p>
                         <span className={`rounded px-2 py-0.5 text-xs ${statusBadgeClass(skill.status)}`}>{BNCC_STATUS_LABELS[skill.status]}</span>
                       </div>
-                      <p className="mt-1 text-xs text-neutral-600">{skill.summary ?? 'Sem resumo salvo no payload da questão.'}</p>
-                      <p className="mt-1 text-xs text-neutral-400">
+                      <p className="mt-1 text-xs text-content-secondary">{skill.summary ?? 'Sem resumo salvo no payload da questão.'}</p>
+                      <p className="mt-1 text-xs text-content-muted">
                         {skill.primarySubject} · {skill.primaryGradeYear} · Unidade temática: {skill.unitTheme ?? 'não informada no payload atual'}
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-2xl font-semibold text-neutral-900">
+                      <p className="text-2xl font-semibold text-content-primary">
                         {skill.accuracyPercent ?? '—'}{skill.accuracyPercent !== null ? '%' : ''}
                       </p>
-                      <p className="text-xs text-neutral-500">desempenho</p>
+                      <p className="text-xs text-content-muted">desempenho</p>
                     </div>
                   </div>
 
-                  <div className="mt-3 h-2 rounded-full bg-white">
+                  <div className="mt-3 h-2 rounded-full bg-surface">
                     <div className="h-2 rounded-full bg-harmonia-green" style={{ width: `${skill.accuracyPercent ?? 0}%` }} />
                   </div>
 
                   <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
                     <div>
-                      <p className="text-neutral-400">Itens</p>
-                      <p className="font-medium text-neutral-700">{skill.itemCount}</p>
+                      <p className="text-content-muted">Itens</p>
+                      <p className="font-medium text-content-secondary">{skill.itemCount}</p>
                     </div>
                     <div>
-                      <p className="text-neutral-400">Acertos eq.</p>
-                      <p className="font-medium text-neutral-700">{skill.equivalentCorrect.toFixed(1)}</p>
+                      <p className="text-content-muted">Acertos eq.</p>
+                      <p className="font-medium text-content-secondary">{skill.equivalentCorrect.toFixed(1)}</p>
                     </div>
                     <div>
-                      <p className="text-neutral-400">Confiança</p>
-                      <p className="font-medium text-neutral-700">{CONFIDENCE_LABELS[skill.confidence]}</p>
+                      <p className="text-content-muted">Confiança</p>
+                      <p className="font-medium text-content-secondary">{CONFIDENCE_LABELS[skill.confidence]}</p>
                     </div>
                   </div>
 
                   {skill.insufficientSample && (
-                    <p className="mt-3 rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">
+                    <p className="mt-3 rounded bg-status-warning-surface px-2 py-1 text-xs text-status-warning-content">
                       Amostra insuficiente: esta habilidade ainda não deve orientar intervenção isolada.
                     </p>
                   )}
 
                   {latest.length > 0 && (
-                    <p className="mt-3 text-xs text-neutral-500">
+                    <p className="mt-3 text-xs text-content-muted">
                       Evolução recente: {latest.map((p) => `${p.period}: ${p.accuracyPercent ?? '—'}% (${p.count})`).join(' · ')}
                     </p>
                   )}
@@ -621,15 +621,15 @@ function InepAxisDashboard({ data }: { data: InepAxisDashboardData }) {
   })
 
   return (
-    <div className="rounded border border-neutral-200 bg-white p-4">
+    <div className="rounded border border-border bg-surface p-4">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <p className="text-sm font-medium text-neutral-800">Dashboard Eixos Cognitivos do INEP</p>
-          <p className="mt-1 text-xs text-neutral-500">
+          <p className="text-sm font-medium text-content-primary">Dashboard Eixos Cognitivos do INEP</p>
+          <p className="mt-1 text-xs text-content-muted">
             Usa somente questões reais do banco ENEM presentes em provas corrigidas, porque elas possuem eixo INEP estruturado.
           </p>
         </div>
-        <span className="text-xs text-neutral-400">Códigos: DL, CF, SP, CA e EP</span>
+        <span className="text-xs text-content-muted">Códigos: DL, CF, SP, CA e EP</span>
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -638,7 +638,7 @@ function InepAxisDashboard({ data }: { data: InepAxisDashboardData }) {
       </div>
 
       {data.summary.classifiedItemCount === 0 ? (
-        <p className="mt-4 rounded bg-neutral-50 px-3 py-2 text-xs text-neutral-500">
+        <p className="mt-4 rounded bg-surface-subtle px-3 py-2 text-xs text-content-muted">
           Nenhuma questão real do banco ENEM com eixo cognitivo apareceu nas correções revisadas desta amostra.
         </p>
       ) : (
@@ -648,54 +648,54 @@ function InepAxisDashboard({ data }: { data: InepAxisDashboardData }) {
             const topSubjects = axis.subjectDistribution.slice(0, 3)
 
             return (
-              <div key={axis.code} className="rounded-lg border border-neutral-100 bg-neutral-50 p-3">
+              <div key={axis.code} className="rounded-lg border border-border bg-surface-subtle p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="font-mono text-sm font-semibold text-neutral-900">{axis.code}</p>
-                    <p className="mt-0.5 text-sm font-medium text-neutral-800">{axis.name}</p>
-                    <p className="mt-1 text-xs text-neutral-500">{axis.description ?? 'Descrição não cadastrada.'}</p>
+                    <p className="font-mono text-sm font-semibold text-content-primary">{axis.code}</p>
+                    <p className="mt-0.5 text-sm font-medium text-content-primary">{axis.name}</p>
+                    <p className="mt-1 text-xs text-content-muted">{axis.description ?? 'Descrição não cadastrada.'}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-2xl font-semibold text-neutral-900">
+                    <p className="text-2xl font-semibold text-content-primary">
                       {axis.accuracyPercent ?? '—'}{axis.accuracyPercent !== null ? '%' : ''}
                     </p>
-                    <p className="text-xs text-neutral-500">desempenho</p>
+                    <p className="text-xs text-content-muted">desempenho</p>
                   </div>
                 </div>
 
-                <div className="mt-3 h-2 rounded-full bg-white">
+                <div className="mt-3 h-2 rounded-full bg-surface">
                   <div className="h-2 rounded-full bg-harmonia-green" style={{ width: `${axis.accuracyPercent ?? 0}%` }} />
                 </div>
 
                 <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
                   <div>
-                    <p className="text-neutral-400">Itens</p>
-                    <p className="font-medium text-neutral-700">{axis.itemCount}</p>
+                    <p className="text-content-muted">Itens</p>
+                    <p className="font-medium text-content-secondary">{axis.itemCount}</p>
                   </div>
                   <div>
-                    <p className="text-neutral-400">Acertos eq.</p>
-                    <p className="font-medium text-neutral-700">{axis.equivalentCorrect.toFixed(1)}</p>
+                    <p className="text-content-muted">Acertos eq.</p>
+                    <p className="font-medium text-content-secondary">{axis.equivalentCorrect.toFixed(1)}</p>
                   </div>
                   <div>
-                    <p className="text-neutral-400">Confiança</p>
-                    <p className="font-medium text-neutral-700">{CONFIDENCE_LABELS[axis.confidence]}</p>
+                    <p className="text-content-muted">Confiança</p>
+                    <p className="font-medium text-content-secondary">{CONFIDENCE_LABELS[axis.confidence]}</p>
                   </div>
                 </div>
 
                 {topSubjects.length > 0 && (
-                  <p className="mt-3 text-xs text-neutral-500">
+                  <p className="mt-3 text-xs text-content-muted">
                     Disciplinas: {topSubjects.map((s) => `${s.subject} (${s.count})`).join(' · ')}
                   </p>
                 )}
 
                 {axis.insufficientSample && (
-                  <p className="mt-3 rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">
+                  <p className="mt-3 rounded bg-status-warning-surface px-2 py-1 text-xs text-status-warning-content">
                     Amostra insuficiente: não tire conclusão forte deste eixo ainda.
                   </p>
                 )}
 
                 {latest.length > 0 && (
-                  <p className="mt-3 text-xs text-neutral-500">
+                  <p className="mt-3 text-xs text-content-muted">
                     Evolução recente: {latest.map((p) => `${p.period}: ${p.accuracyPercent ?? '—'}% (${p.count})`).join(' · ')}
                   </p>
                 )}
@@ -709,11 +709,11 @@ function InepAxisDashboard({ data }: { data: InepAxisDashboardData }) {
 }
 
 function matrixCellClass(accuracyPercent: number | null, insufficientSample: boolean) {
-  if (accuracyPercent === null) return 'bg-white text-neutral-400'
-  if (insufficientSample) return 'bg-amber-50 text-amber-800'
-  if (accuracyPercent >= 80) return 'bg-emerald-100 text-emerald-900'
-  if (accuracyPercent >= 60) return 'bg-sky-100 text-sky-900'
-  return 'bg-red-100 text-red-900'
+  if (accuracyPercent === null) return 'bg-surface text-content-muted'
+  if (insufficientSample) return 'bg-status-warning-surface text-status-warning-content'
+  if (accuracyPercent >= 80) return 'bg-status-success-surface text-status-success-content'
+  if (accuracyPercent >= 60) return 'bg-status-info-surface text-status-info-content'
+  return 'bg-status-danger-surface text-status-danger-content'
 }
 
 function BloomDokMatrix({ data }: { data: BloomDokMatrixData }) {
@@ -732,19 +732,19 @@ function BloomDokMatrix({ data }: { data: BloomDokMatrixData }) {
   })
 
   return (
-    <div className="rounded border border-neutral-200 bg-white p-4">
+    <div className="rounded border border-border bg-surface p-4">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <p className="text-sm font-medium text-neutral-800">Matriz Bloom × DOK</p>
-          <p className="mt-1 text-xs text-neutral-500">
+          <p className="text-sm font-medium text-content-primary">Matriz Bloom × DOK</p>
+          <p className="mt-1 text-xs text-content-muted">
             Cruza processo cognitivo da questão com profundidade DOK; células com menos de 3 itens não geram conclusão.
           </p>
         </div>
-        <span className="text-xs text-neutral-400">{data.summary.itemCount} itens classificados na matriz</span>
+        <span className="text-xs text-content-muted">{data.summary.itemCount} itens classificados na matriz</span>
       </div>
 
       {data.summary.itemCount === 0 ? (
-        <p className="mt-4 rounded bg-neutral-50 px-3 py-2 text-xs text-neutral-500">
+        <p className="mt-4 rounded bg-surface-subtle px-3 py-2 text-xs text-content-muted">
           Nenhum item com Bloom e DOK disponível nas correções revisadas desta amostra.
         </p>
       ) : (
@@ -752,16 +752,16 @@ function BloomDokMatrix({ data }: { data: BloomDokMatrixData }) {
           <table className="min-w-full border-separate border-spacing-1 text-left text-xs">
             <thead>
               <tr>
-                <th className="w-32 px-2 py-1 text-neutral-500">Bloom</th>
+                <th className="w-32 px-2 py-1 text-content-muted">Bloom</th>
                 {DOK_ORDER.map((dokLevel) => (
-                  <th key={dokLevel} className="px-2 py-1 text-center font-medium text-neutral-600">{DOK_LABELS[dokLevel]}</th>
+                  <th key={dokLevel} className="px-2 py-1 text-center font-medium text-content-secondary">{DOK_LABELS[dokLevel]}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => (
                 <tr key={row.bloomLevel}>
-                  <th className="rounded bg-neutral-50 px-2 py-2 font-medium text-neutral-700">{BLOOM_LABELS[row.bloomLevel] ?? row.bloomLevel}</th>
+                  <th className="rounded bg-surface-subtle px-2 py-2 font-medium text-content-secondary">{BLOOM_LABELS[row.bloomLevel] ?? row.bloomLevel}</th>
                   {DOK_ORDER.map((dokLevel) => {
                     const cell = row.cells.find((candidate) => candidate.dokLevel === dokLevel) ?? {
                       bloomLevel: row.bloomLevel,
@@ -795,7 +795,7 @@ function BloomDokMatrix({ data }: { data: BloomDokMatrixData }) {
         </div>
       )}
 
-      <p className="mt-3 text-xs text-neutral-500">
+      <p className="mt-3 text-xs text-content-muted">
         Leitura prática: compare uma mesma linha entre DOKs. Se “Aplicar” cai de DOK 2 para DOK 3 com amostra suficiente, há sinal de dificuldade quando a profundidade aumenta.
       </p>
     </div>
@@ -815,23 +815,23 @@ function SoloLevelBars({ title, subtitle, levels, order }: { title: string; subt
   })
 
   return (
-    <div className="rounded-lg border border-neutral-100 bg-neutral-50 p-3">
-      <p className="text-sm font-semibold text-neutral-900">{title}</p>
-      <p className="mt-1 text-xs text-neutral-500">{subtitle}</p>
+    <div className="rounded-lg border border-border bg-surface-subtle p-3">
+      <p className="text-sm font-semibold text-content-primary">{title}</p>
+      <p className="mt-1 text-xs text-content-muted">{subtitle}</p>
       <div className="mt-3 space-y-3">
         {orderedLevels.map((stat) => (
           <div key={stat.level}>
             <div className="flex items-center justify-between gap-3 text-xs">
-              <span className="truncate text-neutral-600">{SOLO_LABELS[stat.level] ?? stat.level}</span>
-              <span className="shrink-0 text-neutral-500">
+              <span className="truncate text-content-secondary">{SOLO_LABELS[stat.level] ?? stat.level}</span>
+              <span className="shrink-0 text-content-muted">
                 {stat.accuracyPercent ?? '—'}{stat.accuracyPercent !== null ? '%' : ''} · {stat.itemCount}
               </span>
             </div>
-            <div className="mt-1 h-2 rounded-full bg-white">
+            <div className="mt-1 h-2 rounded-full bg-surface">
               <div className="h-2 rounded-full bg-harmonia-green" style={{ width: `${stat.accuracyPercent ?? 0}%` }} />
             </div>
             {stat.itemCount > 0 && (
-              <p className="mt-1 text-[11px] text-neutral-400">
+              <p className="mt-1 text-[11px] text-content-muted">
                 Média {stat.averageScore?.toFixed(1) ?? '—'} · {stat.insufficientSample ? 'amostra baixa' : CONFIDENCE_LABELS[stat.confidence]}
               </p>
             )}
@@ -847,15 +847,15 @@ function SoloDashboard({ data }: { data: SoloDashboardData }) {
   const hasObserved = data.observed.summary.classifiedAnswerCount > 0
 
   return (
-    <div className="rounded border border-neutral-200 bg-white p-4">
+    <div className="rounded border border-border bg-surface p-4">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <p className="text-sm font-medium text-neutral-800">Análise SOLO</p>
-          <p className="mt-1 text-xs text-neutral-500">
+          <p className="text-sm font-medium text-content-primary">Análise SOLO</p>
+          <p className="mt-1 text-xs text-content-muted">
             SOLO_EXPECTED descreve a estrutura esperada da atividade; SOLO_OBSERVED descreve somente respostas discursivas analisáveis.
           </p>
         </div>
-        <span className="text-xs text-neutral-400">Nunca trate SOLO_EXPECTED como desempenho observado</span>
+        <span className="text-xs text-content-muted">Nunca trate SOLO_EXPECTED como desempenho observado</span>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -874,7 +874,7 @@ function SoloDashboard({ data }: { data: SoloDashboardData }) {
             order={SOLO_EXPECTED_ORDER}
           />
         ) : (
-          <p className="rounded bg-neutral-50 px-3 py-2 text-xs text-neutral-500">Nenhuma atividade com SOLO_EXPECTED nesta amostra.</p>
+          <p className="rounded bg-surface-subtle px-3 py-2 text-xs text-content-muted">Nenhuma atividade com SOLO_EXPECTED nesta amostra.</p>
         )}
 
         {hasObserved ? (
@@ -885,7 +885,7 @@ function SoloDashboard({ data }: { data: SoloDashboardData }) {
             order={SOLO_OBSERVED_ORDER}
           />
         ) : (
-          <p className="rounded bg-neutral-50 px-3 py-2 text-xs text-neutral-500">Nenhuma resposta discursiva com SOLO_OBSERVED nesta amostra.</p>
+          <p className="rounded bg-surface-subtle px-3 py-2 text-xs text-content-muted">Nenhuma resposta discursiva com SOLO_OBSERVED nesta amostra.</p>
         )}
       </div>
     </div>
@@ -901,30 +901,30 @@ function CognitiveProfiles({ profiles, studentSearch }: { profiles: CognitivePro
   if (profiles.length === 0) return null
 
   return (
-    <div className="rounded border border-neutral-200 bg-white p-4">
+    <div className="rounded border border-border bg-surface p-4">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <p className="text-sm font-medium text-neutral-800">Perfil cognitivo do aluno</p>
-          <p className="mt-1 text-xs text-neutral-500">
+          <p className="text-sm font-medium text-content-primary">Perfil cognitivo do aluno</p>
+          <p className="mt-1 text-xs text-content-muted">
             Síntese por aluno baseada somente em correções revisadas. Use como leitura de amostra, não como rótulo permanente.
           </p>
         </div>
-        <span className="text-xs text-neutral-400">{visibleProfiles.length} de {profiles.length} aluno(s) na amostra filtrada</span>
+        <span className="text-xs text-content-muted">{visibleProfiles.length} de {profiles.length} aluno(s) na amostra filtrada</span>
       </div>
 
       <div className="mt-4 space-y-3">
         {visibleProfiles.map((profile) => (
-          <div key={profile.studentName} className="rounded-lg border border-neutral-100 bg-neutral-50 p-3">
+          <div key={profile.studentName} className="rounded-lg border border-border bg-surface-subtle p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold text-neutral-900">{profile.studentName}</p>
-                <p className="mt-1 text-xs text-neutral-500">
+                <p className="text-sm font-semibold text-content-primary">{profile.studentName}</p>
+                <p className="mt-1 text-xs text-content-muted">
                   Período: {profile.periods.join(', ') || '—'} · Disciplinas: {profile.subjects.map((s) => s.name).join(', ') || '—'} · {CONFIDENCE_LABELS[profile.confidence]}
                 </p>
               </div>
               <div className="text-right">
-                <p className="text-2xl font-semibold text-neutral-900">{formatPercent(profile.overallAverage)}</p>
-                <p className="text-xs text-neutral-500">{profile.sampleSize} itens · {profile.itemAccuracyPercent ?? '—'}{profile.itemAccuracyPercent !== null ? '%' : ''}</p>
+                <p className="text-2xl font-semibold text-content-primary">{formatPercent(profile.overallAverage)}</p>
+                <p className="text-xs text-content-muted">{profile.sampleSize} itens · {profile.itemAccuracyPercent ?? '—'}{profile.itemAccuracyPercent !== null ? '%' : ''}</p>
                 <Link href={`/desempenho/relatorio?aluno=${encodeURIComponent(profile.studentName)}`} className="mt-2 inline-flex min-h-8 items-center rounded border border-border px-2 text-xs font-medium text-content-primary hover:bg-surface-subtle">
                   Abrir relatório
                 </Link>
@@ -932,68 +932,68 @@ function CognitiveProfiles({ profiles, studentSearch }: { profiles: CognitivePro
             </div>
 
             <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-              <div className="rounded bg-white p-3">
-                <p className="text-xs font-medium text-neutral-700">Pontos fortes na amostra</p>
+              <div className="rounded bg-surface p-3">
+                <p className="text-xs font-medium text-content-secondary">Pontos fortes na amostra</p>
                 {profile.strengths.length > 0 ? (
                   <div className="mt-2 space-y-1">
-                    {profile.strengths.map((item) => <p key={item} className="text-xs text-neutral-600">{item}</p>)}
+                    {profile.strengths.map((item) => <p key={item} className="text-xs text-content-secondary">{item}</p>)}
                   </div>
                 ) : (
-                  <p className="mt-2 text-xs text-neutral-400">Sem ponto forte com amostra mínima nesta leitura.</p>
+                  <p className="mt-2 text-xs text-content-muted">Sem ponto forte com amostra mínima nesta leitura.</p>
                 )}
               </div>
 
-              <div className="rounded bg-white p-3">
-                <p className="text-xs font-medium text-neutral-700">Pontos em desenvolvimento</p>
+              <div className="rounded bg-surface p-3">
+                <p className="text-xs font-medium text-content-secondary">Pontos em desenvolvimento</p>
                 {profile.development.length > 0 ? (
                   <div className="mt-2 space-y-1">
-                    {profile.development.map((item) => <p key={item} className="text-xs text-neutral-600">{item}</p>)}
+                    {profile.development.map((item) => <p key={item} className="text-xs text-content-secondary">{item}</p>)}
                   </div>
                 ) : (
-                  <p className="mt-2 text-xs text-neutral-400">Sem queda com amostra mínima nesta leitura.</p>
+                  <p className="mt-2 text-xs text-content-muted">Sem queda com amostra mínima nesta leitura.</p>
                 )}
               </div>
             </div>
 
             <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-3">
-              <div className="rounded bg-white p-3">
-                <p className="text-xs font-medium text-neutral-700">BNCC com maior domínio</p>
+              <div className="rounded bg-surface p-3">
+                <p className="text-xs font-medium text-content-secondary">BNCC com maior domínio</p>
                 {profile.bnccStrengths.length > 0 ? profile.bnccStrengths.map((skill) => (
-                  <p key={skill.code} className="mt-1 text-xs text-neutral-600">{skill.code}: {skill.accuracyPercent}% ({skill.itemCount})</p>
-                )) : <p className="mt-1 text-xs text-neutral-400">Sem habilidade com amostra mínima.</p>}
+                  <p key={skill.code} className="mt-1 text-xs text-content-secondary">{skill.code}: {skill.accuracyPercent}% ({skill.itemCount})</p>
+                )) : <p className="mt-1 text-xs text-content-muted">Sem habilidade com amostra mínima.</p>}
               </div>
 
-              <div className="rounded bg-white p-3">
-                <p className="text-xs font-medium text-neutral-700">BNCC para intervenção</p>
+              <div className="rounded bg-surface p-3">
+                <p className="text-xs font-medium text-content-secondary">BNCC para intervenção</p>
                 {profile.bnccInterventions.length > 0 ? profile.bnccInterventions.map((skill) => (
-                  <p key={skill.code} className="mt-1 text-xs text-neutral-600">{skill.code}: {skill.accuracyPercent}% ({skill.itemCount})</p>
-                )) : <p className="mt-1 text-xs text-neutral-400">Sem intervenção BNCC com amostra mínima.</p>}
+                  <p key={skill.code} className="mt-1 text-xs text-content-secondary">{skill.code}: {skill.accuracyPercent}% ({skill.itemCount})</p>
+                )) : <p className="mt-1 text-xs text-content-muted">Sem intervenção BNCC com amostra mínima.</p>}
               </div>
 
-              <div className="rounded bg-white p-3">
-                <p className="text-xs font-medium text-neutral-700">Profundidade sustentada</p>
+              <div className="rounded bg-surface p-3">
+                <p className="text-xs font-medium text-content-secondary">Profundidade sustentada</p>
                 {profile.sustainedDok ? (
-                  <p className="mt-1 text-xs text-neutral-600">{DOK_LABELS[profile.sustainedDok.level] ?? profile.sustainedDok.level}: {profile.sustainedDok.accuracyPercent}% ({profile.sustainedDok.itemCount})</p>
+                  <p className="mt-1 text-xs text-content-secondary">{DOK_LABELS[profile.sustainedDok.level] ?? profile.sustainedDok.level}: {profile.sustainedDok.accuracyPercent}% ({profile.sustainedDok.itemCount})</p>
                 ) : (
-                  <p className="mt-1 text-xs text-neutral-400">Sem DOK sustentado com amostra mínima.</p>
+                  <p className="mt-1 text-xs text-content-muted">Sem DOK sustentado com amostra mínima.</p>
                 )}
               </div>
             </div>
 
             {profile.inepHighlights.length > 0 && (
-              <p className="mt-3 text-xs text-neutral-500">
+              <p className="mt-3 text-xs text-content-muted">
                 Eixos INEP com melhor amostra: {profile.inepHighlights.map((axis) => `${axis.key}: ${axis.accuracyPercent}% (${axis.itemCount})`).join(' · ')}
               </p>
             )}
 
             {profile.limitations.length > 0 && (
-              <p className="mt-3 rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">
+              <p className="mt-3 rounded bg-status-warning-surface px-2 py-1 text-xs text-status-warning-content">
                 Limitações: {profile.limitations.join(' ')}
               </p>
             )}
           </div>
         ))}
-        {visibleProfiles.length === 0 && <p className="rounded bg-neutral-50 px-3 py-2 text-sm text-neutral-500">Nenhum aluno encontrado nesse filtro.</p>}
+        {visibleProfiles.length === 0 && <p className="rounded bg-surface-subtle px-3 py-2 text-sm text-content-muted">Nenhum aluno encontrado nesse filtro.</p>}
       </div>
     </div>
   )
@@ -1057,19 +1057,19 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSuperuser, deferredSubject, filters.gradeYear, filters.segment, filters.assignedTo, filters.academicYear, filters.bimester])
 
-  if (error) return <p role="alert" className="text-sm text-red-600">{error}</p>
-  if (!data) return <p role="status" aria-live="polite" className="text-sm text-neutral-500">Carregando…</p>
+  if (error) return <p role="alert" className="text-sm text-status-danger-content">{error}</p>
+  if (!data) return <p role="status" aria-live="polite" className="text-sm text-content-muted">Carregando…</p>
 
   if (!data.overall) {
-    return <p className="text-sm text-neutral-500">Nenhuma correção revisada ainda — os números aparecem aqui assim que as primeiras provas forem corrigidas.</p>
+    return <p className="text-sm text-content-muted">Nenhuma correção revisada ainda — os números aparecem aqui assim que as primeiras provas forem corrigidas.</p>
   }
 
   return (
     <div className="space-y-6">
       {isSuperuser && (
-        <fieldset className="flex flex-wrap gap-2 rounded border border-neutral-200 bg-white p-4">
+        <fieldset className="flex flex-wrap gap-2 rounded border border-border bg-surface p-4">
           <legend className="sr-only">Filtros de desempenho</legend>
-          <select aria-label="Segmento" value={filters.segment} onChange={(e) => setFilters((f) => ({ ...f, segment: e.target.value }))} className="rounded border border-neutral-300 px-2 py-1.5 text-sm">
+          <select aria-label="Segmento" value={filters.segment} onChange={(e) => setFilters((f) => ({ ...f, segment: e.target.value }))} className="rounded border border-border px-2 py-1.5 text-sm">
             <option value="">Todos os segmentos</option>
             <option value="anos-iniciais">Anos Iniciais</option>
             <option value="anos-finais">Anos Finais</option>
@@ -1080,20 +1080,20 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
             placeholder="Disciplina"
             value={filters.subject}
             onChange={(e) => setFilters((f) => ({ ...f, subject: e.target.value }))}
-            className="rounded border border-neutral-300 px-2 py-1.5 text-sm"
+            className="rounded border border-border px-2 py-1.5 text-sm"
           />
-          <select aria-label="Série" value={filters.gradeYear} onChange={(e) => setFilters((f) => ({ ...f, gradeYear: e.target.value }))} className="rounded border border-neutral-300 px-2 py-1.5 text-sm">
+          <select aria-label="Série" value={filters.gradeYear} onChange={(e) => setFilters((f) => ({ ...f, gradeYear: e.target.value }))} className="rounded border border-border px-2 py-1.5 text-sm">
             <option value="">Todas as séries</option>
             {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((year) => <option key={year} value={year}>{year}º ano</option>)}
           </select>
-          <select aria-label="Professor responsável" value={filters.assignedTo} onChange={(e) => setFilters((f) => ({ ...f, assignedTo: e.target.value }))} className="rounded border border-neutral-300 px-2 py-1.5 text-sm">
+          <select aria-label="Professor responsável" value={filters.assignedTo} onChange={(e) => setFilters((f) => ({ ...f, assignedTo: e.target.value }))} className="rounded border border-border px-2 py-1.5 text-sm">
             <option value="">Todos os professores</option>
             {professors.map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
-          <input aria-label="Ano letivo" placeholder="Ano letivo" inputMode="numeric" value={filters.academicYear} onChange={(e) => setFilters((f) => ({ ...f, academicYear: e.target.value }))} className="w-28 rounded border border-neutral-300 px-2 py-1.5 text-sm" />
-          <select aria-label="Bimestre" value={filters.bimester} onChange={(e) => setFilters((f) => ({ ...f, bimester: e.target.value }))} className="rounded border border-neutral-300 px-2 py-1.5 text-sm"><option value="">Todos os bimestres</option>{[1, 2, 3, 4].map((b) => <option key={b} value={b}>{b}º bimestre</option>)}</select>
+          <input aria-label="Ano letivo" placeholder="Ano letivo" inputMode="numeric" value={filters.academicYear} onChange={(e) => setFilters((f) => ({ ...f, academicYear: e.target.value }))} className="w-28 rounded border border-border px-2 py-1.5 text-sm" />
+          <select aria-label="Bimestre" value={filters.bimester} onChange={(e) => setFilters((f) => ({ ...f, bimester: e.target.value }))} className="rounded border border-border px-2 py-1.5 text-sm"><option value="">Todos os bimestres</option>{[1, 2, 3, 4].map((b) => <option key={b} value={b}>{b}º bimestre</option>)}</select>
         </fieldset>
       )}
 
@@ -1103,7 +1103,7 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
             key={view}
             href={view === 'geral' ? '/desempenho' : `/desempenho?visao=${view}`}
             aria-current={activeView === view ? 'page' : undefined}
-            className={`min-h-10 rounded px-3 py-2 text-sm font-medium ${activeView === view ? 'bg-harmonia-green text-white' : 'text-content-secondary hover:bg-surface-subtle hover:text-content-primary'}`}
+            className={`min-h-10 rounded px-3 py-2 text-sm font-medium ${activeView === view ? 'bg-harmonia-green text-action-primary-foreground' : 'text-content-secondary hover:bg-surface-subtle hover:text-content-primary'}`}
           >
             {VIEW_LABELS[view]}
           </Link>
@@ -1153,17 +1153,17 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
       </>}
 
       {activeView === 'geral' && data.topMissedQuestions.length > 0 && (
-        <div className="rounded border border-neutral-200 bg-white p-4">
-          <p className="text-sm font-medium text-neutral-700">Questões com mais erro</p>
+        <div className="rounded border border-border bg-surface p-4">
+          <p className="text-sm font-medium text-content-secondary">Questões com mais erro</p>
           <div className="mt-3 space-y-1">
             {data.topMissedQuestions.map((q) => (
               <Link
                 key={`${q.examId}-${q.questionNumber}`}
                 href={`/gerar/${q.examId}/revisar`}
-                className="flex items-center justify-between rounded px-2 py-1.5 text-sm hover:bg-neutral-50"
+                className="flex items-center justify-between rounded px-2 py-1.5 text-sm hover:bg-surface-subtle"
               >
-                <span className="text-neutral-700">{q.subject} — {q.gradeYear}º ano — questão {q.questionNumber}</span>
-                <span className="font-medium text-red-600">{q.errorRate}% de erro</span>
+                <span className="text-content-secondary">{q.subject} — {q.gradeYear}º ano — questão {q.questionNumber}</span>
+                <span className="font-medium text-status-danger-content">{q.errorRate}% de erro</span>
               </Link>
             ))}
           </div>

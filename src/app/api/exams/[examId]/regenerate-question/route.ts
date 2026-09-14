@@ -19,6 +19,7 @@ import { authorizeExamAccess } from '@/lib/exams/authorizeExamAccess'
 import { persistGeneratedQuestionClassifications } from '@/lib/pedagogical/generatedQuestionClassificationService'
 import { generateValidatedStructuredContent, StructuredGenerationError } from '@/lib/gemini/structuredRepair'
 import { aiFailureResponse } from '@/lib/ai/routeFailure'
+import { runQuestionQualityTest } from '@/lib/exams/questionQualityTest'
 import {
   REPLACEMENT_STRATEGIES,
   findExcludedTopicsInQuestion,
@@ -100,6 +101,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
         // exige uma numeração positiva e auditável.
         const generatedQuestion = { ...parsedQuestion.question, number: original.number }
         const { question, issues, warnings } = correctSingleQuestion(generatedQuestion, curriculum)
+        const quality = await runQuestionQualityTest(curriculum, [question])
+        issues.push(...quality.issues.filter((issue) => issue.severity === 'bloqueante').map((issue) => issue.reason))
+        warnings.push(...quality.warnings)
         if (original.type === 'objetiva' && question.type !== 'objetiva') issues.push(`Esperado tipo "objetiva", veio "${question.type}".`)
         if (original.type === 'descritiva' && question.type !== 'descritiva') issues.push(`Esperado tipo "descritiva", veio "${question.type}".`)
         if (replacement?.excludedTopics.length) {

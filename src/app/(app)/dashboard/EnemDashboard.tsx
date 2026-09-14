@@ -62,10 +62,10 @@ const COGNITIVE_AXIS_COLORS: Record<string, string> = {
 
 function StatTile({ label, value, subtitle }: { label: string; value: string | number; subtitle?: string }) {
   return (
-    <div className="rounded border border-neutral-200 bg-white p-4">
-      <p className="text-sm text-neutral-500">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-neutral-900">{value}</p>
-      {subtitle && <p className="mt-0.5 text-xs text-neutral-400">{subtitle}</p>}
+    <div className="rounded border border-border bg-surface p-4">
+      <p className="text-sm text-content-muted">{label}</p>
+      <p className="mt-1 text-2xl font-semibold text-content-primary">{value}</p>
+      {subtitle && <p className="mt-0.5 text-xs text-content-muted">{subtitle}</p>}
     </div>
   )
 }
@@ -77,7 +77,7 @@ function HoverTooltip({ tooltip, children, wrapperClassName }: { tooltip: string
   return (
     <span className={`group/tooltip relative inline-block ${wrapperClassName ?? ''}`}>
       {children}
-      <span className="pointer-events-none absolute bottom-full left-0 z-20 mb-1 hidden w-72 whitespace-normal rounded border border-neutral-200 bg-white p-2 text-xs normal-case text-neutral-700 shadow-lg group-hover/tooltip:block">
+      <span className="pointer-events-none absolute bottom-full left-0 z-20 mb-1 hidden w-72 whitespace-normal rounded border border-border bg-surface p-2 text-xs normal-case text-content-secondary shadow-lg group-hover/tooltip:block">
         {tooltip}
       </span>
     </span>
@@ -106,12 +106,12 @@ export default function EnemDashboard() {
   const { data: stats, error, isPending } = useQuery(enemStatsQueryOptions)
   const [expandedCompetency, setExpandedCompetency] = useState<string | null>(null)
 
-  if (error) return <p className="text-sm text-red-600">Falha ao carregar estatísticas do ENEM.</p>
-  if (isPending || !stats) return <p className="text-sm text-neutral-500">Carregando…</p>
+  if (error) return <p className="text-sm text-status-danger-content">Falha ao carregar estatísticas do ENEM.</p>
+  if (isPending || !stats) return <p className="text-sm text-content-muted">Carregando…</p>
 
   if (stats.total === 0) {
     return (
-      <div className="rounded border border-neutral-200 bg-white p-8 text-center text-sm text-neutral-500">
+      <div className="rounded border border-border bg-surface p-8 text-center text-sm text-content-muted">
         Nenhuma questão do ENEM importada ainda.
       </div>
     )
@@ -133,7 +133,7 @@ export default function EnemDashboard() {
 
   const visaoGeral = (
     <div className="space-y-3">
-      <p className="text-sm text-neutral-500">
+      <p className="text-sm text-content-muted">
         Cobertura do banco real do ENEM por área de conhecimento e por ano de prova — visão rápida antes de entrar nos detalhes nas outras abas.
       </p>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -167,17 +167,17 @@ export default function EnemDashboard() {
   )
 
   const habilidadesTab = stats.topSkills.length > 0 && (
-    <div className="rounded border border-neutral-200 bg-white p-4">
-      <p className="text-sm font-medium text-neutral-700">Habilidades mais frequentes</p>
-      <p className="mt-0.5 text-xs text-neutral-400">
+    <div className="rounded border border-border bg-surface p-4">
+      <p className="text-sm font-medium text-content-secondary">Habilidades mais frequentes</p>
+      <p className="mt-0.5 text-xs text-content-muted">
         As habilidades oficiais do ENEM (H1-H30) mais recorrentes no banco importado — ajuda a ver quais competências têm mais questões disponíveis pra puxar numa prova. Passe o mouse pra ver a descrição completa.
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         {stats.topSkills.map((s) => (
           <HoverTooltip key={s.skillCode ?? 'null'} tooltip={s.skillDescription ?? 'sem descrição'}>
-            <span className="inline-block rounded-full bg-neutral-100 px-3 py-1 text-xs text-neutral-700">
+            <span className="inline-block rounded-full bg-surface-subtle px-3 py-1 text-xs text-content-secondary">
               {s.skillCode ?? 'sem habilidade'}
-              <span className="ml-1 font-medium text-neutral-900">{s.count}</span>
+              <span className="ml-1 font-medium text-content-primary">{s.count}</span>
             </span>
           </HoverTooltip>
         ))}
@@ -186,15 +186,15 @@ export default function EnemDashboard() {
   )
 
   const competenciaTab = stats.byCompetency.length > 0 && (
-    <div className="rounded border border-neutral-200 bg-white p-4">
-      <p className="text-sm font-medium text-neutral-700">Distribuição por Competência (INEP)</p>
-      <p className="mt-0.5 text-xs text-neutral-400">
+    <div className="rounded border border-border bg-surface p-4">
+      <p className="text-sm font-medium text-content-secondary">Distribuição por Competência (INEP)</p>
+      <p className="mt-0.5 text-xs text-content-muted">
         Agrupa as habilidades H1-H30 nas Competências oficiais (C1-C9 por área) da Matriz de Referência do ENEM. Clique numa competência pra ver como as questões dela se dividem entre as habilidades específicas — útil pra saber se dá pra puxar várias questões diferentes da mesma H ou se o banco está concentrado numa só.
       </p>
       <div className="mt-3 space-y-4">
         {Object.entries(competencyByArea).map(([area, rows]) => (
           <div key={area}>
-            <p className="text-xs font-medium text-neutral-500">{AREA_LABELS[area] ?? area}</p>
+            <p className="text-xs font-medium text-content-muted">{AREA_LABELS[area] ?? area}</p>
             <div className="mt-1.5 space-y-1.5">
               {rows.map((r) => {
                 const max = Math.max(1, ...rows.map((x) => x.count))
@@ -209,13 +209,13 @@ export default function EnemDashboard() {
                       disabled={!skills.length}
                       className="flex w-full items-center gap-2 rounded py-0.5 text-left text-xs disabled:cursor-default"
                     >
-                      <span className={`w-3 shrink-0 text-neutral-400 transition-transform ${isOpen ? 'rotate-90' : ''}`}>{skills.length ? '›' : ''}</span>
-                      <span className="w-8 shrink-0 font-medium text-neutral-600">C{r.number}</span>
-                      <TruncatedWithTooltip text={r.description} className="w-60 text-neutral-500" />
-                      <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-neutral-100">
+                      <span className={`w-3 shrink-0 text-content-muted transition-transform ${isOpen ? 'rotate-90' : ''}`}>{skills.length ? '›' : ''}</span>
+                      <span className="w-8 shrink-0 font-medium text-content-secondary">C{r.number}</span>
+                      <TruncatedWithTooltip text={r.description} className="w-60 text-content-muted" />
+                      <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-surface-subtle">
                         <div className="h-full rounded-full" style={{ width: `${(r.count / max) * 100}%`, backgroundColor: areaColor }} />
                       </div>
-                      <span className="w-6 shrink-0 text-right font-medium text-neutral-700">{r.count}</span>
+                      <span className="w-6 shrink-0 text-right font-medium text-content-secondary">{r.count}</span>
                     </button>
 
                     {isOpen && skills.length > 0 && (
@@ -227,12 +227,12 @@ export default function EnemDashboard() {
                             const skillMax = Math.max(1, ...skills.map((x) => x.count))
                             return (
                               <div key={s.skillCode} className="flex items-center gap-2 text-xs">
-                                <span className="w-14 shrink-0 font-medium text-neutral-500">{s.skillCode}</span>
-                                <TruncatedWithTooltip text={s.skillDescription ?? '—'} className="w-52 text-neutral-400" />
-                                <div className="h-2 flex-1 overflow-hidden rounded-full bg-neutral-100">
+                                <span className="w-14 shrink-0 font-medium text-content-muted">{s.skillCode}</span>
+                                <TruncatedWithTooltip text={s.skillDescription ?? '—'} className="w-52 text-content-muted" />
+                                <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface-subtle">
                                   <div className="h-full rounded-full opacity-70" style={{ width: `${(s.count / skillMax) * 100}%`, backgroundColor: areaColor }} />
                                 </div>
-                                <span className="w-6 shrink-0 text-right font-medium text-neutral-600">{s.count}</span>
+                                <span className="w-6 shrink-0 text-right font-medium text-content-secondary">{s.count}</span>
                               </div>
                             )
                           })}
@@ -249,37 +249,37 @@ export default function EnemDashboard() {
   )
 
   const matrizTab = stats.matrixStats.length > 0 && (
-    <div className="rounded border border-neutral-200 bg-white p-4">
-      <p className="text-sm font-medium text-neutral-700">Matriz de Referência ENEM — Distribuição</p>
-      <p className="mt-0.5 text-xs text-neutral-400">
+    <div className="rounded border border-border bg-surface p-4">
+      <p className="text-sm font-medium text-content-secondary">Matriz de Referência ENEM — Distribuição</p>
+      <p className="mt-0.5 text-xs text-content-muted">
         Cruzamento entre Área de conhecimento e nível de Bloom — mostra, por exemplo, se Matemática está concentrada em &quot;Aplicar&quot; e Linguagens em &quot;Analisar&quot;, útil pra calibrar o equilíbrio de uma prova.
       </p>
       <div className="mt-3 overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
-            <tr className="border-b border-neutral-200">
-              <th className="py-1 pr-4 text-left font-medium text-neutral-500">Área</th>
+            <tr className="border-b border-border">
+              <th className="py-1 pr-4 text-left font-medium text-content-muted">Área</th>
               {BLOOM_ORDER.map((l) => (
-                <th key={l} className="px-2 py-1 text-right font-medium text-neutral-500">{BLOOM_LABELS[l]}</th>
+                <th key={l} className="px-2 py-1 text-right font-medium text-content-muted">{BLOOM_LABELS[l]}</th>
               ))}
-              <th className="pl-2 py-1 text-right font-medium text-neutral-500">Total</th>
+              <th className="pl-2 py-1 text-right font-medium text-content-muted">Total</th>
             </tr>
           </thead>
           <tbody>
             {Object.entries(stats.byArea).map(([area, areaTotal]) => {
               const areaRows = stats.matrixStats.filter((m) => m.area === area)
               return (
-                <tr key={area} className="border-b border-neutral-100">
-                  <td className="py-1.5 pr-4 font-medium text-neutral-700">{area}</td>
+                <tr key={area} className="border-b border-border">
+                  <td className="py-1.5 pr-4 font-medium text-content-secondary">{area}</td>
                   {BLOOM_ORDER.map((l) => {
                     const cell = areaRows?.find((r) => r.level === l)
                     return (
-                      <td key={l} className="px-2 py-1.5 text-right text-neutral-600">
+                      <td key={l} className="px-2 py-1.5 text-right text-content-secondary">
                         {cell?.count ?? '-'}
                       </td>
                     )
                   })}
-                  <td className="pl-2 py-1.5 text-right font-medium text-neutral-800">{areaTotal}</td>
+                  <td className="pl-2 py-1.5 text-right font-medium text-content-primary">{areaTotal}</td>
                 </tr>
               )
             })}
@@ -290,9 +290,9 @@ export default function EnemDashboard() {
   )
 
   const eixosTab = cognitiveAxisEntries.length > 0 && (
-    <div className="rounded border border-neutral-200 bg-white p-4">
-      <p className="text-sm font-medium text-neutral-700">Eixos Cognitivos (comuns a todas as áreas)</p>
-      <p className="mb-3 mt-0.5 text-xs text-neutral-400">
+    <div className="rounded border border-border bg-surface p-4">
+      <p className="text-sm font-medium text-content-secondary">Eixos Cognitivos (comuns a todas as áreas)</p>
+      <p className="mb-3 mt-0.5 text-xs text-content-muted">
         Os 5 eixos cognitivos estruturam toda a Matriz do ENEM — cada questão mobiliza um ou mais eixos. Passe o mouse sobre cada um pra ver a descrição oficial.
       </p>
       <div className="space-y-2">
@@ -302,20 +302,20 @@ export default function EnemDashboard() {
             <div key={code} className="group relative flex items-center gap-2 text-xs">
               <span className="flex w-24 shrink-0 items-center gap-1.5 font-medium">
                 <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: COGNITIVE_AXIS_COLORS[code] ?? '#6366F1' }} />
-                <span className="text-neutral-700">{code}</span>
+                <span className="text-content-secondary">{code}</span>
               </span>
-              <span className="w-44 shrink-0 truncate text-neutral-500">{info?.name ?? code}</span>
-              <div className="h-3 flex-1 overflow-hidden rounded-full bg-neutral-100">
+              <span className="w-44 shrink-0 truncate text-content-muted">{info?.name ?? code}</span>
+              <div className="h-3 flex-1 overflow-hidden rounded-full bg-surface-subtle">
                 <div
                   className="h-full rounded-full"
                   style={{ width: `${(count / cognitiveAxisMax) * 100}%`, backgroundColor: COGNITIVE_AXIS_COLORS[code] ?? '#6366F1' }}
                 />
               </div>
-              <span className="w-6 shrink-0 text-right font-medium text-neutral-700">{count}</span>
+              <span className="w-6 shrink-0 text-right font-medium text-content-secondary">{count}</span>
               {info && (
-                <div className="absolute bottom-full left-0 z-10 mb-1 hidden w-72 rounded border border-neutral-200 bg-white p-2 shadow-lg group-hover:block">
-                  <p className="text-xs font-medium text-neutral-700">{info.code} — {info.name}</p>
-                  <p className="mt-1 text-xs leading-relaxed text-neutral-500">{info.description}</p>
+                <div className="absolute bottom-full left-0 z-10 mb-1 hidden w-72 rounded border border-border bg-surface p-2 shadow-lg group-hover:block">
+                  <p className="text-xs font-medium text-content-secondary">{info.code} — {info.name}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-content-muted">{info.description}</p>
                 </div>
               )}
             </div>
@@ -329,12 +329,12 @@ export default function EnemDashboard() {
     <div className="space-y-6">
       {/* Título da seção */}
       <div className="flex items-center gap-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-100 text-sm font-bold text-emerald-700">
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-status-success-surface text-sm font-bold text-status-success-content">
           E
         </div>
         <div>
           <h2 className="text-base font-semibold">Banco de Questões ENEM</h2>
-          <p className="text-xs text-neutral-500">Importadas da API pública enem.dev</p>
+          <p className="text-xs text-content-muted">Importadas da API pública enem.dev</p>
         </div>
       </div>
 

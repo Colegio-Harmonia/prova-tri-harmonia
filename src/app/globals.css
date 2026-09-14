@@ -25,9 +25,21 @@
   --color-action-danger: 220 38 38;
   --color-action-danger-hover: 185 28 28;
   --color-status-success: 0 134 73;
+  --color-status-success-surface: 232 245 238;
+  --color-status-success-content: 0 106 58;
+  --color-status-success-border: 167 217 190;
   --color-status-warning: 217 119 6;
+  --color-status-warning-surface: 254 243 199;
+  --color-status-warning-content: 146 64 14;
+  --color-status-warning-border: 252 211 77;
   --color-status-danger: 220 38 38;
+  --color-status-danger-surface: 254 226 226;
+  --color-status-danger-content: 153 27 27;
+  --color-status-danger-border: 252 165 165;
   --color-status-info: 37 99 235;
+  --color-status-info-surface: 219 234 254;
+  --color-status-info-content: 30 64 175;
+  --color-status-info-border: 147 197 253;
   --color-focus: 0 134 73;
 
   --radius-sm: 0.25rem;
@@ -47,9 +59,9 @@ html[data-theme='dark'] {
   --color-surface: 27 37 29;
   --color-surface-subtle: 35 48 38;
   --color-surface-raised: 40 54 43;
-  --color-content-primary: 239 245 238;
-  --color-content-secondary: 199 212 200;
-  --color-content-muted: 158 177 161;
+  --color-content-primary: 215 226 214;
+  --color-content-secondary: 178 195 181;
+  --color-content-muted: 140 160 144;
   --color-content-inverse: 20 29 22;
   --color-border: 67 85 70;
   --color-border-strong: 102 123 105;
@@ -59,9 +71,21 @@ html[data-theme='dark'] {
   --color-action-danger: 248 113 113;
   --color-action-danger-hover: 252 145 145;
   --color-status-success: 74 202 122;
+  --color-status-success-surface: 26 48 34;
+  --color-status-success-content: 134 219 165;
+  --color-status-success-border: 48 87 62;
   --color-status-warning: 244 172 75;
+  --color-status-warning-surface: 61 46 16;
+  --color-status-warning-content: 252 211 77;
+  --color-status-warning-border: 120 83 28;
   --color-status-danger: 248 113 113;
+  --color-status-danger-surface: 61 26 28;
+  --color-status-danger-content: 252 165 165;
+  --color-status-danger-border: 124 54 55;
   --color-status-info: 104 185 236;
+  --color-status-info-surface: 22 38 61;
+  --color-status-info-content: 147 197 253;
+  --color-status-info-border: 47 76 117;
   --color-focus: 251 176 82;
 }
 
@@ -72,9 +96,9 @@ html[data-theme='dark'] {
     --color-surface: 27 37 29;
     --color-surface-subtle: 35 48 38;
     --color-surface-raised: 40 54 43;
-    --color-content-primary: 239 245 238;
-    --color-content-secondary: 199 212 200;
-    --color-content-muted: 158 177 161;
+    --color-content-primary: 215 226 214;
+    --color-content-secondary: 178 195 181;
+    --color-content-muted: 140 160 144;
     --color-content-inverse: 20 29 22;
     --color-border: 67 85 70;
     --color-border-strong: 102 123 105;
@@ -84,9 +108,21 @@ html[data-theme='dark'] {
     --color-action-danger: 248 113 113;
     --color-action-danger-hover: 252 145 145;
     --color-status-success: 74 202 122;
+    --color-status-success-surface: 26 48 34;
+    --color-status-success-content: 134 219 165;
+    --color-status-success-border: 48 87 62;
     --color-status-warning: 244 172 75;
+    --color-status-warning-surface: 61 46 16;
+    --color-status-warning-content: 252 211 77;
+    --color-status-warning-border: 120 83 28;
     --color-status-danger: 248 113 113;
+    --color-status-danger-surface: 61 26 28;
+    --color-status-danger-content: 252 165 165;
+    --color-status-danger-border: 124 54 55;
     --color-status-info: 104 185 236;
+    --color-status-info-surface: 22 38 61;
+    --color-status-info-content: 147 197 253;
+    --color-status-info-border: 47 76 117;
     --color-focus: 251 176 82;
   }
 }

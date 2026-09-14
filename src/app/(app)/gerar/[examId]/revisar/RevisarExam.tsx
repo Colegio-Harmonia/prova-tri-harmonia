@@ -25,7 +25,7 @@ function MathText({ text }: { text: string | null | undefined }) {
           <span key={i}>{seg.content}</span>
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
-          <img key={i} src={buildLatexImageUrl(seg.latex)} alt={seg.latex} className="mx-0.5 inline-block h-[1.1em] w-auto align-middle" />
+          <img key={i} src={buildLatexImageUrl(seg.latex)} alt={seg.latex} className={seg.display ? 'my-2 block h-auto max-h-40 w-auto' : 'mx-0.5 inline-block h-[1.1em] w-auto align-middle'} />
         ),
       )}
     </>
@@ -80,6 +80,8 @@ type Action = 'atribuir' | 'iniciar_revisao' | 'aprovar_prova' | 'concluir_revis
 const IMAGE_SOURCE_LABELS: Record<string, string> = {
   busca: 'Encontrada (Wikimedia Commons)',
   grafico: 'Gráfico renderizado a partir dos dados da questão',
+  diagrama: 'Diagrama matemático renderizado a partir dos dados da questão',
+  quimica: 'Estrutura química renderizada a partir da fórmula da questão',
   gerada: 'Gerada por IA',
   importado: 'Importada de link colado pelo professor',
   enem: 'Original da prova do ENEM (mesma imagem aplicada na época)',
@@ -124,6 +126,11 @@ function reviewPendingItems(payload: ExamGenerationResult): string[] {
   })
 }
 
+function firstPendingQuestion(payload: ExamGenerationResult): number | null {
+  const question = payload.questions.find((item) => item.review?.adequacy !== 'adequada' || Boolean(item.image && !item.image.approved))
+  return question?.number ?? null
+}
+
 export default function RevisarExam({ examId, currentUserRole, currentUserId }: { examId: number; currentUserRole: string; currentUserId: number | null }) {
   const [exam, setExam] = useState<ExamRow | null>(null)
   const [loading, setLoading] = useState(true)
@@ -140,7 +147,8 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   const [actionError, setActionError] = useState<Record<number, string>>({})
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [expandedImageQuestion, setExpandedImageQuestion] = useState<number | null>(null)
-  const [reviewBlocker, setReviewBlocker] = useState<string[] | null>(null)
+  const [reviewBlocker, setReviewBlocker] = useState<{ items: string[]; firstQuestion: number | null } | null>(null)
+  const [qualityReportOpen, setQualityReportOpen] = useState(false)
 
   const isCoordenacao = isStaffSuperuser(currentUserRole)
   const canAssignFormalExam = Boolean(
@@ -148,6 +156,14 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
     exam.status === 'rascunho' &&
     (isCoordenacao || exam.createdBy === currentUserId),
   )
+
+  useEffect(() => {
+    if (!reviewBlocker?.firstQuestion) return
+    const timer = window.setTimeout(() => {
+      document.getElementById(`question-${reviewBlocker.firstQuestion}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 100)
+    return () => window.clearTimeout(timer)
+  }, [reviewBlocker])
 
   function patchQuestion(questionNumber: number, patch: Record<string, unknown>) {
     setExam((current) => {
@@ -368,10 +384,10 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
 
 
   async function handleTransition(action: Action, assignedTo?: number, printWindow?: Window | null) {
-    if (action === 'concluir_revisao' && exam) {
+    if ((action === 'concluir_revisao' || action === 'aprovar_prova') && exam) {
       const pending = reviewPendingItems(exam.generationPayload)
       if (pending.length) {
-        setReviewBlocker(pending)
+        setReviewBlocker({ items: pending, firstQuestion: firstPendingQuestion(exam.generationPayload) })
         return
       }
     }
@@ -435,17 +451,20 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   const canFinalizeActivity = canFinalizeOwnActivity(exam, currentUserId, isCoordenacao)
   const canMarkActivityApplied = canMarkOwnActivityApplied(exam, currentUserId, isCoordenacao)
   const pendingReviewItems = reviewPendingItems(payload)
+  const hasFixedApprovalAction =
+    (canActOnOwnStep && exam.status === 'em_revisao') ||
+    (isCoordenacao && exam.status === 'revisao_concluida')
 
   return (
-    <div className="space-y-6">
+    <div className={`space-y-6 ${hasFixedApprovalAction ? 'pb-28' : ''}`}>
       <div aria-live="polite" className="sr-only">{actionMessage}</div>
       {reviewBlocker && (
         <div role="dialog" aria-modal="true" aria-labelledby="review-blocker-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setReviewBlocker(null)}>
           <div className="w-full max-w-md rounded-xl bg-surface p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
             <h2 id="review-blocker-title" className="text-base font-semibold">Ainda não é possível aprovar a prova</h2>
             <p className="mt-1 text-sm text-neutral-600">Faltam decisões humanas nos itens abaixo:</p>
-            <ul className="mt-3 space-y-1 text-sm">{reviewBlocker.map((item) => <li key={item}>• {item}</li>)}</ul>
-            <button onClick={() => setReviewBlocker(null)} className="mt-4 rounded bg-harmonia-green px-3 py-2 text-sm font-medium text-white">Continuar revisando</button>
+            <ul className="mt-3 space-y-1 text-sm">{reviewBlocker.items.map((item) => <li key={item}>• {item}</li>)}</ul>
+            <button onClick={() => setReviewBlocker(null)} className="mt-4 rounded bg-harmonia-green px-3 py-2 text-sm font-medium text-white">Ir para a primeira pendência</button>
           </div>
         </div>
       )}
@@ -462,18 +481,6 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
             {exam.assigneeName && ` · ${exam.examKind === 'prova' ? 'atribuída a' : 'responsável'} ${exam.assigneeName}`}
           </p>
         </div>
-
-        {exam.examKind === 'prova' && exam.status === 'em_revisao' && (
-          <section className={`rounded-xl border p-4 ${pendingReviewItems.length ? 'border-amber-200 bg-amber-50' : 'border-harmonia-green/30 bg-harmonia-green/5'}`}>
-            <h2 className="text-sm font-semibold">Aprovação da prova</h2>
-            <p className="mt-1 text-sm text-neutral-700">
-              {pendingReviewItems.length
-                ? `Faltam ${pendingReviewItems.length} decisão(ões) humana(s). A aprovação definitiva só será liberada quando todos os itens abaixo estiverem aceitos ou substituídos.`
-                : 'Todas as questões e imagens necessárias foram aprovadas. A prova está pronta para aprovação definitiva.'}
-            </p>
-            {pendingReviewItems.length > 0 && <ul className="mt-2 list-inside list-disc text-sm text-amber-900">{pendingReviewItems.map((item) => <li key={item}>{item}</li>)}</ul>}
-          </section>
-        )}
 
         <div className="flex flex-wrap items-center gap-2">
           {exam.status === 'rascunho' && (
@@ -522,33 +529,6 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
             >
               Iniciar aprovação
             </button>
-          )}
-
-          {canActOnOwnStep && exam.status === 'em_revisao' && (
-            <button
-              onClick={() => handleTransition('aprovar_prova')}
-              disabled={transitioning}
-              className="rounded bg-harmonia-green px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-            >
-              {transitioning ? 'Aprovando e gerando documentos…' : 'Aprovar prova e gerar documentos'}
-            </button>
-          )}
-
-          {isCoordenacao && exam.status === 'revisao_concluida' && (
-            <div className="flex flex-col items-start gap-1">
-              <button
-                onClick={() => handleTransition('aprovar')}
-                disabled={transitioning}
-                className="rounded bg-harmonia-green px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-              >
-                {transitioning ? 'Aprovando e gerando documentos…' : 'Aprovar e gerar documentos'}
-              </button>
-              {exam.reviewReadyNotifiedAt && (
-                <span className="text-xs text-neutral-400">
-                  Professor avisou em {new Date(exam.reviewReadyNotifiedAt).toLocaleString('pt-BR')}
-                </span>
-              )}
-            </div>
           )}
 
           {exam.examKind === 'prova' && (
@@ -631,7 +611,10 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
       <section className="rounded border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950" aria-labelledby="ai-review-notice">
         <h2 id="ai-review-notice" className="font-semibold">Revisão obrigatória do conteúdo assistido por IA</h2>
         <p className="mt-1">A IA fornece um rascunho. Antes de {exam.examKind === 'prova' ? 'aprovar' : 'finalizar a atividade'}, confira enunciados, alternativas, gabarito, nível de dificuldade, habilidades e imagens.</p>
+        {payload.metadata.qualityTest && <div className="mt-2 text-xs"><p>Teste de qualidade {payload.metadata.qualityTest.repairedQuestionNumbers.length ? `reparou automaticamente as questões ${payload.metadata.qualityTest.repairedQuestionNumbers.join(', ')}.` : 'aprovado antes da prova ser salva.'}</p>{payload.metadata.qualityTest.reports?.length ? <button type="button" onClick={() => setQualityReportOpen(true)} className="mt-2 font-medium text-harmonia-green underline">Abrir relatório detalhado do teste de qualidade</button> : null}</div>}
       </section>
+
+      {qualityReportOpen && payload.metadata.qualityTest?.reports && <div role="dialog" aria-modal="true" aria-labelledby="quality-report-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setQualityReportOpen(false)}><section className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-surface p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="flex items-start justify-between gap-4"><div><h2 id="quality-report-title" className="text-lg font-semibold">Relatório detalhado do teste de qualidade</h2><p className="mt-1 text-sm text-content-secondary">Critérios verificáveis usados antes de salvar a prova.</p></div><button type="button" onClick={() => setQualityReportOpen(false)} className="rounded border border-border px-3 py-1.5 text-sm">Fechar</button></div><div className="mt-5 space-y-6">{payload.metadata.qualityTest.reports.map((report, index) => <section key={`${report.phase}-${index}`}><h3 className="font-semibold text-content-primary">{report.phase}</h3><div className="mt-3 grid gap-3 sm:grid-cols-2">{report.results.map((result) => <article key={result.questionNumber} className={`rounded-lg border p-3 ${result.approved ? 'border-harmonia-green/30 bg-harmonia-green/5' : 'border-red-200 bg-red-50'}`}><div className="flex items-center justify-between gap-2"><p className="font-medium">Questão {result.questionNumber}</p><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${result.approved ? 'bg-harmonia-green/10 text-harmonia-green' : 'bg-red-100 text-red-700'}`}>{result.approved ? 'Aprovada' : 'Reprovada'}</span></div>{result.verdictReason && <p className="mt-2 text-sm text-content-secondary">{result.verdictReason}</p>}{result.checks?.length ? <ul className="mt-3 space-y-2 text-xs">{result.checks.map((check, checkIndex) => <li key={checkIndex} className="rounded bg-surface p-2"><p className="font-medium">{check.criterion.replace(/_/g, ' ')} · {check.status}</p><p className="mt-0.5 text-content-secondary">{check.evidence}</p></li>)}</ul> : null}{result.issues.length ? <ul className="mt-3 list-disc pl-4 text-xs text-red-800">{result.issues.map((issue, issueIndex) => <li key={issueIndex}>{issue.severity}: {issue.reason}</li>)}</ul> : null}</article>)}</div></section>)}</div></section></div>}
 
       {['aprovado', 'impresso', 'aplicado', 'corrigido'].includes(exam.status) && (
         <div className="rounded border border-harmonia-green/30 bg-harmonia-green/5 p-4 text-sm">
@@ -653,16 +636,9 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
         </div>
       )}
 
-      {reviewEditable && pendingReviewItems.length > 0 && (
-        <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-          <h2 className="font-semibold">Pendências de aprovação humana</h2>
-          <ul className="mt-2 flex flex-wrap gap-2">{pendingReviewItems.map((item) => <li key={item} className="rounded-full bg-white px-2.5 py-1 text-xs ring-1 ring-amber-200">{item}</li>)}</ul>
-        </section>
-      )}
-
       <div className="space-y-6">
         {payload.questions.map((q) => (
-          <article key={q.number} className="relative overflow-hidden rounded-xl border border-border bg-surface p-5 text-sm text-content-primary shadow-sm">
+          <article id={`question-${q.number}`} key={q.number} className="relative scroll-mt-6 overflow-hidden rounded-xl border border-border bg-surface p-5 text-sm text-content-primary shadow-sm">
             <div className="absolute inset-y-0 left-0 w-1 bg-harmonia-green/70" />
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <span className="rounded-full bg-harmonia-green px-2.5 py-1 font-semibold text-white">Questão {q.number}</span>
@@ -771,6 +747,25 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
           </article>
         ))}
       </div>
+
+      {hasFixedApprovalAction && (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 px-4 py-3 shadow-[0_-8px_24px_rgba(0,0,0,0.12)] backdrop-blur">
+          <div className="mx-auto flex max-w-6xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className={`text-sm ${pendingReviewItems.length ? 'text-amber-800' : 'text-harmonia-green'}`}>
+              {pendingReviewItems.length
+                ? `${pendingReviewItems.length} pendência(s) de aprovação humana.`
+                : 'Todas as questões e imagens necessárias foram aprovadas.'}
+            </p>
+            <button
+              onClick={() => handleTransition(exam.status === 'em_revisao' ? 'aprovar_prova' : 'aprovar')}
+              disabled={transitioning}
+              className="min-h-10 rounded bg-harmonia-green px-5 py-2 text-sm font-medium text-white disabled:opacity-60"
+            >
+              {transitioning ? 'Aprovando e gerando documentos…' : exam.status === 'em_revisao' ? 'Aprovar prova e gerar documentos' : 'Aprovar e gerar documentos'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

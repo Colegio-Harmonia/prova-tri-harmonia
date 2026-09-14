@@ -4,7 +4,7 @@ import { auth } from '@/auth/auth'
 import { db } from '@/db/client'
 import { examCorrections, generatedExams, users } from '@/db/schema'
 import { isStaffSuperuser } from '@/lib/auth/roles'
-import { getEnemAreaForSubject } from '@/config/enemAreaMap'
+import { getEnemAreaForSubject, getEnemCompetenciesForSubject } from '@/config/enemAreaMap'
 import type { CorrectionAnswer } from '@/types/correction'
 
 // Sugestão automática de habilidades pro reforço (Módulo 3, spec 3.3):
@@ -39,6 +39,7 @@ export async function GET(req: NextRequest) {
   if (!area) {
     return NextResponse.json({ error: 'Informe uma disciplina do Ensino Médio com área ENEM correspondente.' }, { status: 400 })
   }
+  const allowedCompetencies = getEnemCompetenciesForSubject(subject ?? '')
 
   // Professor só enxerga o desempenho das próprias provas — mesma regra
   // do /api/analytics/performance.
@@ -89,7 +90,7 @@ export async function GET(req: NextRequest) {
   // questionId → habilidade oficial, restrito à área pedida
   const questionIds = [...statsByQuestionId.keys()]
   const rows = await db.execute(sql`
-    SELECT c.question_id, s.code, s.description
+    SELECT c.question_id, s.code, s.description, ec.number AS competency_number
     FROM imported_question_classifications c
     JOIN enem_skills s ON s.id = c.enem_skill_id
     JOIN enem_competencies ec ON ec.id = s.competency_id
@@ -100,6 +101,7 @@ export async function GET(req: NextRequest) {
 
   const bySkill = new Map<string, { description: string | null; attempts: number; errors: number }>()
   for (const raw of rows as unknown as Array<Record<string, unknown>>) {
+    if (allowedCompetencies?.length && !allowedCompetencies.includes(Number(raw.competency_number))) continue
     const stat = statsByQuestionId.get(Number(raw.question_id))
     if (!stat) continue
     const code = String(raw.code)

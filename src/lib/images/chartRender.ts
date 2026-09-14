@@ -1,4 +1,5 @@
 import axios from 'axios'
+import sharp from 'sharp'
 import { generateStructuredContent } from '@/lib/gemini/llmClient'
 
 const QUICKCHART_BASE = 'https://quickchart.io/chart'
@@ -40,6 +41,42 @@ ${JSON.stringify(CHART_EXTRACTION_SCHEMA)}`
   return parsed
 }
 
+/** Renderizador vetorial local: não envia dados da questão a um serviço externo. */
+type RenderableChart = { chartType: 'bar' | 'line' | 'pie'; title: string; labels: string[]; values: number[] }
+
+export async function renderVegaDataChart(extraction: RenderableChart): Promise<Buffer> {
+  const values = extraction.labels.map((label, index) => ({ label, value: extraction.values[index] }))
+  const mark = extraction.chartType === 'pie'
+    ? { type: 'arc', innerRadius: 0 }
+    : { type: extraction.chartType === 'line' ? 'line' : 'bar', point: extraction.chartType === 'line' }
+  const encoding = extraction.chartType === 'pie'
+    ? { theta: { field: 'value', type: 'quantitative' }, color: { field: 'label', type: 'nominal', legend: { title: null } } }
+    : {
+        x: { field: 'label', type: 'nominal', title: null, sort: null },
+        y: { field: 'value', type: 'quantitative', title: null },
+        ...(extraction.chartType === 'line' ? {} : { color: { field: 'label', type: 'nominal', legend: null } }),
+      }
+  const specification = {
+    $schema: 'https://vega.github.io/schema/vega-lite/v6.json',
+    width: 620,
+    height: 360,
+    background: 'white',
+    title: extraction.title || undefined,
+    data: { values },
+    mark,
+    encoding,
+    config: { view: { stroke: '#d1d5db' }, axis: { labelFont: 'Arial', titleFont: 'Arial' }, title: { font: 'Arial', fontSize: 18 } },
+  }
+  // Import dinâmico: o build de `vega-canvas` usa top-level await, que o
+  // transform CJS do tsx (usado pelo worker) não converte. Carregar sob
+  // demanda evita quebrar o worker e ainda mantém o fallback para o QuickChart.
+  const vega = await import('vega')
+  const vegaLite = await import('vega-lite')
+  const runtime = vega.parse(vegaLite.compile(specification as never).spec)
+  const svg = await new vega.View(runtime, { renderer: 'none' }).toSVG()
+  return sharp(Buffer.from(svg)).png().toBuffer()
+}
+
 /**
  * Tenta renderizar um gráfico DETERMINÍSTICO (QuickChart, gratuito, sem
  * chave de API) a partir dos dados numéricos já presentes na questão —
@@ -67,14 +104,26 @@ export async function tryRenderChart(query: string, questionContext: string): Pr
   if (!extraction?.shouldChart || !extraction.labels?.length || !extraction.values?.length) return null
   if (extraction.labels.length !== extraction.values.length || extraction.labels.length < 2) return null
 
+  const normalized = {
+    chartType: extraction.chartType ?? 'bar',
+    title: extraction.title ?? '',
+    labels: extraction.labels,
+    values: extraction.values,
+  }
+  try {
+    return await renderVegaDataChart(normalized)
+  } catch (err) {
+    console.warn('[chartRender] Vega falhou; tentando QuickChart:', err instanceof Error ? err.message : err)
+  }
+
   const chartConfig = {
-    type: extraction.chartType ?? 'bar',
+    type: normalized.chartType,
     data: {
       labels: extraction.labels,
       datasets: [
         {
-          label: extraction.title ?? '',
-          data: extraction.values,
+          label: normalized.title,
+          data: normalized.values,
           backgroundColor: ['#008649', '#2196F3', '#FF9800', '#9C27B0', '#E91E63', '#4CAF50', '#795548', '#607D8B'],
         },
       ],
@@ -84,10 +133,10 @@ export async function tryRenderChart(query: string, questionContext: string): Pr
       // (legend/title direto em options) é o que a instância pública deles
       // resolve por padrão; duplicar em plugins cobre v3 também, sem custo.
       legend: { display: false },
-      title: { display: Boolean(extraction.title), text: extraction.title ?? '' },
+      title: { display: Boolean(normalized.title), text: normalized.title },
       plugins: {
         legend: { display: false },
-        title: { display: Boolean(extraction.title), text: extraction.title ?? '' },
+        title: { display: Boolean(normalized.title), text: normalized.title },
       },
     },
   }

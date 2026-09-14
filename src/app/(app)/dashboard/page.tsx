@@ -16,13 +16,13 @@ export default async function DashboardPage() {
   return (
     <div>
       <h1 className="text-lg font-semibold">Dashboard</h1>
-      <p className="mt-1 text-sm text-neutral-500">Visão geral das provas geradas e banco de questões ENEM.</p>
+      <p className="mt-1 text-sm text-content-muted">Visão geral das provas geradas e banco de questões ENEM.</p>
 
       <div className="mt-6">
         <DashboardStats />
       </div>
 
-      <hr className="my-8 border-neutral-200" />
+      <hr className="my-8 border-border" />
 
       <EnemDashboard />
     </div>

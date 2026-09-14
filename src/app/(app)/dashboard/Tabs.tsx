@@ -12,7 +12,7 @@ export function Tabs({ tabs, defaultTab }: { tabs: Tab[]; defaultTab?: string })
 
   return (
     <div>
-      <div className="flex flex-wrap gap-1 border-b border-neutral-200">
+      <div className="flex flex-wrap gap-1 border-b border-border">
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -20,7 +20,7 @@ export function Tabs({ tabs, defaultTab }: { tabs: Tab[]; defaultTab?: string })
             className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
               activeTab?.id === t.id
                 ? 'border-harmonia-green text-harmonia-green'
-                : 'border-transparent text-neutral-500 hover:text-neutral-700'
+                : 'border-transparent text-content-muted hover:text-content-secondary'
             }`}
           >
             {t.label}

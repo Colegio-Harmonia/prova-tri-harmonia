@@ -17,6 +17,7 @@ import { validateGeneratedExamPedagogicalFidelity } from '@/lib/pedagogical/gene
 import { buildPlannedQuestionSlots, shouldRequireVisualAid, validateCurriculumPlan, type PlannedQuestionSlot } from '@/lib/exams/contentPlan'
 import { assembleBestExamCandidates, compactQuestionContext, validateExamAssembly, type QuestionCandidate } from '@/lib/exams/examQualityAssembly'
 import { auditFinalExamQuality } from '@/lib/exams/examQualityAudit'
+import { runQuestionQualityTest } from '@/lib/exams/questionQualityTest'
 import type { CurriculumPlanItem } from '@/types/exam'
 
 // Core da geração de prova, compartilhado entre a rota síncrona
@@ -148,6 +149,9 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
 
   let aiQuestions: ExamQuestion[] = []
   let warnings: string[] = []
+  let qualityTestWarnings: string[] = []
+  let qualityTestRepairedNumbers: number[] = []
+  let qualityTestReports: Array<{ phase: string; results: Awaited<ReturnType<typeof runQuestionQualityTest>>['report'] }> = []
   const issues: string[] = []
   let alternativesCount = params.segment === 'anos-iniciais' ? 4 : 5
 
@@ -212,12 +216,17 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
       }
 
       aiQuestions = assembleBestExamCandidates(slots, candidates)
+      const firstQualityTest = await runQuestionQualityTest(curriculum, aiQuestions)
+      warnings.push(...firstQualityTest.warnings)
+      qualityTestWarnings.push(...firstQualityTest.warnings)
+      qualityTestReports.push({ phase: 'Análise inicial', results: firstQualityTest.report })
       const firstAudit = await auditFinalExamQuality(curriculum, slots, aiQuestions)
       warnings.push(...firstAudit.warnings)
-      const blockingIssues = [...validateExamAssembly(aiQuestions, slots), ...firstAudit.issues].filter((issue) => issue.severity === 'bloqueante')
+      const blockingIssues = [...validateExamAssembly(aiQuestions, slots), ...firstQualityTest.issues, ...firstAudit.issues].filter((issue) => issue.severity === 'bloqueante')
 
       if (blockingIssues.length) {
         const repairNumbers = [...new Set(blockingIssues.flatMap((issue) => issue.questionNumbers))]
+        qualityTestRepairedNumbers = repairNumbers
         warnings.push(`Revisão editorial global encontrou ${repairNumbers.length} questão(ões) para reparo pontual.`)
         for (const number of repairNumbers) {
           const slot = slots.find((candidate) => candidate.number === number)
@@ -227,11 +236,22 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
           aiQuestions = aiQuestions.map((question) => question.number === number ? replacement.question : question)
         }
         const finalDeterministicIssues = validateExamAssembly(aiQuestions, slots).filter((issue) => issue.severity === 'bloqueante')
+        const finalQualityTest = await runQuestionQualityTest(curriculum, aiQuestions)
+        warnings.push(...finalQualityTest.warnings)
+        qualityTestWarnings.push(...finalQualityTest.warnings)
+        qualityTestReports.push({ phase: 'Após reparo automático', results: finalQualityTest.report })
         const finalAudit = await auditFinalExamQuality(curriculum, slots, aiQuestions)
         warnings.push(...finalAudit.warnings)
-        const unresolved = [...finalDeterministicIssues, ...finalAudit.issues.filter((issue) => issue.severity === 'bloqueante')]
+        const unresolved = [...finalDeterministicIssues, ...finalQualityTest.issues.filter((issue) => issue.severity === 'bloqueante'), ...finalAudit.issues.filter((issue) => issue.severity === 'bloqueante')]
         if (unresolved.length) {
-          throw new ExamGenerationInputError(`A revisão final da prova identificou problemas que não puderam ser corrigidos automaticamente: ${unresolved.map((issue) => `Q${issue.questionNumbers.join('/Q')}: ${issue.reason}`).join(' | ')}`)
+          // A geração já tentou reparar cada questão indicada. Se a segunda
+          // versão ainda exigir julgamento pedagógico, preservamos a prova e
+          // levamos a pendência explícita para a Conferência. Encerrar o job
+          // aqui escondia justamente o material que o professor precisa
+          // revisar e fazia uma falha editorial parecer falha técnica.
+          const affectedNumbers = [...new Set(unresolved.flatMap((issue) => issue.questionNumbers))]
+          warnings.push(`Revisão de qualidade pendente nas questões ${affectedNumbers.join(', ')}. A prova foi gerada para revisão humana; não a aprove sem conferir os apontamentos no relatório de qualidade.`)
+          qualityTestWarnings.push(...unresolved.map((issue) => `Q${issue.questionNumbers.join('/Q')}: ${issue.reason}`))
         }
       }
       alternativesCount = params.segment === 'anos-iniciais' ? 4 : 5
@@ -244,9 +264,22 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
       zodSchema: examGenerationResultSchema,
       validate: async (parsedExam) => {
         const validation = validateExamResult(parsedExam, curriculum, { ...params, enforcePedagogicalCompleteness: qualityGateEnabled })
-        if (validation.issues.length || !qualityGateEnabled) {
+        if (validation.issues.length) {
           return { value: validation.corrected, issues: validation.issues, warnings: validation.warnings }
         }
+        const quality = await runQuestionQualityTest(curriculum, validation.corrected.questions)
+        qualityTestReports = [{ phase: 'Análise da geração', results: quality.report }]
+        if (quality.issues.some((issue) => issue.severity === 'bloqueante')) {
+          const affectedNumbers = [...new Set(quality.issues.filter((issue) => issue.severity === 'bloqueante').flatMap((issue) => issue.questionNumbers))]
+          qualityTestWarnings.push(...quality.issues.filter((issue) => issue.severity === 'bloqueante').map((issue) => `Q${issue.questionNumbers.join('/Q')}: ${issue.reason}`))
+          return {
+            value: validation.corrected,
+            issues: [],
+            warnings: [...validation.warnings, ...quality.warnings, `Teste de qualidade apontou pendências nas questões ${affectedNumbers.join(', ')}. A prova seguirá para revisão humana.`],
+          }
+        }
+        qualityTestWarnings.push(...quality.warnings)
+        if (!qualityGateEnabled) return { value: validation.corrected, issues: [], warnings: [...validation.warnings, ...quality.warnings] }
         const fidelity = await validateGeneratedExamPedagogicalFidelity(curriculum, validation.corrected)
         return {
           value: fidelity.corrected,
@@ -262,8 +295,16 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
     }
     // Se uma questão declara imagem (por análise automática ou regra
     // obrigatória da matriz), ela não pode seguir sem o recurso visual.
-    const examWithImages = await attachImagesToExam({ metadata: { segment: params.segment, gradeYear: params.gradeYear, subject: params.subject, bimester: params.bimester ?? null, questionCount: aiQuestions.length, objectiveCount: aiQuestions.filter((q) => q.type === 'objetiva').length, discursiveCount: aiQuestions.filter((q) => q.type === 'descritiva').length, alternativesCount }, questions: aiQuestions }, { requireResolvedImages: true, maxAttemptsPerImage: 2 })
+    // Imagem é um recurso de apoio, não deve invalidar uma prova inteira. Se
+    // os provedores não conseguirem produzir um gráfico/mapa confiável, a
+    // questão segue para revisão sem imagem e o professor pode tentar gerá-la
+    // novamente na própria tela.
+    const examWithImages = await attachImagesToExam({ metadata: { segment: params.segment, gradeYear: params.gradeYear, subject: params.subject, bimester: params.bimester ?? null, questionCount: aiQuestions.length, objectiveCount: aiQuestions.filter((q) => q.type === 'objetiva').length, discursiveCount: aiQuestions.filter((q) => q.type === 'descritiva').length, alternativesCount }, questions: aiQuestions }, { requireResolvedImages: false, maxAttemptsPerImage: 2, subject: params.subject })
     aiQuestions = examWithImages.questions
+    const unresolvedImages = aiQuestions.filter((question) => question.needsImage && !question.image).map((question) => question.number)
+    if (unresolvedImages.length) {
+      warnings.push(`Não foi possível obter imagem para a(s) questão(ões) ${unresolvedImages.join(', ')}. A prova foi gerada e a imagem pode ser tentada novamente na revisão.`)
+    }
   }
 
   const bankQuestions = await buildBankExamQuestions(params.enemBankQuestionIds, aiQuestions.length + 1)
@@ -273,7 +314,7 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
 
   const allQuestions = [...aiQuestions, ...bankQuestions]
   const examWithBank = {
-    metadata: {
+      metadata: {
       segment: params.segment,
       gradeYear: params.gradeYear,
       subject: params.subject,
@@ -281,7 +322,8 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
       questionCount: allQuestions.length,
       objectiveCount: allQuestions.filter((q) => q.type === 'objetiva').length,
       discursiveCount: allQuestions.filter((q) => q.type === 'descritiva').length,
-      alternativesCount,
+        alternativesCount,
+        qualityTest: { version: 'quality-test-v1', checkedAt: new Date().toISOString(), repairedQuestionNumbers: qualityTestRepairedNumbers, warnings: qualityTestWarnings, reports: qualityTestReports },
     },
     questions: allQuestions,
   }

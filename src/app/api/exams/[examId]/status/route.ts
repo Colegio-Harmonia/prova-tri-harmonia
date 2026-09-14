@@ -11,6 +11,7 @@ import { isStaffSuperuser } from '@/lib/auth/roles'
 import { isSelfManagedActivity } from '@/lib/exams/activityWorkflow'
 import { SheetAssignmentsSnapshotError, snapshotSheetAssignments } from '@/lib/scan-sheets/sheetAssignments'
 import { enqueuePontuarProvaJob } from '@/lib/queue/enqueue'
+import { qualityApprovalBlocks } from '@/lib/exams/questionQualityTest'
 
 const bodySchema = z.object({
   action: z.enum(['atribuir', 'iniciar_revisao', 'aprovar_prova', 'concluir_revisao', 'aprovar', 'marcar_impresso', 'marcar_aplicado', 'marcar_corrigido', 'finalizar_atividade', 'marcar_atividade_aplicada']),
@@ -137,6 +138,13 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
   if (action === 'aprovar_prova' || action === 'aprovar' || action === 'finalizar_atividade') {
     try {
       const payload = exam.generationPayload as ExamGenerationResult
+      const qualityBlocks = qualityApprovalBlocks(payload)
+      if (qualityBlocks.length) {
+        return NextResponse.json({
+          error: `Aprovação bloqueada pelo controle de qualidade. ${qualityBlocks.join(' ')}`,
+          qualityBlocks,
+        }, { status: 409 })
+      }
       const result = await generateExamDocs(payload, {
         segment: exam.segment,
         gradeYear: exam.gradeYear,

@@ -1,6 +1,5 @@
-// Subjects where the user explicitly asked for image support in questions.
-// Matemática/Artes/Educação Física/Filosofia/Sociologia/Literatura are
-// deliberately excluded for now — easy to extend later, not assumed.
+// Matemática é habilitada para que o roteador técnico possa gerar figuras
+// verificáveis (plano cartesiano, vetores e geometria) sem recorrer à IA.
 const IMAGE_ELIGIBLE_ALIASES = [
   'ciências',
   'ciencias',
@@ -9,6 +8,8 @@ const IMAGE_ELIGIBLE_ALIASES = [
   'quimica',
   'física',
   'fisica',
+  'matemática',
+  'matematica',
   'geografia',
   'história',
   'historia',

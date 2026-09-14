@@ -2,6 +2,7 @@
 
 import dynamic from 'next/dynamic'
 import type { ApexOptions } from 'apexcharts'
+import { useResolvedTheme } from '@/lib/useResolvedTheme'
 
 // ApexCharts toca `window`/DOM direto — precisa ficar fora do SSR do Next.js
 // (App Router ainda tenta renderizar client components no servidor na
@@ -26,6 +27,8 @@ export type ApexBarChartProps = {
 }
 
 export function ApexBarChart({ title, categories, values, colors, subtitle, height }: ApexBarChartProps) {
+  const theme = useResolvedTheme()
+
   if (!categories.length) return null
 
   const resolvedColors = Array.isArray(colors) ? colors : [colors]
@@ -43,18 +46,18 @@ export function ApexBarChart({ title, categories, values, colors, subtitle, heig
       },
     },
     colors: resolvedColors,
-    dataLabels: { enabled: true, style: { fontSize: '11px', colors: ['#374151'] }, offsetX: 20 },
-    xaxis: { categories, labels: { style: { fontSize: '11px' } } },
-    yaxis: { labels: { style: { fontSize: '11px' } } },
-    grid: { borderColor: '#f0f0f0', xaxis: { lines: { show: true } }, yaxis: { lines: { show: false } } },
+    dataLabels: { enabled: true, style: { fontSize: '11px', colors: ['rgb(var(--color-content-secondary))'] }, offsetX: 20 },
+    xaxis: { categories, labels: { style: { fontSize: '11px', colors: 'rgb(var(--color-content-muted))' } } },
+    yaxis: { labels: { style: { fontSize: '11px', colors: 'rgb(var(--color-content-muted))' } } },
+    grid: { borderColor: 'rgb(var(--color-border))', xaxis: { lines: { show: true } }, yaxis: { lines: { show: false } } },
     legend: { show: false },
-    tooltip: { theme: 'light' },
+    tooltip: { theme },
   }
 
   return (
-    <div className="rounded border border-neutral-200 bg-white p-4">
-      <p className="text-sm font-medium text-neutral-700">{title}</p>
-      {subtitle && <p className="text-xs text-neutral-400">{subtitle}</p>}
+    <div className="rounded border border-border bg-surface p-4">
+      <p className="text-sm font-medium text-content-primary">{title}</p>
+      {subtitle && <p className="text-xs text-content-muted">{subtitle}</p>}
       <div className="mt-2">
         <ReactApexChart
           type="bar"

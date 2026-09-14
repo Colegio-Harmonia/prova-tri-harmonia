@@ -19,11 +19,11 @@ const STATUS_LABELS: Record<string, string> = {
   corrigido: 'Corrigido',
 }
 const STATUS_COLORS: Record<string, string> = {
-  atribuido: 'bg-amber-50 text-amber-700',
-  em_andamento: 'bg-blue-50 text-blue-700',
-  revisao_concluida: 'bg-teal-50 text-teal-700',
-  aprovado: 'bg-emerald-50 text-emerald-700',
-  impresso: 'bg-neutral-700 text-white',
+  atribuido: 'bg-status-warning-surface text-status-warning-content',
+  em_andamento: 'bg-status-info-surface text-status-info-content',
+  revisao_concluida: 'bg-status-success-surface text-status-success-content',
+  aprovado: 'bg-status-success-surface text-status-success-content',
+  impresso: 'bg-content-muted text-content-inverse',
   aplicado: 'bg-violet-50 text-violet-700',
   corrigido: 'bg-harmonia-green/10 text-harmonia-green',
 }
@@ -57,9 +57,9 @@ export default function ProfessorHome() {
         <p className="mt-1 text-sm text-content-muted">Somente provas atribuídas a você, ordenadas para revisão.</p>
 
         {!exams ? (
-          <p className="mt-4 text-sm text-neutral-500">Carregando…</p>
+          <p className="mt-4 text-sm text-content-muted">Carregando…</p>
         ) : pending.length === 0 ? (
-          <p className="mt-4 text-sm text-neutral-500">Nenhuma prova pendente atribuída a você no momento.</p>
+          <p className="mt-4 text-sm text-content-muted">Nenhuma prova pendente atribuída a você no momento.</p>
         ) : (
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {pending.map((e) => (
@@ -68,7 +68,7 @@ export default function ProfessorHome() {
                 href={`/gerar/${e.id}/revisar`}
                 className="rounded-lg border border-border bg-surface p-4 transition-colors hover:border-harmonia-green focus-visible:outline-none"
               >
-                <div className="flex items-start justify-between gap-3"><ClipboardCheck aria-hidden="true" className="h-5 w-5 text-harmonia-green" /><span className={`rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_COLORS[e.status] ?? 'bg-neutral-100 text-neutral-600'}`}>{STATUS_LABELS[e.status] ?? e.status}</span></div>
+                <div className="flex items-start justify-between gap-3"><ClipboardCheck aria-hidden="true" className="h-5 w-5 text-harmonia-green" /><span className={`rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_COLORS[e.status] ?? 'bg-surface-subtle text-content-secondary'}`}>{STATUS_LABELS[e.status] ?? e.status}</span></div>
                 <p className="mt-4 text-base font-semibold text-content-primary">{e.subject}</p>
                 <p className="mt-1 text-sm text-content-muted">{e.gradeYear}º ano{e.bimester ? ` · ${e.bimester}º bimestre` : ''}</p>
                 <span className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-harmonia-green">Revisar prova <ArrowRight aria-hidden="true" size={16} /></span>

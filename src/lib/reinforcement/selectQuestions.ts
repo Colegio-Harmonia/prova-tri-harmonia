@@ -16,11 +16,27 @@ export type ReinforcementCandidate = {
   bloomLevel: string | null
 }
 
-export async function fetchCandidatesBySkill(area: string, skillCodes: string[], year?: number): Promise<Map<string, ReinforcementCandidate[]>> {
+/** Embaralhamento Fisher–Yates: cada permutação tem a mesma probabilidade. */
+function shuffle<T>(items: readonly T[]): T[] {
+  const shuffled = [...items]
+  for (let index = shuffled.length - 1; index > 0; index--) {
+    const swapIndex = Math.floor(Math.random() * (index + 1))
+    ;[shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]]
+  }
+  return shuffled
+}
+
+export async function fetchCandidatesBySkill(
+  area: string,
+  skillCodes: string[],
+  year?: number,
+  competencyNumbers?: readonly number[] | null,
+): Promise<Map<string, ReinforcementCandidate[]>> {
   if (!skillCodes.length) return new Map()
 
   const rows = await db.execute(sql`
-    SELECT q.id, q.year, s.code AS skill_code, s.description AS skill_description, c.bloom_level
+    SELECT q.id, q.year, s.code AS skill_code, s.description AS skill_description,
+      c.bloom_level, ec.number AS competency_number
     FROM imported_questions q
     JOIN imported_question_classifications c ON c.question_id = q.id AND c.source = 'enem'
     JOIN enem_skills s ON s.id = c.enem_skill_id
@@ -37,12 +53,14 @@ export async function fetchCandidatesBySkill(area: string, skillCodes: string[],
         COALESCE(q.raw_json->>'visualDetected', 'false') <> 'true'
         OR COALESCE(jsonb_array_length(q.files), 0) > 0
       )
-    ORDER BY q.year DESC, q.question_index ASC
+    ORDER BY random()
   `)
 
   const bySkill = new Map<string, ReinforcementCandidate[]>()
   for (const code of skillCodes) bySkill.set(code, [])
   for (const raw of rows as unknown as Array<Record<string, unknown>>) {
+    const competencyNumber = Number(raw.competency_number)
+    if (competencyNumbers?.length && !competencyNumbers.includes(competencyNumber)) continue
     const candidate: ReinforcementCandidate = {
       id: Number(raw.id),
       year: Number(raw.year),
@@ -71,24 +89,40 @@ export function distributeAcrossSkills(
   const skills = [...candidatesBySkill.keys()]
   const warnings: string[] = []
 
-  // Fila por habilidade com Bloom intercalado: agrupa por nível e alterna
-  // entre os grupos, pra seleção "top N" não sair toda do mesmo nível.
+  // Sorteio estratificado por ano: cada ano elegível recebe a mesma chance
+  // de abrir a fila, independentemente de quantos itens ele possui. Depois
+  // os anos se alternam aleatoriamente. Assim o banco não fica preso aos
+  // itens mais recentes nem aos anos com mais registros, mas pode reutilizar
+  // qualquer questão em provas futuras — não há bloqueio histórico.
   const queues = new Map<string, ReinforcementCandidate[]>()
   for (const [skill, candidates] of candidatesBySkill) {
-    const byBloom = new Map<string, ReinforcementCandidate[]>()
+    const byYear = new Map<number, ReinforcementCandidate[]>()
     for (const c of candidates) {
-      const key = c.bloomLevel ?? 'sem_bloom'
-      if (!byBloom.has(key)) byBloom.set(key, [])
-      byBloom.get(key)!.push(c)
+      if (!byYear.has(c.year)) byYear.set(c.year, [])
+      byYear.get(c.year)!.push(c)
     }
-    const groups = [...byBloom.values()]
-    const interleaved: ReinforcementCandidate[] = []
-    for (let i = 0; interleaved.length < candidates.length; i++) {
-      for (const group of groups) {
-        if (group[i]) interleaved.push(group[i])
+    const years = shuffle([...byYear.keys()])
+    for (const year of years) byYear.set(year, shuffle(byYear.get(year)!))
+    const randomized: ReinforcementCandidate[] = []
+    let remaining = candidates.length
+    // Mantém a variação de Bloom dentro da própria rodada de anos. A ordem
+    // continua aleatória, mas não desperdiça três vagas seguidas no mesmo
+    // nível quando o banco oferece alternativas diferentes.
+    const bloomsInRound = new Set<string | null>()
+    while (remaining > 0) {
+      for (const year of years) {
+        const yearQueue = byYear.get(year)!
+        const variedIndex = yearQueue.findIndex((candidate) => !bloomsInRound.has(candidate.bloomLevel))
+        const candidate = yearQueue.splice(variedIndex >= 0 ? variedIndex : 0, 1)[0]
+        if (candidate) {
+          randomized.push(candidate)
+          bloomsInRound.add(candidate.bloomLevel)
+          remaining--
+        }
       }
+      if (bloomsInRound.size >= new Set(candidates.map((candidate) => candidate.bloomLevel)).size) bloomsInRound.clear()
     }
-    queues.set(skill, interleaved)
+    queues.set(skill, randomized)
   }
 
   const selected: ReinforcementCandidate[] = []
@@ -130,7 +164,8 @@ export async function selectReinforcementQuestions(params: {
   skillCodes: string[]
   count: number
   year?: number
+  competencyNumbers?: readonly number[] | null
 }): Promise<{ selected: ReinforcementCandidate[]; perSkill: Record<string, number>; warnings: string[] }> {
-  const bySkill = await fetchCandidatesBySkill(params.area, params.skillCodes, params.year)
+  const bySkill = await fetchCandidatesBySkill(params.area, params.skillCodes, params.year, params.competencyNumbers)
   return distributeAcrossSkills(bySkill, params.count)
 }

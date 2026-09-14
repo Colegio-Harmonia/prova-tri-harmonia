@@ -1,9 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { SEGMENT_LABELS, SEGMENT_GRADES, SEGMENT_SUBJECTS } from '@/config/subjects'
 import { getEnemAreaForSubject } from '@/config/enemAreaMap'
+import { currentBimester } from '@/lib/exams/currentBimester'
+import { evenQuestionCounts } from '@/lib/exams/chapterDistribution'
 import type { Segment, CurriculumPlanItem, CurriculumSelection } from '@/types/exam'
 import { GenerationStepper } from '@/features/assessments/components/GenerationStepper'
 
@@ -88,12 +90,27 @@ function UnitList({ units, bnccFilter }: { units: CurriculumSelection['units']; 
 
 type TeacherOption = { id: number; name: string; email: string }
 
-export default function CurriculumPreview({ coordinator, teachers }: { coordinator: boolean; teachers: TeacherOption[] }) {
-  const [segment, setSegment] = useState<Segment>('anos-iniciais')
-  const [gradeYear, setGradeYear] = useState<number>(SEGMENT_GRADES['anos-iniciais'][0])
-  const [selectedSubjects, setSelectedSubjects] = useState<string[]>([SEGMENT_SUBJECTS['anos-iniciais'][0]])
+// Converte a posição do ponteiro na largura da barra em uma quantidade de
+// questões (0..total). É a base do gráfico interativo: o mesmo gesto cobre
+// clique e arraste.
+function questionsFromPointer(element: HTMLElement, clientX: number, total: number): number {
+  const rect = element.getBoundingClientRect()
+  if (rect.width <= 0 || total <= 0) return 0
+  const ratio = (clientX - rect.left) / rect.width
+  return Math.max(0, Math.min(total, Math.round(ratio * total)))
+}
+
+type CurrentUser = { id: number; name: string; email: string; role: string }
+
+export default function CurriculumPreview({ coordinator, teachers, currentUser }: { coordinator: boolean; teachers: TeacherOption[]; currentUser: CurrentUser | null }) {
+  // A tela abre zerada: cada campo é escolha explícita de quem gera.
+  // Exceções deliberadas: o responsável já vem como o próprio professor
+  // (a prova nasce atribuída a ele) e o bimestre já vem no período atual.
+  const [segment, setSegment] = useState<Segment | ''>('')
+  const [gradeYear, setGradeYear] = useState<number | ''>('')
+  const [selectedSubjects, setSelectedSubjects] = useState<string[]>([])
   const [classLabel, setClassLabel] = useState('')
-  const [bimester, setBimester] = useState<number | ''>('')
+  const [bimester, setBimester] = useState<number | ''>(currentBimester())
   // Rótulo pedagógico. A TRI INEP é liberada pela presença de itens reais
   // do banco ENEM com calibração oficial, inclusive em provas mistas.
   const [assessmentKind, setAssessmentKind] = useState<'padrao' | 'enem'>('padrao')
@@ -105,7 +122,7 @@ export default function CurriculumPreview({ coordinator, teachers }: { coordinat
   const [enqueueing, setEnqueueing] = useState(false)
   const [enqueueError, setEnqueueError] = useState<string | null>(null)
   const [enqueued, setEnqueued] = useState<EnqueuedInfo | null>(null)
-  const [assignedTo, setAssignedTo] = useState<number | ''>('')
+  const [assignedTo, setAssignedTo] = useState<number | ''>(currentUser && !coordinator ? currentUser.id : '')
 
   const [bankQuestions, setBankQuestions] = useState<BankQuestion[]>([])
   const [bankSelected, setBankSelected] = useState<Set<number>>(new Set())
@@ -118,6 +135,8 @@ export default function CurriculumPreview({ coordinator, teachers }: { coordinat
   const [bnccFilter, setBnccFilter] = useState('')
   const [step, setStep] = useState<1 | 2 | 3>(1)
   const [contentPlan, setContentPlan] = useState<CurriculumPlanItem[]>([])
+  const [chapterCounts, setChapterCounts] = useState<Record<number, number>>({})
+  const draggingRowRef = useRef<number | null>(null)
 
   const singleSubject = selectedSubjects.length === 1 ? selectedSubjects[0] : null
   // Banco ENEM só em disciplina única (a API rejeita batch multi + banco).
@@ -126,15 +145,33 @@ export default function CurriculumPreview({ coordinator, teachers }: { coordinat
   const totalValid = totalCount >= 12 && totalCount <= 15
   const contentPlanTotal = contentPlan.reduce((sum, item) => sum + item.questionCount, 0)
   const contentPlanValid = !singleSubject || contentPlan.length === 0 || contentPlanTotal === questionCount
+  // Sem permitir avançar com campo em branco: segmento, responsável (só a
+  // coordenação escolhe, o professor já vem atribuído a si), ano e disciplinas.
+  const canContinue = segment !== '' && gradeYear !== '' && selectedSubjects.length > 0 && (!coordinator || assignedTo !== '')
 
-  function makeDefaultContentPlan(units: CurriculumSelection['units'], count: number): CurriculumPlanItem[] {
-    if (!units.length) return []
-    return units.map((unit, index) => ({
-      unitRowIndex: unit.rowIndex,
-      questionCount: Math.floor(count / units.length) + (index < count % units.length ? 1 : 0),
-      priority: 'media',
-      visualAid: 'auto',
-    }))
+  function contentPlanFromCounts(units: CurriculumSelection['units'], counts: Record<number, number>, previous = contentPlan): CurriculumPlanItem[] {
+    return units.map((unit) => {
+      const existing = previous.find((item) => item.unitRowIndex === unit.rowIndex)
+      return { unitRowIndex: unit.rowIndex, questionCount: counts[unit.rowIndex] ?? 0, priority: existing?.priority ?? 'media', visualAid: existing?.visualAid ?? 'auto' }
+    })
+  }
+
+  function changeChapterCount(rowIndex: number, value: number) {
+    const units = previews[0]?.data?.units ?? []
+    if (!units.length) return
+    // Escolha livre: altera só o capítulo ajustado, sem rebalancear os outros.
+    const next = { ...chapterCounts, [rowIndex]: Math.max(0, Math.min(questionCount, Math.round(value))) }
+    setChapterCounts(next)
+    setContentPlan(contentPlanFromCounts(units, next))
+  }
+
+  // Restaura a distribuição uniforme das questões entre os capítulos.
+  function balanceChapterCounts() {
+    const units = previews[0]?.data?.units ?? []
+    if (!units.length) return
+    const counts = evenQuestionCounts(units.map((unit) => unit.rowIndex), questionCount)
+    setChapterCounts(counts)
+    setContentPlan(contentPlanFromCounts(units, counts))
   }
 
   function resetSelectionDependentState() {
@@ -146,13 +183,14 @@ export default function CurriculumPreview({ coordinator, teachers }: { coordinat
     setEnqueued(null)
     setEnqueueError(null)
     setContentPlan([])
+    setChapterCounts({})
     setStep(1)
   }
 
   function handleSegmentChange(next: Segment) {
     setSegment(next)
-    setGradeYear(SEGMENT_GRADES[next][0])
-    setSelectedSubjects([SEGMENT_SUBJECTS[next][0]])
+    setGradeYear('')
+    setSelectedSubjects([])
     setAssessmentKind('padrao')
     resetSelectionDependentState()
   }
@@ -161,7 +199,7 @@ export default function CurriculumPreview({ coordinator, teachers }: { coordinat
     setSelectedSubjects((prev) => {
       const next = prev.includes(subject) ? prev.filter((s) => s !== subject) : [...prev, subject]
       // Mantém a ordem canônica da lista de disciplinas do segmento.
-      return SEGMENT_SUBJECTS[segment].filter((s) => next.includes(s))
+      return (segment ? SEGMENT_SUBJECTS[segment] : []).filter((s) => next.includes(s))
     })
     resetSelectionDependentState()
   }
@@ -282,7 +320,9 @@ export default function CurriculumPreview({ coordinator, teachers }: { coordinat
       )
       setPreviews(settled)
       const available = settled.length === 1 ? settled[0].data?.units ?? [] : []
-      setContentPlan(makeDefaultContentPlan(available, questionCount))
+      const counts = evenQuestionCounts(available.map((unit) => unit.rowIndex), questionCount)
+      setChapterCounts(counts)
+      setContentPlan(contentPlanFromCounts(available, counts, []))
       setStep(2)
     } finally {
       setLoading(false)
@@ -389,36 +429,50 @@ export default function CurriculumPreview({ coordinator, teachers }: { coordinat
       {step === 1 && <>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div>
-          <label className="text-sm font-medium">Segmento</label>
+          <label className="text-sm font-medium" htmlFor="gerar-segmento">Segmento</label>
           <select
-            className="mt-1 w-full rounded border border-neutral-300 px-2 py-1.5 text-sm"
+            id="gerar-segmento"
+            className="mt-1 w-full rounded border border-border bg-surface px-2 py-1.5 text-sm"
             value={segment}
-            onChange={(e) => handleSegmentChange(e.target.value as Segment)}
+            onChange={(e) => {
+              const value = e.target.value
+              if (!value) { setSegment(''); setGradeYear(''); setSelectedSubjects([]); resetSelectionDependentState(); return }
+              handleSegmentChange(value as Segment)
+            }}
           >
+            <option value="">Selecione o segmento</option>
             {(Object.keys(SEGMENT_LABELS) as Segment[]).map((s) => (
               <option key={s} value={s}>{SEGMENT_LABELS[s]}</option>
             ))}
           </select>
         </div>
 
-        {coordinator && (
+        {coordinator ? (
           <div>
-            <label className="text-sm font-medium">Professor responsável</label>
-            <select value={assignedTo} onChange={(e) => setAssignedTo(e.target.value ? Number(e.target.value) : '')} className="mt-1 w-full rounded border border-neutral-300 px-2 py-1.5 text-sm">
+            <label className="text-sm font-medium" htmlFor="gerar-professor">Professor responsável</label>
+            <select id="gerar-professor" value={assignedTo} onChange={(e) => setAssignedTo(e.target.value ? Number(e.target.value) : '')} className="mt-1 w-full rounded border border-border bg-surface px-2 py-1.5 text-sm">
               <option value="">Selecione o e-mail do professor</option>
               {teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name} — {teacher.email}</option>)}
             </select>
           </div>
-        )}
+        ) : currentUser ? (
+          <div>
+            <label className="text-sm font-medium" htmlFor="gerar-professor">Professor responsável</label>
+            <input id="gerar-professor" type="text" readOnly value={`${currentUser.name} — ${currentUser.email}`} aria-readonly="true" className="mt-1 w-full rounded border border-border bg-surface-subtle px-2 py-1.5 text-sm text-content-secondary" />
+          </div>
+        ) : null}
 
         <div>
-          <label className="text-sm font-medium">Ano</label>
+          <label className="text-sm font-medium" htmlFor="gerar-ano">Ano</label>
           <select
-            className="mt-1 w-full rounded border border-neutral-300 px-2 py-1.5 text-sm"
+            id="gerar-ano"
+            className="mt-1 w-full rounded border border-border bg-surface px-2 py-1.5 text-sm disabled:opacity-60"
             value={gradeYear}
-            onChange={(e) => { setGradeYear(Number(e.target.value)); resetSelectionDependentState() }}
+            disabled={segment === ''}
+            onChange={(e) => { setGradeYear(e.target.value ? Number(e.target.value) : ''); resetSelectionDependentState() }}
           >
-            {SEGMENT_GRADES[segment].map((g) => (
+            <option value="">Selecione o ano</option>
+            {segment !== '' && SEGMENT_GRADES[segment].map((g) => (
               <option key={g} value={g}>{g}º ano</option>
             ))}
           </select>
@@ -428,17 +482,18 @@ export default function CurriculumPreview({ coordinator, teachers }: { coordinat
           <label className="text-sm font-medium">Turma (opcional)</label>
           <input
             type="text"
-            placeholder={`Ex: ${gradeYear}º Ano A`}
+            placeholder={gradeYear === '' ? 'Ex: 2º Ano A' : `Ex: ${gradeYear}º Ano A`}
             value={classLabel}
             onChange={(e) => setClassLabel(e.target.value)}
-            className="mt-1 w-full rounded border border-neutral-300 px-2 py-1.5 text-sm"
+            className="mt-1 w-full rounded border border-border bg-surface px-2 py-1.5 text-sm"
           />
         </div>
 
         <div>
-          <label className="text-sm font-medium">Bimestre (opcional)</label>
+          <label className="text-sm font-medium" htmlFor="gerar-bimestre">Bimestre (opcional)</label>
           <select
-            className="mt-1 w-full rounded border border-neutral-300 px-2 py-1.5 text-sm"
+            id="gerar-bimestre"
+            className="mt-1 w-full rounded border border-border bg-surface px-2 py-1.5 text-sm"
             value={bimester}
             onChange={(e) => { setBimester(e.target.value === '' ? '' : Number(e.target.value)); resetSelectionDependentState() }}
           >
@@ -451,50 +506,62 @@ export default function CurriculumPreview({ coordinator, teachers }: { coordinat
 
         {segment === 'ensino-medio' && (
           <div>
-            <label className="text-sm font-medium">Tipo de avaliação</label>
+            <label className="text-sm font-medium" htmlFor="gerar-tipo">Tipo de avaliação</label>
             <select
-              className="mt-1 w-full rounded border border-neutral-300 px-2 py-1.5 text-sm"
+              id="gerar-tipo"
+              className="mt-1 w-full rounded border border-border bg-surface px-2 py-1.5 text-sm"
               value={assessmentKind}
               onChange={(e) => setAssessmentKind(e.target.value as 'padrao' | 'enem')}
             >
               <option value="padrao">Prova</option>
               <option value="enem">Simulado ENEM</option>
             </select>
-            <p className="mt-0.5 text-[11px] text-neutral-400">A TRI INEP é calculada somente com questões reais do banco ENEM que tenham calibração oficial. Em provas mistas, o percentual geral continua considerando todas as questões.</p>
+            <p className="mt-0.5 text-[11px] text-content-muted">A TRI INEP é calculada somente com questões reais do banco ENEM que tenham calibração oficial. Em provas mistas, o percentual geral continua considerando todas as questões.</p>
           </div>
         )}
       </div>
 
-      <fieldset className="rounded border border-neutral-200 bg-white p-4">
+      <fieldset className="rounded border border-border bg-surface p-4">
         <legend className="px-1 text-sm font-medium">Disciplinas</legend>
-        <p className="mb-3 text-xs text-neutral-400">
+        <p className="mb-3 text-xs text-content-muted">
           Marque uma ou mais — cada disciplina vira uma prova separada na fila de geração.
           {segment === 'ensino-medio' && ' O banco de questões reais do ENEM fica disponível quando só uma disciplina está marcada.'}
         </p>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {SEGMENT_SUBJECTS[segment].map((s) => (
-            <label key={s} className={`flex min-h-10 cursor-pointer items-center gap-2 rounded border px-3 text-sm ${selectedSubjects.includes(s) ? 'border-harmonia-green bg-harmonia-green/5 font-medium' : 'border-neutral-200'}`}>
-              <input
-                type="checkbox"
-                checked={selectedSubjects.includes(s)}
-                onChange={() => toggleSubject(s)}
-              />
-              {s}
-            </label>
-          ))}
-        </div>
-        {selectedSubjects.length > 1 && (
-          <p className="mt-2 text-xs font-medium text-harmonia-green">{selectedSubjects.length} disciplinas selecionadas — serão {selectedSubjects.length} provas na fila.</p>
+        {segment === '' ? (
+          <p className="text-sm text-content-muted">Selecione um segmento para ver as disciplinas.</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {SEGMENT_SUBJECTS[segment].map((s) => (
+                <label key={s} className={`flex min-h-10 cursor-pointer items-center gap-2 rounded border px-3 text-sm ${selectedSubjects.includes(s) ? 'border-harmonia-green bg-harmonia-green/5 font-medium' : 'border-border'}`}>
+                  <input
+                    type="checkbox"
+                    checked={selectedSubjects.includes(s)}
+                    onChange={() => toggleSubject(s)}
+                  />
+                  {s}
+                </label>
+              ))}
+            </div>
+            {selectedSubjects.length > 1 && (
+              <p className="mt-2 text-xs font-medium text-harmonia-green">{selectedSubjects.length} disciplinas selecionadas — serão {selectedSubjects.length} provas na fila.</p>
+            )}
+          </>
         )}
       </fieldset>
 
-      <button
-        onClick={handlePreview}
-        disabled={loading || selectedSubjects.length === 0}
-        className="min-h-10 rounded bg-harmonia-green px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-      >
-        {loading ? 'Consultando currículo…' : 'Continuar para composição'}
-      </button>
+      <div className="space-y-2">
+        <button
+          onClick={handlePreview}
+          disabled={loading || !canContinue}
+          className="min-h-10 rounded bg-action-primary px-4 py-2 text-sm font-medium text-action-primary-foreground disabled:opacity-60"
+        >
+          {loading ? 'Consultando currículo…' : 'Continuar para composição'}
+        </button>
+        {!canContinue && (
+          <p className="text-xs text-content-muted">Preencha segmento, professor responsável, ano e ao menos uma disciplina para continuar.</p>
+        )}
+      </div>
       </>}
 
       {step === 2 && enemArea && (
@@ -602,40 +669,85 @@ export default function CurriculumPreview({ coordinator, teachers }: { coordinat
       )}
 
       {step === 2 && singleSubject && previews[0]?.data && (
-        <fieldset className="rounded border border-neutral-200 bg-white p-4">
+        <fieldset className="rounded border border-border bg-surface p-4">
           <legend className="px-1 text-sm font-medium">Matriz da avaliação</legend>
-          <p className="mb-3 text-xs text-neutral-500">
-            Selecione, no planejamento do bimestre, o que realmente será cobrado. A quantidade por capítulo define a composição da prova; a prioridade orienta substituições e regenerações.
-          </p>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-xs">
-              <thead className="border-b text-neutral-500">
-                <tr><th className="pb-2 pr-3">Capítulo do planejamento</th><th className="pb-2 pr-3">Questões</th><th className="pb-2 pr-3">Prioridade</th><th className="pb-2">Recurso visual</th></tr>
-              </thead>
-              <tbody>
-                {previews[0].data.units.map((unit) => {
-                  const item = contentPlan.find((candidate) => candidate.unitRowIndex === unit.rowIndex)
-                  const enabled = Boolean(item && item.questionCount > 0)
-                  return (
-                    <tr key={unit.rowIndex} className="border-b last:border-0">
-                      <td className="py-3 pr-3 align-top">
-                        <label className="flex cursor-pointer gap-2"><input type="checkbox" checked={enabled} onChange={(event) => setContentPlan((current) => {
-                          const found = current.find((candidate) => candidate.unitRowIndex === unit.rowIndex)
-                          if (event.target.checked) return found ? current.map((candidate) => candidate.unitRowIndex === unit.rowIndex ? { ...candidate, questionCount: Math.max(1, candidate.questionCount) } : candidate) : [...current, { unitRowIndex: unit.rowIndex, questionCount: 1, priority: 'media', visualAid: 'auto' }]
-                          return current.map((candidate) => candidate.unitRowIndex === unit.rowIndex ? { ...candidate, questionCount: 0 } : candidate)
-                        })} /><span><span className="font-medium">{unit.tituloCapitulo || 'Capítulo sem título'}</span>{unit.conteudo && <span className="mt-0.5 block text-neutral-500">{unit.conteudo}</span>}</span></label>
-                      </td>
-                      <td className="py-3 pr-3 align-top"><input aria-label={`Quantidade para ${unit.tituloCapitulo}`} type="number" min={0} max={15} value={item?.questionCount ?? 0} onChange={(event) => setContentPlan((current) => current.map((candidate) => candidate.unitRowIndex === unit.rowIndex ? { ...candidate, questionCount: Math.max(0, Number(event.target.value) || 0) } : candidate))} className="w-16 rounded border border-neutral-300 px-2 py-1" /></td>
-                      <td className="py-3 pr-3 align-top"><select aria-label={`Prioridade para ${unit.tituloCapitulo}`} value={item?.priority ?? 'media'} disabled={!enabled} onChange={(event) => setContentPlan((current) => current.map((candidate) => candidate.unitRowIndex === unit.rowIndex ? { ...candidate, priority: event.target.value as CurriculumPlanItem['priority'] } : candidate))} className="rounded border border-neutral-300 px-2 py-1 disabled:opacity-50"><option value="alta">Alta</option><option value="media">Média</option><option value="baixa">Baixa</option></select></td>
-                      <td className="py-3 align-top"><select aria-label={`Recurso visual para ${unit.tituloCapitulo}`} value={item?.visualAid ?? 'auto'} disabled={!enabled} onChange={(event) => setContentPlan((current) => current.map((candidate) => candidate.unitRowIndex === unit.rowIndex ? { ...candidate, visualAid: event.target.value as CurriculumPlanItem['visualAid'] } : candidate))} className="rounded border border-neutral-300 px-2 py-1 disabled:opacity-50"><option value="auto">Analisar necessidade</option><option value="obrigatorio">Obrigatório</option><option value="sem_imagem">Não usar</option></select></td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-          <p className={`mt-3 text-xs ${contentPlanValid ? 'text-harmonia-green' : 'font-medium text-red-600'}`}>
-            Matriz: {contentPlanTotal} de {questionCount} questões de IA definidas.{!contentPlanValid && ' Ajuste as quantidades antes de continuar.'}
+          <section aria-labelledby="grafico-planejamento-title" className="rounded border border-border bg-surface-subtle/50 p-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div>
+                <h2 id="grafico-planejamento-title" className="text-sm font-semibold">Distribuição planejada por capítulo</h2>
+                <p className="mt-0.5 text-xs text-content-muted">Arraste a barra (ou use as setas ←/→) para escolher o número de questões de cada capítulo. O total pode ficar acima ou abaixo do esperado; o botão Equilibrar distribui igualmente.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-harmonia-green">{contentPlanTotal} questão(ões) planejada(s)</span>
+                <button
+                  type="button"
+                  onClick={balanceChapterCounts}
+                  aria-label="Equilibrar a quantidade de questões entre os capítulos"
+                  title="Distribuir as questões igualmente entre os capítulos"
+                  className="rounded border border-border bg-surface px-2.5 py-1 text-xs font-medium text-content-secondary transition-colors hover:border-border-strong hover:bg-surface-subtle"
+                >
+                  Equilibrar
+                </button>
+              </div>
+            </div>
+            <ul className="mt-4 space-y-2">
+              {previews[0].data.units.map((unit) => {
+                const count = chapterCounts[unit.rowIndex] ?? 0
+                const planned = contentPlan.find((item) => item.unitRowIndex === unit.rowIndex)?.questionCount ?? count
+                const label = unit.tituloCapitulo || 'Capítulo sem título'
+                return (
+                  <li key={unit.rowIndex} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(220px,2fr)_auto] sm:items-center">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-medium text-content-primary">{label}</p>
+                      {unit.conteudo && <p className="line-clamp-1 text-[11px] text-content-muted">{unit.conteudo}</p>}
+                    </div>
+                    <div
+                      role="slider"
+                      tabIndex={0}
+                      aria-label={`Número de questões de ${label}`}
+                      aria-valuemin={0}
+                      aria-valuemax={questionCount}
+                      aria-valuenow={count}
+                      aria-valuetext={`${count} questão(ões)`}
+                      onPointerDown={(event) => {
+                        draggingRowRef.current = unit.rowIndex
+                        event.currentTarget.setPointerCapture(event.pointerId)
+                        changeChapterCount(unit.rowIndex, questionsFromPointer(event.currentTarget, event.clientX, questionCount))
+                      }}
+                      onPointerMove={(event) => {
+                        if (draggingRowRef.current !== unit.rowIndex) return
+                        changeChapterCount(unit.rowIndex, questionsFromPointer(event.currentTarget, event.clientX, questionCount))
+                      }}
+                      onPointerUp={(event) => {
+                        if (draggingRowRef.current !== unit.rowIndex) return
+                        draggingRowRef.current = null
+                        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+                      }}
+                      onPointerCancel={() => { draggingRowRef.current = null }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'ArrowRight' || event.key === 'ArrowUp') { event.preventDefault(); changeChapterCount(unit.rowIndex, count + 1) }
+                        else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') { event.preventDefault(); changeChapterCount(unit.rowIndex, count - 1) }
+                        else if (event.key === 'Home') { event.preventDefault(); changeChapterCount(unit.rowIndex, 0) }
+                        else if (event.key === 'End') { event.preventDefault(); changeChapterCount(unit.rowIndex, questionCount) }
+                      }}
+                      style={{ touchAction: 'none' }}
+                      className="relative flex h-7 cursor-ew-resize items-center rounded bg-surface ring-1 ring-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+                    >
+                      <div className="relative h-full" style={{ width: `${questionCount > 0 ? (count / questionCount) * 100 : 0}%`, minWidth: count > 0 ? '1.75rem' : 0 }}>
+                        <div className="flex h-full items-center justify-end rounded-l pr-2.5" style={{ backgroundColor: 'rgb(var(--color-action-primary))' }}>
+                          {count > 0 && <span className="text-[11px] font-semibold leading-none text-action-primary-foreground">{count}</span>}
+                        </div>
+                        <span aria-hidden="true" className="absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 translate-x-1/2 rounded-full border-2 border-surface shadow-soft" style={{ backgroundColor: 'rgb(var(--color-action-primary))' }} />
+                      </div>
+                    </div>
+                    <span className="justify-self-start rounded bg-harmonia-green/10 px-2 py-1 text-center text-xs font-semibold text-harmonia-green sm:justify-self-end">{planned} questão(ões)</span>
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+          <p className={`mt-3 text-xs ${contentPlanValid ? 'text-harmonia-green' : 'font-medium text-status-danger-content'}`}>
+            Distribuição: {contentPlanTotal} de {questionCount} questões de IA calculadas.{!contentPlanValid && ' Ajuste a importância dos capítulos antes de continuar.'}
           </p>
         </fieldset>
       )}
@@ -643,7 +755,7 @@ export default function CurriculumPreview({ coordinator, teachers }: { coordinat
       {step === 2 && (
         <div className="flex flex-col gap-4 rounded border border-border bg-surface p-4 sm:flex-row sm:items-end">
           {enemArea && <div><label className="text-sm font-medium">Questões do banco ENEM</label><input type="number" min={0} max={15} value={bankSelected.size} onChange={(e) => handleBankCountChange(Number(e.target.value))} disabled={bankLoading} className="mt-1 w-24 rounded border border-border bg-surface px-2 py-1.5 text-sm disabled:opacity-60" /><p className="mt-0.5 text-[11px] text-content-muted">{bankLoading ? 'buscando…' : bankQuestions.length ? `de ${bankQuestions.length} encontradas` : 'usa os filtros acima'}</p></div>}
-          <div><label className="text-sm font-medium">Questões geradas por IA</label><input type="number" min={0} max={15} value={questionCount} onChange={(e) => setQuestionCount(Number(e.target.value))} className="mt-1 w-24 rounded border border-border bg-surface px-2 py-1.5 text-sm" /></div>
+          <div><label className="text-sm font-medium">Questões geradas por IA</label><input type="number" min={0} max={15} value={questionCount} onChange={(e) => { const next = Number(e.target.value); setQuestionCount(next); const units = previews[0]?.data?.units ?? []; const counts: Record<number, number> = {}; for (const unit of units) counts[unit.rowIndex] = Math.min(chapterCounts[unit.rowIndex] ?? 0, next); setChapterCounts(counts); setContentPlan(contentPlanFromCounts(units, counts)) }} className="mt-1 w-24 rounded border border-border bg-surface px-2 py-1.5 text-sm" /></div>
           <div><label className="text-sm font-medium">Ano letivo</label><input type="number" min={2020} max={2100} value={academicYear} onChange={(e) => setAcademicYear(Number(e.target.value))} className="mt-1 w-24 rounded border border-border bg-surface px-2 py-1.5 text-sm" /></div>
           <p className="text-xs text-content-secondary">
             Total por prova: <span className={totalValid ? 'font-semibold text-content-primary' : 'font-semibold text-status-danger'}>{totalCount}</span> ({questionCount} IA + {bankSelected.size} banco), entre 12 e 15.

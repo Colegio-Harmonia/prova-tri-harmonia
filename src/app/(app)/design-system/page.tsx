@@ -14,6 +14,10 @@ const colorSamples = [
   { label: 'Atencao', className: 'bg-status-warning text-content-inverse' },
   { label: 'Intervencao', className: 'bg-status-danger text-content-inverse' },
   { label: 'Informacao', className: 'bg-status-info text-content-inverse' },
+  { label: 'Sucesso suave', className: 'border border-status-success-border bg-status-success-surface text-status-success-content' },
+  { label: 'Atencao suave', className: 'border border-status-warning-border bg-status-warning-surface text-status-warning-content' },
+  { label: 'Intervencao suave', className: 'border border-status-danger-border bg-status-danger-surface text-status-danger-content' },
+  { label: 'Informacao suave', className: 'border border-status-info-border bg-status-info-surface text-status-info-content' },
 ]
 
 export default async function DesignSystemPage() {

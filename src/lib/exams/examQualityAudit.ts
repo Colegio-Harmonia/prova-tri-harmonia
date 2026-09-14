@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { ExamQuestion } from '@/lib/gemini/examSchema'
 import type { PlannedQuestionSlot } from './contentPlan'
 import type { CurriculumSelection } from '@/types/exam'
-import { generateValidatedStructuredContent } from '@/lib/gemini/structuredRepair'
+import { generateValidatedStructuredContent, StructuredGenerationError } from '@/lib/gemini/structuredRepair'
 import type { ExamQualityIssue } from './examQualityAssembly'
 
 const auditSchema = z.object({
@@ -64,20 +64,27 @@ ${subjectRules}
 PROVA:
 ${examCards(questions)}`
 
-  const audited = await generateValidatedStructuredContent({
-    context: 'exams/final-quality-audit',
-    prompt,
-    responseSchema: AUDIT_RESPONSE_SCHEMA,
-    zodSchema: auditSchema,
-    validate: (result) => {
-      const issues = result.issues.filter((issue) => issue.questionNumbers.every((number) => validNumbers.has(number)))
-      const invalidReferences = result.issues.length - issues.length
-      return {
-        value: { ...result, issues },
-        issues: result.approved || issues.length ? [] : ['A auditoria reprovou a prova sem indicar quais questões precisam de correção.'],
-        warnings: invalidReferences ? [`Auditoria final ignorou ${invalidReferences} apontamento(s) com questão inexistente.`] : [],
-      }
-    },
-  })
-  return { issues: audited.value.issues, warnings: audited.warnings }
+  try {
+    const audited = await generateValidatedStructuredContent({
+      context: 'exams/final-quality-audit',
+      prompt,
+      responseSchema: AUDIT_RESPONSE_SCHEMA,
+      zodSchema: auditSchema,
+      validate: (result) => {
+        const issues = result.issues.filter((issue) => issue.questionNumbers.every((number) => validNumbers.has(number)))
+        const invalidReferences = result.issues.length - issues.length
+        return {
+          value: { ...result, issues },
+          issues: result.approved || issues.length ? [] : ['A auditoria reprovou a prova sem indicar quais questões precisam de correção.'],
+          warnings: invalidReferences ? [`Auditoria final ignorou ${invalidReferences} apontamento(s) com questão inexistente.`] : [],
+        }
+      },
+    })
+    return { issues: audited.value.issues, warnings: audited.warnings }
+  } catch (error) {
+    const detail = error instanceof StructuredGenerationError ? error.issues.join(' ') : 'falha operacional inesperada'
+    // Esta é uma segunda opinião editorial. Sua indisponibilidade não pode
+    // invalidar uma prova cuja estrutura principal já foi validada.
+    return { issues: [], warnings: [`Auditoria editorial final indisponível (${detail}). A prova segue para revisão humana.`] }
+  }
 }

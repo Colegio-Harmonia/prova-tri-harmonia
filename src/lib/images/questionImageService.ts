@@ -6,11 +6,12 @@ import { getDriveClient, findOrCreateFolder } from '@/lib/docs/driveClient'
 import { searchWikimediaImage } from './wikimediaSearch'
 import { generateIllustration } from './imageGenerate'
 import { tryRenderChart } from './chartRender'
+import { renderBlueprintVisual, tryRenderTechnicalVisual } from './technicalVisualRender'
 import { validateGeneratedQuestionImage } from './imageValidation'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 
 export type ResolvedQuestionImage = {
-  source: 'busca' | 'gerada' | 'grafico' | 'importado' | 'enem'
+  source: 'busca' | 'gerada' | 'grafico' | 'diagrama' | 'quimica' | 'importado' | 'enem'
   driveFileId: string
   previewUrl: string
   /** Só preenchido pra source:'importado'/'enem' — de onde a imagem veio, pra referência/crédito. */
@@ -144,19 +145,30 @@ export async function importImageFromUrl(
  * a geração da prova inteira; o professor ainda aprova/rejeita por
  * questão (essa etapa é o verdadeiro check de aplicabilidade, não esta).
  */
-export async function resolveQuestionImage(imageQuery: string, questionContext: string, expectedText?: string): Promise<ResolvedQuestionImage | null> {
+export async function resolveQuestionImage(imageQuery: string, questionContext: string, expectedText?: string, options: { deterministicOnly?: boolean } = {}): Promise<ResolvedQuestionImage | null> {
   // Texto verificável exige DALL-E e validação visual; bancos externos não
   // oferecem garantia de correspondência literal com o conteúdo pedido.
   if (expectedText) return resolveGeneratedImage(imageQuery, questionContext, expectedText)
   try {
+    const technical = await tryRenderTechnicalVisual(imageQuery, questionContext)
+    if (technical) {
+      const { driveFileId, previewUrl } = await uploadToStaging(technical.buffer, 'image/png', `${technical.source}-${Date.now()}.png`)
+      return { source: technical.source, driveFileId, previewUrl }
+    }
     const chart = await tryRenderChart(imageQuery, questionContext)
     if (chart) {
       const { driveFileId, previewUrl } = await uploadToStaging(chart, 'image/png', `grafico-${Date.now()}.png`)
       return { source: 'grafico', driveFileId, previewUrl }
     }
   } catch (err) {
-    console.warn('[questionImageService] renderização de gráfico falhou, tentando Wikimedia:', err instanceof Error ? err.message : err)
+    console.warn(`[questionImageService] renderização de gráfico falhou${options.deterministicOnly ? '' : ', tentando Wikimedia'}:`, err instanceof Error ? err.message : err)
   }
+
+  // Em Matemática, uma ilustração artística pode inventar coordenadas,
+  // medidas ou resultados. Se o gráfico determinístico não puder ser
+  // produzido, deixamos a questão para revisão sem anexar um recurso
+  // visual potencialmente enganoso.
+  if (options.deterministicOnly) return null
 
   try {
     const found = await searchWikimediaImage(imageQuery)
@@ -204,10 +216,11 @@ async function resolveGeneratedImage(imageQuery: string, questionContext: string
  */
 export async function attachImagesToExam(
   exam: ExamGenerationResult,
-  options: { requireResolvedImages?: boolean; maxAttemptsPerImage?: number } = {},
+  options: { requireResolvedImages?: boolean; maxAttemptsPerImage?: number; subject?: string } = {},
 ): Promise<ExamGenerationResult> {
   const attempts = Math.max(1, options.maxAttemptsPerImage ?? 1)
   const unresolved: number[] = []
+  const deterministicOnly = /^(matemática|matematica|física|fisica|química|quimica)$/i.test(exam.metadata.subject.trim())
   const questions = await Promise.all(
     exam.questions.map(async (q) => {
       if (!q.needsImage) return q
@@ -215,8 +228,20 @@ export async function attachImagesToExam(
         unresolved.push(q.number)
         return q
       }
+      const visualContext = [q.supportText, q.statement, ...(q.alternatives?.map((alternative) => alternative.text) ?? [])]
+        .filter((text): text is string => Boolean(text))
+        .join('\n')
+      try {
+        const blueprintVisual = await renderBlueprintVisual(q.solutionBlueprint)
+        if (blueprintVisual) {
+          const { driveFileId, previewUrl } = await uploadToStaging(blueprintVisual.buffer, 'image/png', `${blueprintVisual.source}-${Date.now()}.png`)
+          return { ...q, image: { source: blueprintVisual.source, driveFileId, previewUrl, approved: false } }
+        }
+      } catch (error) {
+        console.warn(`[questionImageService] visual da ficha técnica falhou na questão ${q.number}; usando contingência:`, error instanceof Error ? error.message : error)
+      }
       for (let attempt = 1; attempt <= attempts; attempt++) {
-        const resolved = await resolveQuestionImage(q.imageQuery, q.statement)
+        const resolved = await resolveQuestionImage(q.imageQuery, visualContext, undefined, { deterministicOnly })
         if (resolved) return { ...q, image: { ...resolved, approved: false } }
       }
       unresolved.push(q.number)

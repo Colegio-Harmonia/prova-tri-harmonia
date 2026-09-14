@@ -21,8 +21,24 @@ from typing import Any
 import pdfplumber
 
 QUESTION_RE = re.compile(r"^QUEST[ÃA]O\s+(\d{1,3})\s*$", re.MULTILINE | re.IGNORECASE)
+NEXT_QUESTION_RE = re.compile(r"^QUEST[ÃA]O\s+\d{1,3}\s*$", re.IGNORECASE)
 ALT_RE = re.compile(r"^([A-E])\s+(.+)$", re.MULTILINE)
 ANSWER_RE = re.compile(r"(\d{1,3})\s+(Anulado|[A-E])\b")
+
+# Marcas gráficas que o PDF do caderno repete no rodapé. O pdfminer pode
+# devolvê-las como texto, inclusive na mesma região física da última
+# alternativa da coluna. Elas nunca fazem parte de um item ENEM.
+REPEATED_ENEM_FOOTER_RE = re.compile(r"(?:\d{0,4}ENEM\d{4}){2,}", re.IGNORECASE)
+PAGE_HEADER_RE = re.compile(
+    r"(?:[•·]\s*)?(?:LINGUAGENS(?:,\s*C[ÓO]DIGOS\s+E\s+SUAS\s+TECNOLOGIAS(?:\s+E\s+REDA[ÇC][ÃA]O)?)?|"
+    r"CI[ÊE]NCIAS\s+HUMANAS\s+E\s+SUAS\s+TECNOLOGIAS|"
+    r"CI[ÊE]NCIAS\s+DA\s+NATUREZA\s+E\s+SUAS\s+TECNOLOGIAS|"
+    r"MATEM[ÁA]TICA\s+E\s+SUAS\s+TECNOLOGIAS)\b.*$",
+    re.IGNORECASE,
+)
+LAYOUT_ARTIFACT_RE = re.compile(r"(?:\*?\d{6,}[A-Z_]+(?:\.[A-Z_]+)*\*?|(?:\d{2}[/\\]){2}\d{4}\s+\d{2}:\d{2}:\d{2})", re.IGNORECASE)
+SHARED_TEXT_RE = re.compile(r"Texto\s+para\s+as\s+Quest[õo]es\s+de\s+(\d{1,3})\s+a\s+(\d{1,3})\.?\s*", re.IGNORECASE)
+LINE_NUMBER_RE = re.compile(r"^\s*\d+\s+")
 
 
 def discipline(question_index: int) -> str:
@@ -45,7 +61,20 @@ def clean_text(text: str) -> str:
         # enorme (por exemplo, ``ENEM2025ENEM2025...``) ou com o ano antes de
         # cada ocorrência. Eles não fazem parte da questão e, se mantidos,
         # acabam no texto da alternativa E.
-        if re.search(r"(?:\d{0,4}ENEM\d{4}){2,}", line):
+        # Em vez de descartar a linha inteira, preserva a alternativa quando
+        # o rodapé aparece colado ao seu fim (caso comum da alternativa E).
+        line = REPEATED_ENEM_FOOTER_RE.split(line, maxsplit=1)[0].strip()
+        line = PAGE_HEADER_RE.split(line, maxsplit=1)[0].strip()
+        line = LAYOUT_ARTIFACT_RE.split(line, maxsplit=1)[0].strip()
+        if not line:
+            continue
+        # O último bloco de uma coluna às vezes alcança apenas o cabeçalho da
+        # próxima questão. Tudo depois dele pertence a outro item.
+        if NEXT_QUESTION_RE.fullmatch(line):
+            # O recorte começa no cabeçalho da questão atual; só um cabeçalho
+            # posterior representa vazamento para o próximo item.
+            if lines:
+                break
             continue
         if re.fullmatch(r"(?:\d{4}MENE)+", line):
             continue
@@ -59,6 +88,15 @@ def clean_text(text: str) -> str:
             continue
         lines.append(line)
     return "\n".join(lines)
+
+
+def contains_page_chrome(text: str) -> bool:
+    """Indica resto de rodapé/cabeçalho que invalida a transcrição textual."""
+    return bool(
+        REPEATED_ENEM_FOOTER_RE.search(text)
+        or PAGE_HEADER_RE.search(text)
+        or LAYOUT_ARTIFACT_RE.search(text)
+    )
 
 
 def answer_key(path: Path) -> dict[int, str]:
@@ -98,6 +136,31 @@ def has_visual(page: pdfplumber.page.Page, left: float, right: float, top: float
     return False
 
 
+def extract_shared_support_texts(path: Path) -> dict[int, str]:
+    """Lê textos de apoio que antecedem um grupo de questões em outra página.
+
+    Esses blocos não pertencem fisicamente a uma questão específica e, por
+    isso, não aparecem nos recortes iniciados por QUESTÃO n. O cabeçalho
+    oficial informa o intervalo de destino, então o mesmo texto é associado
+    a cada item do grupo.
+    """
+    supports: dict[int, str] = {}
+    with pdfplumber.open(path) as pdf:
+        for page in pdf.pages:
+            raw = page.crop((20, 80, page.width - 20, page.height - 40)).extract_text() or ""
+            match = SHARED_TEXT_RE.search(raw)
+            if not match:
+                continue
+            content = "\n".join(LINE_NUMBER_RE.sub("", line) for line in raw[match.end():].splitlines())
+            content = clean_text(content)
+            if len(content) < 80:
+                continue
+            start, end = int(match.group(1)), int(match.group(2))
+            for number in range(start, end + 1):
+                supports[number] = content
+    return supports
+
+
 def extract_booklet(path: Path) -> tuple[dict[int, str], dict[int, bool], dict[int, int]]:
     found: dict[int, str] = {}
     visual_by_question: dict[int, bool] = {}
@@ -107,9 +170,33 @@ def extract_booklet(path: Path) -> tuple[dict[int, str], dict[int, bool], dict[i
         for page_number, page in enumerate(pdf.pages[1:], start=2):
             positions = question_positions(page)
             midpoint = page.width / 2
+            left_positions = [item for item in positions if item[1] < midpoint]
+            right_positions = [item for item in positions if item[1] >= midpoint]
+
+            # Alguns cadernos intercalam páginas em duas colunas com páginas
+            # cujas questões ocupam a largura inteira. Na segunda forma, os
+            # cabeçalhos continuam alinhados à esquerda, mas nenhum aparece
+            # na coluna direita. Cortar essas páginas ao meio destrói o fim
+            # das linhas, como em títulos, textos de apoio e alternativas.
+            # Cada questão precisa ser lida no bloco horizontal completo.
+            if left_positions and not right_positions:
+                ordered = sorted(left_positions, key=lambda item: item[2])
+                for idx, (number, _x0, top) in enumerate(ordered):
+                    if number in page_by_question:
+                        continue
+                    bottom = ordered[idx + 1][2] if idx + 1 < len(ordered) else page.height - 35
+                    region = page.crop((8, top, page.width - 8, bottom))
+                    text = clean_text(region.extract_text() or "")
+                    text = re.sub(r"^QUEST[ÃA]O\s+\d{1,3}\s*", "", text, flags=re.IGNORECASE)
+                    if text:
+                        found[number] = text.strip()
+                    visual_by_question[number] = has_visual(page, 20, page.width - 20, top, bottom)
+                    page_by_question[number] = page_number
+                continue
+
             for left, right, in_column in [
-                (0, midpoint, [item for item in positions if item[1] < midpoint]),
-                (midpoint, page.width, [item for item in positions if item[1] >= midpoint]),
+                (0, midpoint, left_positions),
+                (midpoint, page.width, right_positions),
             ]:
                 ordered = sorted(in_column, key=lambda item: item[2])
                 for idx, (number, _x0, top) in enumerate(ordered):
@@ -120,7 +207,12 @@ def extract_booklet(path: Path) -> tuple[dict[int, str], dict[int, bool], dict[i
                     # coluna inteira e então cortar por ``QUESTÃO n`` fazia a
                     # alternativa E absorver rodapés e o início de outra
                     # questão quando o texto do PDF não preservava o cabeçalho.
-                    region = page.crop((left + 8, top, right - 8, bottom))
+                    # O texto de algumas questões começa quase exatamente
+                    # na linha divisória ou termina no limite da coluna.
+                    # A margem fixa de 8 pt cortava letras iniciais/finais
+                    # (por exemplo, “verdadeiras” virava “erdadeiras”).
+                    # Mantemos somente 1 pt para não absorver a coluna vizinha.
+                    region = page.crop((left + 1, top, right - 1, bottom))
                     text = clean_text(region.extract_text() or "")
                     text = re.sub(r"^QUEST[ÃA]O\s+\d{1,3}\s*", "", text, flags=re.IGNORECASE)
                     if text:
@@ -151,13 +243,29 @@ def to_question(year: int, number: int, text: str, answer: str, visual: bool, pa
     extracted_alternatives = []
     for index, match in enumerate(alternatives):
         end = alternatives[index + 1].start() if index + 1 < len(alternatives) else len(text)
+        alternative_text = text[match.start(2):end].strip()
+        if index == len(alternatives) - 1:
+            # Alguns PDFs deixam isolado só o número da questão seguinte no
+            # rodapé da última coluna. Opções numéricas reais têm pontuação ou
+            # expressão; este resíduo é uma linha inteira sem contexto.
+            alternative_text = re.sub(r"(?:\n\d{1,3})+\s*$", "", alternative_text).strip()
+            # Em páginas de duas colunas, o início isolado do cabeçalho
+            # seguinte pode sobreviver como uma única letra no rodapé,
+            # depois de uma alternativa terminada em ponto. Não é parte da
+            # opção e não deve chegar ao banco.
+            alternative_text = re.sub(r"(?<=\.)\nM\s*$", "", alternative_text).strip()
         extracted_alternatives.append({
             "letter": match.group(1),
-        "text": text[match.start(2):end].strip(),
+            "text": alternative_text,
             "file": None,
             "isCorrect": match.group(1) == answer,
         })
     if any(not alt["text"] for alt in extracted_alternatives):
+        return None
+    # Nunca publica uma transcrição parcialmente corrompida: se uma nova
+    # variação de layout escapar da limpeza, o item fica fora do lote até que
+    # o parser seja corrigido e coberto por teste.
+    if contains_page_chrome(statement) or any(contains_page_chrome(alt["text"]) for alt in extracted_alternatives):
         return None
 
     official_url = f"https://download.inep.gov.br/enem/provas_e_gabaritos/{pdf_name}"
@@ -178,7 +286,7 @@ def to_question(year: int, number: int, text: str, answer: str, visual: bool, pa
             "index": number,
             "officialPdf": official_url,
             "page": page,
-            "extraction": "text_only_pdf_v1",
+            "extraction": "text_only_pdf_v2",
             "visualDetected": visual,
         },
     }
@@ -240,6 +348,7 @@ def extract_year(root: Path, year: int, include_visual: bool = False) -> dict[st
         raise FileNotFoundError("Arquivos oficiais ausentes: " + ", ".join(missing))
 
     answers = answer_key(day1_key) | answer_key(day2_key)
+    supports = extract_shared_support_texts(day1_pdf) | extract_shared_support_texts(day2_pdf)
     texts1, visuals1, pages1 = extract_booklet(day1_pdf)
     texts2, visuals2, pages2 = extract_booklet(day2_pdf)
     texts = texts1 | texts2
@@ -254,6 +363,7 @@ def extract_year(root: Path, year: int, include_visual: bool = False) -> dict[st
         pdf_name = day1_pdf.name if number <= 90 else day2_pdf.name
         question = to_question(year, number, texts[number], answer, visuals.get(number, True), pages.get(number, 0), pdf_name, include_visual)
         if question is not None:
+            question["context"] = supports.get(number)
             questions.append(question)
             continue
         # Alguns itens oficiais têm alternativas compostas exclusivamente por

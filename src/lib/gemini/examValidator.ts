@@ -3,6 +3,8 @@ import type { ExamGenerationResult, ExamQuestion } from './examSchema'
 import { getSaebApplicability } from '@/config/saebApplicability'
 import { isImageEligibleSubject } from '@/config/imageEligibleSubjects'
 import { computeQuestionSplit } from './promptBuilder'
+import { normalizeAndValidateQuestionText } from '@/lib/math/mathTextIntegrity'
+import { isMathSubject, validateSolutionBlueprint } from '@/lib/math/solutionBlueprint'
 
 export type ValidationResult = {
   corrected: ExamGenerationResult
@@ -14,6 +16,15 @@ export type ValidationResult = {
 
 export function alternativesCountForSegment(segment: Segment): number {
   return segment === 'anos-iniciais' ? 4 : 5
+}
+
+// Código BNCC oficial: EF08MA01, EM13MAT101, EI03ET01. Descritores SAEB/Prova
+// Brasil (D1, D26) NÃO são BNCC e nunca podem entrar em bnccCodes — o modelo
+// às vezes confunde os dois.
+const BNCC_CODE_PATTERN = /^(EI|EF|EM)\d{2}[A-Z]{2,3}\d{1,3}$/
+
+export function isBnccCode(value: string): boolean {
+  return BNCC_CODE_PATTERN.test(value.trim().toUpperCase())
 }
 
 function normalizeForConceptMatch(value: string): string {
@@ -52,6 +63,15 @@ export function correctSingleQuestion(
   const imageEligible = isImageEligibleSubject(curriculum.subject)
   const expectedAlt = alternativesCountForSegment(curriculum.segment)
 
+  // Matemática é gerada a partir de uma ficha técnica interna: sem modelo e
+  // solução verificáveis, enunciado/gabarito/imagem não podem ser confiáveis.
+  if (isMathSubject(curriculum.subject)) {
+    issues.push(...validateSolutionBlueprint(q))
+    if (/\bpor\s+(?:a|o)\s+(?:dist[âa]ncia|quantidade|valor|n[uú]mero)\b/i.test(`${q.statement}\n${q.supportText ?? ''}`)) {
+      issues.push(`Questão ${q.number}: variável matemática ausente no enunciado (ex.: "por a distância"); gere novamente com o símbolo delimitado, como $x$ ou $y$.`)
+    }
+  }
+
   const correctedSaeb = !saebGate.applicable ? { applicable: false, source: null, value: null, approximate: false } : q.saeb
   if (!saebGate.applicable && (q.saeb.applicable || q.saeb.value)) {
     warnings.push(`Questão ${q.number}: modelo preencheu SAEB/ENEM para uma disciplina sem matriz oficial — corrigido para "N/A".`)
@@ -81,12 +101,36 @@ export function correctSingleQuestion(
     }
   }
 
-  if (q.bnccStatus === 'nao_mapeado' && q.bnccCodes.length > 0) {
-    warnings.push(`Questão ${q.number}: bnccStatus "nao_mapeado" mas veio com códigos BNCC preenchidos — possível invenção do modelo, revisar manualmente.`)
+  let correctedBnccCodes = q.bnccCodes ?? []
+  let correctedBnccStatus = q.bnccStatus
+  if (correctedBnccStatus === 'nao_mapeado') {
+    if (correctedBnccCodes.length) {
+      warnings.push(`Questão ${q.number}: bnccStatus "nao_mapeado" mas veio com códigos BNCC preenchidos — códigos removidos.`)
+    }
+    correctedBnccCodes = []
+  } else {
+    const invalidCodes = correctedBnccCodes.filter((code) => !isBnccCode(code))
+    if (invalidCodes.length) {
+      warnings.push(`Questão ${q.number}: código(s) ${invalidCodes.map((code) => `"${code}"`).join(', ')} não são BNCC (formato EF/EM/EI) — removido(s).`)
+      correctedBnccCodes = correctedBnccCodes.filter((code) => isBnccCode(code))
+      if (!correctedBnccCodes.length) correctedBnccStatus = 'nao_mapeado'
+    }
+  }
+
+  const textIntegrity = normalizeAndValidateQuestionText({
+    ...q,
+    supportText: correctedSupportText,
+    saeb: correctedSaeb,
+    needsImage: correctedNeedsImage,
+    imageQuery: correctedImageQuery,
+  })
+  issues.push(...textIntegrity.issues)
+  if (textIntegrity.normalized) {
+    warnings.push(`Questão ${q.number}: comandos matemáticos sem delimitador foram normalizados para renderização segura.`)
   }
 
   return {
-    question: { ...q, supportText: correctedSupportText, saeb: correctedSaeb, needsImage: correctedNeedsImage, imageQuery: correctedImageQuery },
+    question: { ...textIntegrity.question, bnccCodes: correctedBnccCodes, bnccStatus: correctedBnccStatus },
     issues,
     warnings,
   }
@@ -115,6 +159,28 @@ export function validateExamResult(
     warnings.push(...qWarnings)
     return question
   })
+
+  // Segundo gate de BNCC: mesmo um código com formato válido precisa existir
+  // no currículo real da unidade; senão seria invenção bem-formada.
+  const codesByUnit = new Map<number, Set<string>>()
+  const allCurriculumCodes = new Set<string>()
+  for (const unit of curriculum.units) {
+    if (unit.habilidades.status !== 'mapeado') continue
+    const codes = new Set(unit.habilidades.skills.map((skill) => skill.code.trim().toUpperCase()))
+    codesByUnit.set(unit.rowIndex, codes)
+    for (const code of codes) allCurriculumCodes.add(code)
+  }
+  for (let index = 0; index < correctedQuestions.length; index++) {
+    const question = correctedQuestions[index]
+    if (!question.bnccCodes.length) continue
+    const allowed = (question.curriculumUnitRowIndex != null ? codesByUnit.get(question.curriculumUnitRowIndex) : undefined) ?? allCurriculumCodes
+    const kept = question.bnccCodes.filter((code) => allowed.has(code.trim().toUpperCase()))
+    if (kept.length !== question.bnccCodes.length) {
+      const removed = question.bnccCodes.filter((code) => !allowed.has(code.trim().toUpperCase()))
+      warnings.push(`Questão ${question.number}: código(s) BNCC fora do currículo (${removed.join(', ')}) removido(s).`)
+      correctedQuestions[index] = { ...question, bnccCodes: kept, bnccStatus: kept.length ? question.bnccStatus : 'nao_mapeado' }
+    }
+  }
 
   const actualObjective = correctedQuestions.filter((q) => q.type === 'objetiva').length
   const actualDiscursive = correctedQuestions.filter((q) => q.type === 'descritiva').length

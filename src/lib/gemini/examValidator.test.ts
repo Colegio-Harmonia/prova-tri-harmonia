@@ -35,4 +35,28 @@ describe('correctSingleQuestion', () => {
     const result = correctSingleQuestion(question({ supportText: 'Em uma área fragmentada, foram registradas três populações isoladas de mamíferos.' }), curriculum)
     expect(result.question.supportText).toContain('três populações isoladas')
   })
+
+  it('normaliza LaTeX solto para que seja renderizado', () => {
+    const result = correctSingleQuestion(question({ statement: 'O ponto C é (1,\\sqrt{8}).' }), curriculum)
+    expect(result.question.statement).toBe('O ponto C é (1,$\\sqrt{8}$).')
+    expect(result.issues).toEqual([])
+  })
+
+  it('rejeita texto corrompido para acionar uma nova geração', () => {
+    const result = correctSingleQuestion(question({ statement: 'A relev\u0002ncia é importante.' }), curriculum)
+    expect(result.issues.join(' ')).toContain('caracteres de controle')
+  })
+
+  it('remove descritor SAEB do campo BNCC (D26 não é BNCC)', () => {
+    const result = correctSingleQuestion(question({ bnccCodes: ['D26'], bnccStatus: 'mapeado' }), curriculum)
+    expect(result.question.bnccCodes).toEqual([])
+    expect(result.question.bnccStatus).toBe('nao_mapeado')
+    expect(result.warnings.join(' ')).toContain('não são BNCC')
+  })
+
+  it('mantém código BNCC no formato oficial', () => {
+    const result = correctSingleQuestion(question({ bnccCodes: ['EF09CI01'], bnccStatus: 'mapeado' }), curriculum)
+    expect(result.question.bnccCodes).toEqual(['EF09CI01'])
+    expect(result.question.bnccStatus).toBe('mapeado')
+  })
 })
