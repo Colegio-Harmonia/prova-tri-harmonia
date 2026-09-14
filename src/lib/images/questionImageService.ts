@@ -30,6 +30,18 @@ export class RequiredQuestionImageError extends Error {
   }
 }
 
+export function isUploadedImageIntact(
+  metadata: { mimeType?: string | null; size?: string | null },
+  expectedBytes: number,
+): boolean {
+  return Boolean(
+    metadata.mimeType?.startsWith('image/')
+    && metadata.size
+    && Number.isSafeInteger(Number(metadata.size))
+    && Number(metadata.size) === expectedBytes,
+  )
+}
+
 export async function uploadToStaging(buffer: Buffer, mimeType: string, name: string): Promise<{ driveFileId: string; previewUrl: string }> {
   const rootId = process.env.DRIVE_ROOT_FOLDER_ID
   if (!rootId) throw new Error('DRIVE_ROOT_FOLDER_ID não configurado')
@@ -44,6 +56,18 @@ export async function uploadToStaging(buffer: Buffer, mimeType: string, name: st
     supportsAllDrives: true,
   })
   const driveFileId = data.id as string
+
+  // A criação retorna um ID, mas não garante que o conteúdo tenha sido
+  // persistido. Conferimos o arquivo antes de vinculá-lo a uma questão.
+  const metadata = await drive.files.get({
+    fileId: driveFileId,
+    fields: 'mimeType,size',
+    supportsAllDrives: true,
+  })
+  if (!isUploadedImageIntact(metadata.data, buffer.length)) {
+    await drive.files.delete({ fileId: driveFileId, supportsAllDrives: true }).catch(() => undefined)
+    throw new Error('O Drive não confirmou a integridade da imagem enviada.')
+  }
 
   // insertInlineImage needs a publicly fetchable URI, same tradeoff as the
   // logo upload in seed-templates.ts.

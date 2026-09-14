@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 
-import { attachImagesToExam } from './questionImageService'
+import { attachImagesToExam, isUploadedImageIntact } from './questionImageService'
 
 const examWithMissingVisualQuery: ExamGenerationResult = {
   metadata: { segment: 'anos-finais', gradeYear: 7, subject: 'Ciências', questionCount: 1, objectiveCount: 1, discursiveCount: 0, alternativesCount: 5 },
@@ -33,6 +33,12 @@ const examWithMissingVisualQuery: ExamGenerationResult = {
 }
 
 describe('resolução obrigatória de recursos visuais', () => {
+  it('rejeita metadados de arquivo vazio ou não-imagem', () => {
+    expect(isUploadedImageIntact({ mimeType: 'image/png', size: '45' }, 45)).toBe(true)
+    expect(isUploadedImageIntact({ mimeType: 'image/png', size: '0' }, 45)).toBe(false)
+    expect(isUploadedImageIntact({ mimeType: 'application/pdf', size: '45' }, 45)).toBe(false)
+  })
+
   it('não deixa passar uma questão que pediu imagem sem imageQuery', async () => {
     await expect(attachImagesToExam(examWithMissingVisualQuery, { requireResolvedImages: true }))
       .rejects.toMatchObject({ questionNumbers: [1] })

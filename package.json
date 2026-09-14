@@ -34,6 +34,7 @@
     "test:dashboard-theme": "tsx scripts/test-dashboard-theme.ts",
     "test:theme-audit": "tsx scripts/audit-theme-colors.ts",
     "test:assessment-collections": "tsx scripts/test-assessment-collections.ts",
+    "audit:question-images": "tsx scripts/audit-question-image-integrity.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
