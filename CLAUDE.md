@@ -31,9 +31,9 @@ fluxo de revisão humana antes de qualquer prova virar documento final.
 **Stack**: Next.js 15 (App Router) + React 19, Drizzle + Postgres (container Docker
 `prova-tri-postgres`, porta 5434), Auth.js (Credentials + JWT, sem OAuth
 real ainda), DeepSeek pra geração de texto (trocado do Gemini por custo,
-14/07/2026 — ver `src/lib/gemini/llmClient.ts`). Deploy: servidor caseiro
-`192.168.1.218:3010` via PM2 (`pm2` binário vem de
-`/home/eduardo/simulador-enem/node_modules/.bin/pm2`, não há pm2 global).
+14/07/2026 — ver `src/lib/gemini/llmClient.ts`). Deploy: Docker Compose;
+os serviços `web`, `worker`, `ocr-worker` e `postgres` são definidos em
+`docker-compose.yml`. PM2 não faz parte da infraestrutura atual.
 
 **Já construído e funcionando:**
 - Leitura de currículo das planilhas Google Sheets reais (uma por
@@ -162,15 +162,10 @@ OAuth recusa redirect URI com IP puro. Como ficou montado:
   zona só de subdomínio de um domínio já registrado em outro lugar,
   então esse caminho foi abandonado em favor do Caddy direto.
 
-⚠️ **`pm2 restart` NÃO recarrega mudança em `.env.local`** — o PM2 guarda
-uma cópia própria do ambiente capturada em `pm2 start`, que tem prioridade
-sobre o que o Next.js seria capaz de ler do `.env.local` em tempo de
-execução. Editar `.env.local` e rodar só `pm2 restart prova-tri` mantém
-os valores antigos silenciosamente (sem erro, sem aviso claro — só um
-"Use --update-env to update environment variables" fácil de não notar).
-**Sempre que `.env.local` mudar em produção**: `pm2 delete prova-tri &&
-pm2 start ecosystem.config.js && pm2 save` (mais confiável que
-`--update-env`, que puxa do shell atual em vez do arquivo).
+⚠️ **Mudanças em `.env.local` exigem recriar os serviços afetados**. Após
+validar o arquivo no servidor, execute `docker compose up -d --build` e
+confirme o estado com `docker compose ps`. Nunca versionar o arquivo nem
+copiá-lo para uma imagem Docker.
 
 ⚠️ **Auth.js v5 não lê `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`
 automaticamente** — essa é convenção do NextAuth v4. O v5 só autodetecta

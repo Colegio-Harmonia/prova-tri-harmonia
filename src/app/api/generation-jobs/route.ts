@@ -19,7 +19,7 @@ const curriculumPlanItemSchema = z.object({
 
 // Fila de geração (Subtarefa 1a): POST enfileira um batch (turma/ano + N
 // disciplinas → 1 job por disciplina) e devolve 202 na hora; quem executa
-// é o worker PM2 (scripts/generation-worker.ts). GET alimenta a aba
+// é o serviço worker (scripts/generation-worker.ts). GET alimenta a aba
 // "Histórico e Fila de Provas".
 
 const postSchema = z.object({

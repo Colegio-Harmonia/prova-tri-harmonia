@@ -8,6 +8,9 @@ coverage/
 next-env.d.ts
 .DS_Store
 *.bak
+*.backup-*
+__pycache__/
+*.py[cod]
 enem-microdados-cache/
 # Acervo público local do INEP (11+ GB); regenerável com
 # npm run download-inep-enem-archive e não deve ir para o Git.

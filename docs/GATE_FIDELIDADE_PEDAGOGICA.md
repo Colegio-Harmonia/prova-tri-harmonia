@@ -104,20 +104,14 @@ Para desligar a exigência sem trocar código:
 
 1. Ajustar apenas o `.env.local` do ambiente alvo para
    `PEDAGOGICAL_QUALITY_GATE_ENABLED=false`.
-2. No DEV, recriar `prova-tri-dev` e `prova-tri-dev-worker` a partir de
-   `ecosystem.dev.config.js`.
-3. Em produção, recriar `prova-tri` e `prova-tri-worker` a partir de
-   `ecosystem.config.js`. Os scan workers não precisam ser reiniciados.
+2. No ambiente alvo, recriar `web` e `worker` com Docker Compose. Os workers
+   de OCR não precisam ser reiniciados.
 4. Executar os smokes de login e das rotas protegidas.
 
-Exemplo de produção (usar o binário PM2 já instalado no servidor):
+Exemplo de produção:
 
 ```bash
-PM2=/home/eduardo/simulador-enem/node_modules/.bin/pm2
-cd /home/eduardo/prova-tri
-$PM2 delete prova-tri prova-tri-worker
-$PM2 start ecosystem.config.js --only prova-tri,prova-tri-worker
-$PM2 save
+docker compose up -d --build web worker
 ```
 
 Se for necessário reverter também o código, usar `git revert` do commit desta

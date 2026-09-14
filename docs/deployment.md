@@ -1,19 +1,29 @@
 # Operação de Deploy
 
-## Estado atual diagnosticado
+## Processo atual
 
-- O host público conhecido é `prova.colegioharmonia.com.br`, servido pelo processo PM2 `prova-tri` no servidor `192.168.1.218`.
-- Esse endereço é produção e não foi classificado como DEV.
-- **Release funcional ativa em 23/07/2026:** Fase 9 no commit `30f1b28`,
-  promovida pelo PR #143 e publicada por troca atômica em DEV e produção.
-  O código de aplicação em execução corresponde a esse commit; mudanças
-  posteriores somente documentais em `main` não alteram o runtime publicado.
-- **Atualizado em 23/07/2026:** o remoto oficial e privado é
-  `https://github.com/Colegio-Harmonia/prova-tri.git`. `main` e `develop`
-  estão protegidas e são sincronizadas após cada promoção por Pull Request. O
-  repositório foi inicialmente criado em `eduarsani/prova-tri` e transferido
-  para a organização Colegio-Harmonia.
-- O deploy legado usa sincronização de arquivos, `npm run build`, reinício PM2 e validação do motor pedagógico. Os comandos exatos e cuidados com `.env.local` permanecem no `CLAUDE.md` raiz.
+Produção é `prova.colegioharmonia.com.br`, executada por Docker Compose. O
+remoto oficial é `https://github.com/Colegio-Harmonia/prova-tri-harmonia.git`;
+o branch de produção é `main`. PM2 e sincronização por `rsync` não fazem parte
+do processo atual.
+
+Após validar o commit e as variáveis do servidor, publique com:
+
+```bash
+git pull --ff-only origin main
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=100 web worker ocr-worker
+```
+
+Confirme `/login`, as rotas protegidas e os logs antes de considerar a
+publicação concluída. O arquivo `.env.local` permanece exclusivamente no
+servidor. Não executar `npm run db:migrate`: a cadeia do Drizzle ainda precisa
+ser corrigida antes de ser usada em produção.
+
+> Os registros abaixo são históricos de releases anteriores. Eles descrevem a
+> infraestrutura PM2 já descontinuada e não devem ser usados como instrução de
+> deploy.
 
 ## Infraestrutura: legado atual e destino futuro
 

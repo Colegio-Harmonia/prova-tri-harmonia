@@ -1,13 +1,13 @@
 /**
- * Worker da fila de geração (Subtarefa 1a, 24/07/2026) — processo PM2
- * separado (`prova-tri-worker`, ver ecosystem.config.js). Consome
+ * Worker da fila de geração (Subtarefa 1a, 24/07/2026) — serviço Docker
+ * separado (`worker`, ver docker-compose.yml). Consome
  * `generation_jobs` via claim atômico (FOR UPDATE SKIP LOCKED) e executa
  * os handlers de src/lib/queue/handlers.ts.
  *
  * Concorrência 1 de propósito: DeepSeek tem rate limit e o servidor é
  * caseiro — paralelismo é um parâmetro pra revisitar, não uma reescrita.
  *
- * Rodar: npm run worker (produção: PM2; dev: direto no terminal).
+ * Rodar: npm run worker (produção: Docker Compose; dev: direto no terminal).
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -146,8 +146,8 @@ async function main() {
   process.exit(0)
 }
 
-// PM2 manda SIGINT no stop/restart: termina o job em andamento e sai. Se o
-// processo for morto no meio mesmo assim (SIGKILL após o timeout do PM2),
+// Docker envia SIGTERM no stop/restart: termina o job em andamento e sai. Se o
+// processo for morto no meio mesmo assim (SIGKILL após o período de parada),
 // a varredura de jobs órfãos recupera na próxima subida.
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {

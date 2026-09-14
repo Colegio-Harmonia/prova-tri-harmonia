@@ -34,17 +34,17 @@ sugestões assim que estiverem prontas.
 
 ## Operação
 
-O `ecosystem.config.js` inicia duas instâncias de `prova-tri-scan-worker` em
-produção; o arquivo de DEV mantém duas instâncias equivalentes. A concorrência
-é segura porque o claim atômico impede que duas instâncias peguem o mesmo job.
-Cada job conserva o retry padrão da fila. Jobs interrompidos por reinício são
-reenfileirados após 15 minutos, respeitando o limite de tentativas.
+O serviço `ocr-worker` do `docker-compose.yml` executa o worker de
+transcrição. A concorrência é segura porque o claim atômico impede que duas
+instâncias peguem o mesmo job. Cada job conserva o retry padrão da fila. Jobs
+interrompidos por reinício são reenfileirados após 15 minutos, respeitando o
+limite de tentativas.
 
 Para diagnosticar em produção:
 
 ```bash
-pm2 status prova-tri-scan-worker
-pm2 logs prova-tri-scan-worker --lines 100
+docker compose ps ocr-worker
+docker compose logs --tail=100 ocr-worker
 ```
 
 Não há migration nesta entrega: `generation_jobs.job_type` é uma coluna de

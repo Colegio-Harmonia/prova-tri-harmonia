@@ -1,7 +1,7 @@
 -- Subtarefa 1a da Expansão do Sistema de Avaliação e Aprendizagem
 -- (docs/SPEC_EXPANSAO_AVALIACAO_APRENDIZAGEM.md, seção 2.2).
 -- Fila de geração assíncrona em Postgres puro (FOR UPDATE SKIP LOCKED),
--- consumida pelo worker PM2 `prova-tri-worker`.
+-- consumida pelo serviço Docker `worker`.
 --
 -- Aplicar manualmente (drizzle-kit generate/migrate segue quebrado):
 --   cat drizzle/0015_generation_queue.sql | docker exec -i prova-tri-postgres psql -U prova_tri -d prova_tri
