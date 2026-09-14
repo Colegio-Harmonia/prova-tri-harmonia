@@ -11,6 +11,7 @@ import ActivityClassroomResults from './ActivityClassroomResults'
 import SheetAssignmentsPanel from './SheetAssignmentsPanel'
 import { downloadSheetAssignments } from './downloadSheetAssignments'
 import { canFinalizeOwnActivity, canMarkOwnActivityApplied } from '@/lib/exams/activityWorkflow'
+import { questionImageUrl } from '@/lib/images/questionImageUrl'
 
 // Fórmula em $...$ vira imagem tipografada de verdade (renderização
 // externa, mesmo padrão já usado pros gráficos de questão) — pedido
@@ -668,7 +669,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
                   <button type="button" onClick={() => setExpandedImageQuestion(q.number)} aria-haspopup="dialog" className="group shrink-0 self-start rounded border border-border bg-surface p-1 text-left">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={q.image.previewUrl} alt={`Imagem de apoio da questão ${q.number}`} className="max-h-48 w-auto max-w-full rounded object-contain sm:max-h-56" />
+                    <img src={questionImageUrl(exam.id, q.image.driveFileId)} alt={`Imagem de apoio da questão ${q.number}`} className="max-h-48 w-auto max-w-full rounded object-contain sm:max-h-56" />
                     <span className="mt-1 block text-center text-xs font-medium text-content-secondary group-hover:text-harmonia-green">Ampliar imagem</span>
                   </button>
                   <div className="flex flex-col gap-1 text-xs">
@@ -701,7 +702,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
                     <figure className="max-h-full max-w-5xl rounded-lg bg-surface p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
                       <div className="mb-3 flex items-center justify-between gap-4"><figcaption className="text-sm font-medium text-content-primary">Imagem de apoio — questão {q.number}</figcaption><button onClick={() => setExpandedImageQuestion(null)} className="rounded border border-border px-2 py-1 text-xs">Fechar</button></div>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={q.image.previewUrl} alt={`Imagem de apoio ampliada da questão ${q.number}`} className="max-h-[80vh] max-w-full rounded object-contain" />
+                      <img src={questionImageUrl(exam.id, q.image.driveFileId)} alt={`Imagem de apoio ampliada da questão ${q.number}`} className="max-h-[80vh] max-w-full rounded object-contain" />
                     </figure>
                   </div>
                 )}
