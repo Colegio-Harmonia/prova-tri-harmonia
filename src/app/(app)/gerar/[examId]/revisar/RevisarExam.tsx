@@ -12,6 +12,7 @@ import SheetAssignmentsPanel from './SheetAssignmentsPanel'
 import { downloadSheetAssignments } from './downloadSheetAssignments'
 import { canFinalizeOwnActivity, canMarkOwnActivityApplied } from '@/lib/exams/activityWorkflow'
 import { questionImageUrl } from '@/lib/images/questionImageUrl'
+import type { IllustrationRecommendation } from '@/lib/illustrations/recommendations'
 
 // Fórmula em $...$ vira imagem tipografada de verdade (renderização
 // externa, mesmo padrão já usado pros gráficos de questão) — pedido
@@ -159,6 +160,8 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   const [technicalEditorQuestion, setTechnicalEditorQuestion] = useState<number | null>(null)
   const [technicalGenerator, setTechnicalGenerator] = useState('')
   const [technicalParameters, setTechnicalParameters] = useState('')
+  const [illustrationRecommendations, setIllustrationRecommendations] = useState<Record<number, IllustrationRecommendation[]>>({})
+  const [analyzingIllustrations, setAnalyzingIllustrations] = useState<number | null>(null)
   const [imageConfirmation, setImageConfirmation] = useState<number | null>(null)
   const [actionError, setActionError] = useState<Record<number, string>>({})
   const [actionMessage, setActionMessage] = useState<string | null>(null)
@@ -452,6 +455,26 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
       const data = await res.json()
       if (!res.ok) { setActionError((previous) => ({ ...previous, [questionNumber]: data.error ?? 'Não foi possível gerar a ilustração.' })); return }
       patchQuestion(questionNumber, { needsImage: true, image: data.image }); setTechnicalEditorQuestion(null)
+    } catch { setActionError((previous) => ({ ...previous, [questionNumber]: 'Falha de rede ao gerar a ilustração.' })) } finally { setRenderingIllustration(null) }
+  }
+
+  async function handleAnalyzeIllustrations(questionNumber: number) {
+    setAnalyzingIllustrations(questionNumber); setActionError((previous) => ({ ...previous, [questionNumber]: '' }))
+    try {
+      const res = await fetch(`/api/exams/${examId}/recommend-illustrations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionNumber }) })
+      const data = await res.json()
+      if (!res.ok) { setActionError((previous) => ({ ...previous, [questionNumber]: data.error ?? 'Não foi possível analisar a questão.' })); return }
+      setIllustrationRecommendations((previous) => ({ ...previous, [questionNumber]: data.recommendations ?? [] }))
+    } catch { setActionError((previous) => ({ ...previous, [questionNumber]: 'Falha de rede ao analisar a questão.' })) } finally { setAnalyzingIllustrations(null) }
+  }
+
+  async function handleGenerateRecommendedIllustration(questionNumber: number, recommendation: IllustrationRecommendation) {
+    setRenderingIllustration(questionNumber); setActionError((previous) => ({ ...previous, [questionNumber]: '' }))
+    try {
+      const res = await fetch(`/api/exams/${examId}/render-illustration`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionNumber, generator: recommendation.generator, parameters: recommendation.parameters }) })
+      const data = await res.json()
+      if (!res.ok) { setActionError((previous) => ({ ...previous, [questionNumber]: data.error ?? 'Não foi possível gerar a ilustração.' })); return }
+      patchQuestion(questionNumber, { needsImage: true, image: data.image }); setIllustrationRecommendations((previous) => ({ ...previous, [questionNumber]: [] }))
     } catch { setActionError((previous) => ({ ...previous, [questionNumber]: 'Falha de rede ao gerar a ilustração.' })) } finally { setRenderingIllustration(null) }
   }
 
@@ -769,7 +792,6 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
                       </>
                     )}
                     <button onClick={() => handleRemoveImage(q.number)} disabled={!reviewEditable} className="rounded border border-red-300 bg-surface px-2 py-1 font-medium text-red-700 disabled:opacity-60">Remover imagem</button>
-                    {isMathExam && <button onClick={() => { setGraphEditorQuestion(q.number); setGraphExpression('x^2'); setGraphDomain('-5, 5') }} disabled={!reviewEditable} className="rounded border border-border bg-surface px-2 py-1 font-medium disabled:opacity-60">Substituir por gráfico de função</button>}
                   </div>
                   <details className="mt-2 rounded border border-border bg-surface p-2">
                     <summary className="cursor-pointer font-medium">Histórico e auditoria ({q.imageHistory?.length ?? 0} versões anteriores)</summary>
@@ -822,7 +844,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
                       <button onClick={() => handleAcceptQuestion(q.number)} disabled={savingReview === q.number} className="rounded bg-harmonia-green px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">{savingReview === q.number ? 'Salvando…' : 'Aceitar questão'}</button>
                       {q.source !== 'enem_bank' && <button onClick={() => handleRegenerateQuestion(q.number)} disabled={regeneratingQuestion === q.number} className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">{regeneratingQuestion === q.number ? 'Gerando…' : 'Recusar e gerar nova'}</button>}
                       {!q.image && <button onClick={() => handleRequestImage(q.number)} disabled={requestingImage === q.number} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary disabled:opacity-60">{requestingImage === q.number ? 'Gerando imagem…' : 'Gerar imagem'}</button>}
-                      {illustrationOptions.length > 0 && <button onClick={() => { const option = illustrationOptions[0]; setTechnicalEditorQuestion(q.number); setTechnicalGenerator(option.id); setTechnicalParameters(option.example) }} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary">Gerar ilustração técnica</button>}
+                      {illustrationOptions.length > 0 && <button onClick={() => handleAnalyzeIllustrations(q.number)} disabled={analyzingIllustrations === q.number} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary disabled:opacity-60">{analyzingIllustrations === q.number ? 'Analisando recursos visuais…' : 'Ver ilustrações recomendadas'}</button>}
                       {isMathExam && <button onClick={() => { setGraphEditorQuestion(q.number); setGraphExpression('x^2'); setGraphDomain('-5, 5') }} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary">Gerar gráfico de função</button>}
                     </>
                   )}
@@ -830,6 +852,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
                 {imageConfirmation === q.number && <div className="flex flex-wrap items-center gap-2 rounded bg-amber-50 p-2 text-xs text-amber-900"><span>Esta questão não precisa de imagem. Gerar mesmo assim?</span><button onClick={() => handleRequestImage(q.number, true)} className="rounded bg-amber-700 px-2 py-1 font-medium text-white">Gerar mesmo assim</button><button onClick={() => setImageConfirmation(null)} className="underline">Cancelar</button></div>}
                 {graphEditorQuestion === q.number && <div className="space-y-2 rounded border border-harmonia-green/30 bg-surface p-3 text-xs"><p className="font-medium">Gráfico determinístico (sem IA)</p><label className="block">Função, usando apenas x e operações básicas (ex.: <code>x^2 - 4*x + 3</code>)<input value={graphExpression} onChange={(event) => setGraphExpression(event.target.value)} className="mt-1 block w-full rounded border border-border px-2 py-1.5 text-sm" /></label><label className="block">Domínio, mínimo e máximo (ex.: <code>-5, 5</code>)<input value={graphDomain} onChange={(event) => setGraphDomain(event.target.value)} className="mt-1 block w-full rounded border border-border px-2 py-1.5 text-sm" /></label><div className="flex gap-2"><button onClick={() => handleRenderFunctionGraph(q.number)} disabled={renderingIllustration === q.number} className="rounded bg-harmonia-green px-2 py-1.5 font-medium text-white disabled:opacity-60">{renderingIllustration === q.number ? 'Renderizando…' : 'Gerar gráfico'}</button><button onClick={() => setGraphEditorQuestion(null)} className="rounded border border-border px-2 py-1.5">Cancelar</button></div></div>}
                 {technicalEditorQuestion === q.number && <div className="space-y-2 rounded border border-harmonia-green/30 bg-surface p-3 text-xs"><p className="font-medium">Ilustração técnica determinística</p><select value={technicalGenerator} onChange={(event) => { const option = illustrationOptions.find((item) => item.id === event.target.value); setTechnicalGenerator(event.target.value); if (option) setTechnicalParameters(option.example) }} className="w-full rounded border border-border px-2 py-1.5 text-sm">{illustrationOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select><textarea value={technicalParameters} onChange={(event) => setTechnicalParameters(event.target.value)} rows={5} className="w-full rounded border border-border p-2 font-mono text-xs" aria-label="Parâmetros da ilustração" /><div className="flex gap-2"><button onClick={() => handleRenderTechnicalIllustration(q.number)} disabled={renderingIllustration === q.number} className="rounded bg-harmonia-green px-2 py-1.5 font-medium text-white disabled:opacity-60">{renderingIllustration === q.number ? 'Renderizando…' : 'Gerar ilustração'}</button><button onClick={() => setTechnicalEditorQuestion(null)} className="rounded border border-border px-2 py-1.5">Cancelar</button></div></div>}
+                {illustrationRecommendations[q.number] && <div className="space-y-2 rounded border border-harmonia-green/30 bg-surface p-3 text-xs"><p className="font-medium">Sugestões da questão</p>{illustrationRecommendations[q.number].length === 0 ? <p className="text-neutral-600">Não há dados suficientes para uma ilustração determinística confiável. Você ainda pode gerar uma imagem com IA.</p> : illustrationRecommendations[q.number].map((recommendation) => <div key={recommendation.generator} className="flex flex-wrap items-center gap-2"><span><strong>{recommendation.title}</strong> — {recommendation.rationale}</span><button onClick={() => handleGenerateRecommendedIllustration(q.number, recommendation)} disabled={renderingIllustration === q.number} className="rounded bg-harmonia-green px-2 py-1 font-medium text-white disabled:opacity-60">{renderingIllustration === q.number ? 'Gerando…' : 'Usar esta ilustração'}</button></div>)}</div>}
 
                 {actionError[q.number] && <p className="text-xs text-red-600">{actionError[q.number]}</p>}
               </div>
