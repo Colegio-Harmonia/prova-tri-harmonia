@@ -24,8 +24,12 @@ const pedagogicalClassificationSchema = z.object({
 // Ficha técnica interna. Ela é persistida junto da questão, mas não é
 // exibida na prova: serve para manter enunciado, solução, gabarito e visual
 // ancorados no mesmo modelo verificável.
+// Domínios com recalculador determinístico (motor em
+// `@/lib/generation/domains`). `other` permanece aceito apenas para leitura
+// de questões antigas já persistidas — o Gate 0 do pipeline fragmentado
+// proíbe escolhê-lo em gerações novas.
 export const solutionBlueprintSchema = z.object({
-  domain: z.enum(['linear_system', 'rectangular_prism_volume', 'average_speed', 'percentage', 'ratio_proportion', 'other']),
+  domain: z.enum(['linear_system', 'rectangular_prism_volume', 'average_speed', 'percentage', 'ratio_proportion', 'simple_interest', 'compound_interest', 'arithmetic_progression', 'geometric_progression', 'linear_recurrence', 'linear_function', 'quadratic_function', 'point_distance', 'circle_relative_position', 'sphere_point_position', 'kinematics_uniform', 'kinematics_accelerated', 'newton_second_law', 'weight_force', 'kinetic_energy', 'ohms_law', 'electric_power', 'density', 'mole_calculation', 'molar_concentration', 'solution_dilution', 'other']),
   // A ficha é interna. O modelo ocasionalmente devolve um rótulo mais
   // descritivo aqui; isso não pode invalidar toda uma prova por limite de
   // apresentação, pois os campos que determinam o cálculo são equations e
@@ -203,7 +207,7 @@ export const GEMINI_RESPONSE_SCHEMA = {
           solutionBlueprint: {
             type: 'object', nullable: true,
             properties: {
-              domain: { type: 'string', enum: ['linear_system', 'rectangular_prism_volume', 'average_speed', 'percentage', 'ratio_proportion', 'other'] },
+              domain: { type: 'string', enum: ['linear_system', 'rectangular_prism_volume', 'average_speed', 'percentage', 'ratio_proportion', 'simple_interest', 'compound_interest', 'arithmetic_progression', 'geometric_progression', 'linear_recurrence', 'linear_function', 'quadratic_function', 'point_distance', 'circle_relative_position', 'sphere_point_position', 'kinematics_uniform', 'kinematics_accelerated', 'newton_second_law', 'weight_force', 'kinetic_energy', 'ohms_law', 'electric_power', 'density', 'mole_calculation', 'molar_concentration', 'solution_dilution', 'other'] },
               variables: { type: 'array', items: { type: 'object', properties: { symbol: { type: 'string' }, meaning: { type: 'string' } }, required: ['symbol', 'meaning'] } },
               equations: { type: 'array', items: { type: 'string' } },
               values: { type: 'object', additionalProperties: { type: 'number' } },

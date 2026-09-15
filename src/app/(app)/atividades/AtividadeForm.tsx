@@ -49,7 +49,16 @@ export default function AtividadeForm() {
     event.preventDefault(); setSubmitting(true); setError(null)
     try {
       const response = await fetch('/api/activities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ segment, gradeYear, subject, academicYear, ...(bimester ? { bimester } : {}), questionCount, bnccCodes: selectedCodes, ...(classLabel.trim() ? { classLabel: classLabel.trim() } : {}), ...(classroomCourseId ? { classroomCourseId } : {}) }) })
-      const data = await response.json(); if (!response.ok) throw new Error(data.error ?? 'Erro ao adicionar à fila.'); setJobId(data.jobId)
+      const data = await response.json()
+      if (!response.ok) {
+        // O servidor devolve `issues` do Zod; mostramos o campo problemático
+        // em vez de um "Parâmetros inválidos" opaco.
+        const detail = Array.isArray(data.issues) && data.issues.length
+          ? data.issues.map((item: { path?: Array<string | number>; message?: string }) => `${item.path?.join('.') || 'campo'}: ${item.message ?? 'inválido'}`).join('; ')
+          : null
+        throw new Error(detail ? `${data.error ?? 'Parâmetros inválidos'} — ${detail}` : data.error ?? 'Erro ao adicionar à fila.')
+      }
+      setJobId(data.jobId)
     } catch (err) { setError(err instanceof Error ? err.message : 'Erro ao adicionar à fila.') } finally { setSubmitting(false) }
   }
 

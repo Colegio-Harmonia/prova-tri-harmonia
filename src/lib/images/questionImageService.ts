@@ -169,7 +169,7 @@ export async function importImageFromUrl(
  * a geração da prova inteira; o professor ainda aprova/rejeita por
  * questão (essa etapa é o verdadeiro check de aplicabilidade, não esta).
  */
-export async function resolveQuestionImage(imageQuery: string, questionContext: string, expectedText?: string, options: { deterministicOnly?: boolean } = {}): Promise<ResolvedQuestionImage | null> {
+export async function resolveQuestionImage(imageQuery: string, questionContext: string, expectedText?: string): Promise<ResolvedQuestionImage | null> {
   // Texto verificável exige DALL-E e validação visual; bancos externos não
   // oferecem garantia de correspondência literal com o conteúdo pedido.
   if (expectedText) return resolveGeneratedImage(imageQuery, questionContext, expectedText)
@@ -185,15 +185,13 @@ export async function resolveQuestionImage(imageQuery: string, questionContext: 
       return { source: 'grafico', driveFileId, previewUrl }
     }
   } catch (err) {
-    console.warn(`[questionImageService] renderização de gráfico falhou${options.deterministicOnly ? '' : ', tentando Wikimedia'}:`, err instanceof Error ? err.message : err)
+    console.warn('[questionImageService] renderização determinística falhou, tentando Wikimedia/IA:', err instanceof Error ? err.message : err)
   }
 
-  // Em Matemática, uma ilustração artística pode inventar coordenadas,
-  // medidas ou resultados. Se o gráfico determinístico não puder ser
-  // produzido, deixamos a questão para revisão sem anexar um recurso
-  // visual potencialmente enganoso.
-  if (options.deterministicOnly) return null
-
+  // Biblioteca determinística primeiro (acima). Se nenhuma lib confiável
+  // servir — por falta de parâmetros na ficha técnica, por exemplo —
+  // recorremos a bancos externos e à IA, sempre passando pela validação
+  // visual antes de vincular a imagem à questão.
   try {
     const found = await searchWikimediaImage(imageQuery)
     if (found) {
@@ -244,7 +242,6 @@ export async function attachImagesToExam(
 ): Promise<ExamGenerationResult> {
   const attempts = Math.max(1, options.maxAttemptsPerImage ?? 1)
   const unresolved: number[] = []
-  const deterministicOnly = /^(matemática|matematica|física|fisica|química|quimica)$/i.test(exam.metadata.subject.trim())
   const questions = await Promise.all(
     exam.questions.map(async (q) => {
       if (!q.needsImage) return q
@@ -265,7 +262,7 @@ export async function attachImagesToExam(
         console.warn(`[questionImageService] visual da ficha técnica falhou na questão ${q.number}; usando contingência:`, error instanceof Error ? error.message : error)
       }
       for (let attempt = 1; attempt <= attempts; attempt++) {
-        const resolved = await resolveQuestionImage(q.imageQuery, visualContext, undefined, { deterministicOnly })
+        const resolved = await resolveQuestionImage(q.imageQuery, visualContext)
         if (resolved) return { ...q, image: { ...resolved, approved: false } }
       }
       unresolved.push(q.number)

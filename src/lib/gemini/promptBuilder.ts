@@ -7,6 +7,7 @@ import { isImageEligibleSubject } from '@/config/imageEligibleSubjects'
 import { isInterpretiveSubject } from '@/config/interpretiveSubjects'
 import { getEnemStyleExemplars } from './enemExemplars'
 import { replacementStrategyInstruction, type ReplacementRequest } from './replacementPolicy'
+import { canonicalDomainsForSubject } from '@/lib/generation/domains'
 
 export type ExamGenerationParams = {
   questionCount: number
@@ -158,8 +159,12 @@ function buildMathNotationInstruction(): string {
 }
 
 function buildSolutionBlueprintInstruction(subject: string): string {
-  if (!/^(matemática|matematica)$/i.test(subject.trim())) return 'solutionBlueprint:null para disciplinas sem cálculo matemático como objeto central.'
-  return `FICHA TÉCNICA INTERNA OBRIGATÓRIA (solutionBlueprint): ela NÃO aparece para o aluno, mas é usada para validar a questão. Preencha domain, variables, equations, values, calculationSteps, derivedAnswer e visualSpec antes de redigir o item. Use domain linear_system para sistemas na forma canônica "ax+by=c" (sem frações; elimine denominadores), rectangular_prism_volume com values length/width/height/unitFactor, average_speed com distance/time, percentage com base/percent, ratio_proportion ou other. derivedAnswer deve registrar os valores numéricos calculados. Em objetivas, a alternativa correctLetter deve conter exatamente o resultado de derivedAnswer. Em descritivas, expectedAnswer e gradingCriteria são obrigatórios e devem usar a mesma solução. Se o estudante precisa desenhar o gráfico, visualSpec deve ser blank_coordinate_plane: nunca desenhe a solução para ele.`
+  const domains = canonicalDomainsForSubject(subject)
+  if (!domains.length) return 'solutionBlueprint:null para disciplinas sem cálculo matemático como objeto central.'
+  const catalog = domains.map((domain) => `- ${domain.id}: {${domain.fields.join(', ')}} — ${domain.inputDescription}`).join('\n')
+  return `FICHA TÉCNICA INTERNA OBRIGATÓRIA (solutionBlueprint): ela NÃO aparece para o aluno e é a fonte de verdade do item. Preencha domain, variables, equations, values, calculationSteps, derivedAnswer e visualSpec ANTES de redigir o item. Use SOMENTE um dos domínios canônicos abaixo, com os valores de ENTRADA exatos (nunca o resultado); NUNCA use "other" nem invente domínio:
+${catalog}
+O sistema recalcula derivedAnswer em código a partir de values; a alternativa correctLetter deve conter exatamente o resultado recalculado. Em descritivas, expectedAnswer e gradingCriteria devem usar a mesma solução. Se o estudante precisa desenhar o gráfico, visualSpec deve ser blank_coordinate_plane: nunca desenhe a solução para ele.`
 }
 
 function buildPedagogicalClassificationInstruction(): string {

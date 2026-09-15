@@ -41,6 +41,41 @@ function normalized(value: string) { return value.normalize('NFD').replace(/[\u0
 
 function brazilianNumber(value: string) { return Number(value.replace(/\./g, '').replace(',', '.')) }
 
+export type QualityCheck = { criterion: string; status: 'aprovado' | 'reprovado' | 'não_aplicável'; evidence: string }
+
+export type QualityReportResult = {
+  questionNumber: number
+  approved: boolean
+  verdictReason?: string
+  checks?: QualityCheck[]
+  answerKeyAudit?: { declaredLetter: string | null; independentlyDerivedLetter: string | null; matchesDeclared: boolean; evidence: string } | null
+  issues: Array<{ severity: 'bloqueante' | 'alerta'; reason: string }>
+}
+
+// O modelo às vezes devolve status "reprovado" com uma evidência que, na
+// prática, diz que o critério NÃO se aplica (ex.: cálculo_ou_dados numa
+// questão discursiva de Química). Isso é uma inconsistência do relatório,
+// não uma falha da questão. Detectamos pelo texto normalizado (sem acento).
+const NOT_APPLICABLE_EVIDENCE = /nao aplic|nao se aplic|nao e aplicavel|sem calculo|nao envolve calculo|nao ha calculo|nao possui calculo|nao se trata de calculo|analise conceitual, sem|conceitual, sem calculo/i
+
+export function isNotApplicableEvidence(evidence: string): boolean {
+  return NOT_APPLICABLE_EVIDENCE.test(normalized(evidence))
+}
+
+/**
+ * Normaliza os critérios do relatório: um "reprovado" cuja evidência diz
+ * "não aplicável" vira "não_aplicável" e deixa de bloquear a aprovação.
+ * Usado tanto ao gerar o relatório quanto ao lê-lo (inclusive de provas
+ * antigas já persistidas).
+ */
+export function normalizeQualityChecks(checks: QualityCheck[] | undefined): QualityCheck[] {
+  return (checks ?? []).map((check) =>
+    check.status === 'reprovado' && isNotApplicableEvidence(check.evidence)
+      ? { ...check, status: 'não_aplicável' as const }
+      : check,
+  )
+}
+
 function compoundInterestIssue(question: ExamQuestion): ExamQualityIssue | null {
   if (question.type !== 'objetiva' || !question.alternatives) return null
   const text = `${question.supportText ?? ''} ${question.statement}`
@@ -87,18 +122,20 @@ function card(question: ExamQuestion) {
 function auditConsistencyIssues(question: ExamQuestion, result: z.infer<typeof qualitySchema>): ExamQualityIssue[] {
   const issues: ExamQualityIssue[] = []
   const blocking = (reason: string) => issues.push({ questionNumbers: [question.number], severity: 'bloqueante', reason })
-  const rejectedChecks = result.checks.filter((check) => check.status === 'reprovado')
+  const checks = normalizeQualityChecks(result.checks)
+  const rejectedChecks = checks.filter((check) => check.status === 'reprovado')
 
   for (const check of rejectedChecks) {
     blocking(`Teste de qualidade — ${check.criterion}: ${check.evidence}`)
   }
-  if (!result.approved && !rejectedChecks.length && !result.issues.some((issue) => issue.severity === 'bloqueante')) {
-    blocking(`Teste de qualidade reprovou a questão: ${result.verdictReason}`)
-  }
+  // Não bloqueamos só porque o campo `approved` do modelo veio `false`: a
+  // barreira exige evidência concreta (critério reprovado ou issue
+  // bloqueante). Sem isso, um veredito contraditório do modelo (texto
+  // positivo + approved:false) travava questões válidas.
 
   if (question.type !== 'objetiva') return issues
 
-  const answerKeyChecks = result.checks.filter((check) => check.criterion === 'gabarito')
+  const answerKeyChecks = checks.filter((check) => check.criterion === 'gabarito')
   if (answerKeyChecks.length !== 1 || answerKeyChecks[0]?.status !== 'aprovado') {
     blocking('Teste de qualidade não confirmou o gabarito como correto e único.')
   }
@@ -165,7 +202,13 @@ ${card(question)}`
   }
   const semantic: ExamQualityIssue[] = reports.flatMap((result) => {
     const question = questions.find((candidate) => candidate.number === result.questionNumber)
-    const declared = result.issues.map((issue) => ({ questionNumbers: [result.questionNumber], severity: issue.severity, reason: `Teste de qualidade: ${issue.reason}` } satisfies ExamQualityIssue))
+    // Um "bloqueante" cuja justificativa é "não aplicável" é rebaixado a
+    // alerta, nunca bloqueio, para não repetir a contradição do modelo.
+    const declared = result.issues.map((issue) => ({
+      questionNumbers: [result.questionNumber],
+      severity: issue.severity === 'bloqueante' && isNotApplicableEvidence(issue.reason) ? 'alerta' : issue.severity,
+      reason: `Teste de qualidade: ${issue.reason}`,
+    } satisfies ExamQualityIssue))
     return question ? [...declared, ...auditConsistencyIssues(question, result)] : declared
   })
   const rejected = [...new Set([...deterministic, ...semantic].filter((issue) => issue.severity === 'bloqueante').flatMap((issue) => issue.questionNumbers))]
@@ -177,7 +220,14 @@ ${card(question)}`
       questionNumber: question.number,
       approved: ![...localIssues, ...semanticIssues].some((issue) => issue.severity === 'bloqueante'),
       verdictReason: semanticResult?.verdictReason,
-      checks: semanticResult?.checks,
+      // Persistimos os critérios já normalizados: sem isso a tela e a
+      // barreira de aprovação voltariam a ver um "reprovado" que na verdade
+      // é "não aplicável".
+      checks: semanticResult ? normalizeQualityChecks(semanticResult.checks) : undefined,
+      // A aprovação final precisa desta evidência estruturada. Não a omita
+      // do relatório persistido: sem ela a tela pode mostrar "Aprovada",
+      // mas a barreira de aprovação não tem como comprovar o gabarito.
+      answerKeyAudit: semanticResult?.answerKeyAudit,
       issues: [...localIssues, ...semanticIssues],
     }
   })
@@ -201,12 +251,18 @@ export function qualityApprovalBlocks(payload: ExamGenerationResult): string[] {
       blocks.push(`Questão ${question.number}: ausente do relatório final de qualidade.`)
       continue
     }
-    if (!result.approved || result.issues.some((issue) => issue.severity === 'bloqueante') || result.checks?.some((check) => check.status === 'reprovado')) {
+    // A leitura também normaliza ("reprovado" com evidência de não
+    // aplicável não bloqueia) e ignora o booleano `approved` cru do modelo:
+    // o que bloqueia é evidência concreta.
+    const checks = normalizeQualityChecks(result.checks)
+    const rejectedCheck = checks.find((check) => check.status === 'reprovado')
+    const blockingIssue = result.issues.find((issue) => issue.severity === 'bloqueante' && !isNotApplicableEvidence(issue.reason))
+    if (rejectedCheck || blockingIssue) {
       blocks.push(`Questão ${question.number}: o relatório de qualidade a reprovou.`)
     }
     if (question.type === 'objetiva') {
       const audit = result.answerKeyAudit
-      const answerKeyCheck = result.checks?.filter((check) => check.criterion === 'gabarito') ?? []
+      const answerKeyCheck = checks.filter((check) => check.criterion === 'gabarito')
       if (answerKeyCheck.length !== 1 || answerKeyCheck[0]?.status !== 'aprovado') {
         blocks.push(`Questão ${question.number}: o relatório não aprovou explicitamente o gabarito.`)
       }

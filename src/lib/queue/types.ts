@@ -95,6 +95,9 @@ export function isActivityGradeCompatible(segment: ActivitySegment, gradeYear: n
 
 // Atividades formativas da Educação Básica. A BNCC é obrigatória: ela
 // define o recorte de geração e é exibida na descrição do Classroom.
+// Sem teto artificial de habilidades: a própria planilha do bimestre limita
+// o conjunto, e o professor escolhe livremente o recorte (a UI não trava
+// seleção). O worker revalida com este mesmo schema.
 export const gerarAtividadeJobPayloadSchema = z.object({
   segment: z.enum(['anos-iniciais', 'anos-finais', 'ensino-medio']),
   gradeYear: z.number().int().min(1).max(9),
@@ -102,7 +105,7 @@ export const gerarAtividadeJobPayloadSchema = z.object({
   subject: z.string().min(1),
   bimester: z.number().int().min(1).max(4).optional(),
   questionCount: z.number().int().min(12).max(15),
-  bnccCodes: z.array(z.string().min(3)).min(1).max(10),
+  bnccCodes: z.array(z.string().min(3)).min(1),
   classLabel: z.string().min(1).max(120).optional(),
   classroomCourseId: z.string().min(1).optional(),
 }).refine((payload) => isActivityGradeCompatible(payload.segment, payload.gradeYear), {

@@ -5,6 +5,7 @@ import { isImageEligibleSubject } from '@/config/imageEligibleSubjects'
 import { computeQuestionSplit } from './promptBuilder'
 import { normalizeAndValidateQuestionText } from '@/lib/math/mathTextIntegrity'
 import { isMathSubject, validateSolutionBlueprint } from '@/lib/math/solutionBlueprint'
+import { isCanonicalDomainId } from '@/lib/generation/domains'
 
 export type ValidationResult = {
   corrected: ExamGenerationResult
@@ -66,7 +67,9 @@ export function correctSingleQuestion(
 
   // Matemática é gerada a partir de uma ficha técnica interna: sem modelo e
   // solução verificáveis, enunciado/gabarito/imagem não podem ser confiáveis.
-  if (isMathSubject(curriculum.subject)) {
+  // Física/Química entram quando a ficha declara um domínio canônico (fase 3).
+  const shouldValidateBlueprint = isMathSubject(curriculum.subject) || Boolean(q.solutionBlueprint && isCanonicalDomainId(q.solutionBlueprint.domain))
+  if (shouldValidateBlueprint) {
     const blueprintIssues = validateSolutionBlueprint(q)
     if (options.allowMathReviewFallback && blueprintIssues.length) {
       warnings.push(...blueprintIssues.map((issue) => `${issue} A questão seguirá para revisão humana; confira cálculo e gabarito antes de aprovar.`))

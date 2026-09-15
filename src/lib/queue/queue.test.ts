@@ -106,6 +106,16 @@ describe('gerarAtividadeJobPayloadSchema', () => {
     expect(gerarAtividadeJobPayloadSchema.safeParse({ ...baseActivity, segment: 'ensino-medio', gradeYear: 4 }).success).toBe(false)
     expect(gerarAtividadeJobPayloadSchema.safeParse({ ...baseActivity, segment: 'anos-iniciais', gradeYear: 1 }).success).toBe(false)
   })
+
+  it('aceita mais de 10 habilidades BNCC (sem teto artificial)', () => {
+    const codes = ['EF08LP04', 'EF08LP11', 'EF09LP01', 'EF09LP04', 'EF09LP05', 'EF09LP07', 'EF09LP08', 'EF09LP10', 'EF09LP12', 'EF15LP08', 'EF67LP05', 'EF67LP31']
+    expect(codes).toHaveLength(12)
+    expect(gerarAtividadeJobPayloadSchema.safeParse({ ...baseActivity, segment: 'anos-finais', gradeYear: 6, bnccCodes: codes }).success).toBe(true)
+  })
+
+  it('continua exigindo pelo menos uma habilidade BNCC', () => {
+    expect(gerarAtividadeJobPayloadSchema.safeParse({ ...baseActivity, segment: 'anos-finais', gradeYear: 6, bnccCodes: [] }).success).toBe(false)
+  })
 })
 
 describe('nextStatusAfterFailure', () => {

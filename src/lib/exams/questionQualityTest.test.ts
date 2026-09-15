@@ -1,12 +1,35 @@
 import { describe, expect, it } from 'vitest'
-import type { ExamQuestion } from '@/lib/gemini/examSchema'
-import { deterministicQuestionQualityIssues, qualityApprovalBlocks } from './questionQualityTest'
+import type { ExamGenerationResult, ExamQuestion } from '@/lib/gemini/examSchema'
+import { deterministicQuestionQualityIssues, isNotApplicableEvidence, normalizeQualityChecks, qualityApprovalBlocks } from './questionQualityTest'
 
 function question(alternatives: Array<{ letter: string; text: string }>): ExamQuestion {
   return {
     number: 1, source: 'ia', type: 'objetiva', bloomLevel: 'compreender', statement: 'Teste', supportText: null, alternatives, correctLetter: 'A', expectedAnswer: null, gradingCriteria: null,
     bnccCodes: [], bnccStatus: 'nao_mapeado', bnccSummary: null, pedagogicalClassification: { dok: { categoryCode: 'DOK_1', confidence: 1, justification: 'teste', evidence: 'teste' }, soloExpected: { categoryCode: 'UNIESTRUTURAL', confidence: 1, justification: 'teste', evidence: 'teste' } },
     saeb: { applicable: false, source: null, value: null, approximate: false }, needsImage: false, imageQuery: null, image: null, review: null,
+  }
+}
+
+function descriptiveQuestion(): ExamQuestion {
+  const item = question([])
+  item.type = 'descritiva'
+  item.alternatives = null
+  item.correctLetter = null
+  item.expectedAnswer = 'Resposta esperada.'
+  item.gradingCriteria = 'Critérios.'
+  return item
+}
+
+function payloadWithReport(item: ExamQuestion, result: Record<string, unknown>): ExamGenerationResult {
+  return {
+    metadata: {
+      segment: 'ensino-medio', gradeYear: 2, subject: 'Química', questionCount: 1, objectiveCount: 0, discursiveCount: 1, alternativesCount: 5,
+      qualityTest: {
+        version: 'quality-test-v3', checkedAt: new Date().toISOString(), repairedQuestionNumbers: [], warnings: [],
+        reports: [{ phase: 'Auditoria final obrigatória', results: [{ questionNumber: item.number, ...result } as never] }],
+      },
+    },
+    questions: [item],
   }
 }
 
@@ -61,5 +84,49 @@ describe('teste de qualidade determinístico', () => {
       questions: [item],
     })
     expect(blocks).toEqual([])
+  })
+
+  it('reconhece evidência de critério não aplicável mesmo com acentos', () => {
+    expect(isNotApplicableEvidence('Não aplicável, trata-se de análise conceitual, sem cálculos ou dados quantitativos.')).toBe(true)
+    expect(isNotApplicableEvidence('O saldo calculado diverge do gabarito declarado.')).toBe(false)
+  })
+
+  it('normaliza critério reprovado com texto de não aplicável para não_aplicável', () => {
+    const checks = normalizeQualityChecks([
+      { criterion: 'cálculo_ou_dados', status: 'reprovado', evidence: 'Não aplicável: questão conceitual, sem cálculos.' },
+      { criterion: 'linguagem', status: 'aprovado', evidence: 'Clara.' },
+    ])
+    expect(checks[0].status).toBe('não_aplicável')
+    expect(checks[1].status).toBe('aprovado')
+  })
+
+  it('não bloqueia questão discursiva cujo único reprovado é um critério não aplicável', () => {
+    const item = descriptiveQuestion()
+    const blocks = qualityApprovalBlocks(payloadWithReport(item, {
+      approved: false,
+      verdictReason: 'Questão discursiva clara, sem cálculos envolvidos e alinhada ao conteúdo.',
+      checks: [
+        { criterion: 'gabarito', status: 'não_aplicável', evidence: 'Questão discursiva, sem alternativa correta definida.' },
+        { criterion: 'unicidade', status: 'não_aplicável', evidence: 'Questão aberta, sem respostas fixas.' },
+        { criterion: 'cálculo_ou_dados', status: 'reprovado', evidence: 'Não aplicável, trata-se de análise conceitual, sem cálculos ou dados quantitativos.' },
+        { criterion: 'linguagem', status: 'aprovado', evidence: 'Linguagem clara.' },
+        { criterion: 'alinhamento', status: 'aprovado', evidence: 'Alinhada ao conteúdo.' },
+      ],
+      issues: [{ severity: 'bloqueante', reason: 'Teste de qualidade — cálculo_ou_dados: Não aplicável, trata-se de análise conceitual, sem cálculos ou dados quantitativos.' }],
+    }))
+    expect(blocks).toEqual([])
+  })
+
+  it('continua bloqueando questão discursiva com falha real descrita no critério', () => {
+    const item = descriptiveQuestion()
+    const blocks = qualityApprovalBlocks(payloadWithReport(item, {
+      approved: false,
+      verdictReason: 'Enunciado ambíguo.',
+      checks: [
+        { criterion: 'linguagem', status: 'reprovado', evidence: 'O enunciado admite duas respostas incompatíveis.' },
+      ],
+      issues: [],
+    }))
+    expect(blocks).toContain('Questão 1: o relatório de qualidade a reprovou.')
   })
 })

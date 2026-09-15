@@ -4,9 +4,9 @@ import { db } from '@/db/client'
 import { generatedExams } from '@/db/schema'
 import { auth } from '@/auth/auth'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
-import { buildExamPrompt } from '@/lib/gemini/promptBuilder'
-import { examGenerationResultSchema, GEMINI_RESPONSE_SCHEMA, type ExamGenerationResult } from '@/lib/gemini/examSchema'
-import { validateExamResult } from '@/lib/gemini/examValidator'
+import { buildExamPrompt, computeQuestionSplit } from '@/lib/gemini/promptBuilder'
+import { examGenerationResultSchema, GEMINI_RESPONSE_SCHEMA, type ExamGenerationResult, type ExamQuestion } from '@/lib/gemini/examSchema'
+import { validateExamResult, correctSingleQuestion } from '@/lib/gemini/examValidator'
 import { attachImagesToExam, RequiredQuestionImageError } from '@/lib/images/questionImageService'
 import { buildBankExamQuestions } from '@/lib/gemini/enemBankMerge'
 import { authorizeExamAccess } from '@/lib/exams/authorizeExamAccess'
@@ -15,6 +15,9 @@ import { generateValidatedStructuredContent, StructuredGenerationError } from '@
 import { aiFailureResponse } from '@/lib/ai/routeFailure'
 import { isPedagogicalQualityGateEnabled } from '@/lib/pedagogical/generationQualityGate'
 import { validateGeneratedExamPedagogicalFidelity } from '@/lib/pedagogical/generationQualityGateService'
+import { runQuestionQualityTest } from '@/lib/exams/questionQualityTest'
+import { QUALITY_REPORT_VERSION } from '@/lib/exams/qualityReport'
+import { generateStagedQuestion, isStagedGenerationEnabled } from '@/lib/generation'
 
 export async function POST(_req: NextRequest, props: { params: Promise<{ examId: string }> }) {
   const params = await props.params;
@@ -40,48 +43,118 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
     let issues: string[] = []
     let unmappedWarnings: string[] = []
     let alternativesCount = exam.segment === 'anos-iniciais' ? 4 : 5
+    let curriculum: Awaited<ReturnType<typeof getCurriculumForExam>> | null = null
 
     if (aiCount > 0) {
       const qualityGateEnabled = isPedagogicalQualityGateEnabled()
-      const curriculum = await getCurriculumForExam({
+      const activeCurriculum = await getCurriculumForExam({
         segment: exam.segment,
         gradeYear: exam.gradeYear,
         subject: exam.subject,
         bimester: exam.bimester ?? undefined,
       })
+      curriculum = activeCurriculum
 
       const genParams = { questionCount: aiCount }
-      const prompt = await buildExamPrompt(curriculum, genParams)
-      const generated = await generateValidatedStructuredContent<ExamGenerationResult, ExamGenerationResult>({
-        context: 'exams/regenerate',
-        prompt,
-        responseSchema: GEMINI_RESPONSE_SCHEMA,
-        zodSchema: examGenerationResultSchema,
-        validate: async (parsedExam) => {
-          const validation = validateExamResult(parsedExam, curriculum, { ...genParams, enforcePedagogicalCompleteness: qualityGateEnabled })
-          if (validation.issues.length || !qualityGateEnabled) {
-            return { value: validation.corrected, issues: validation.issues, warnings: validation.warnings }
+      const split = computeQuestionSplit(aiCount)
+      const stagedCurriculumContent = activeCurriculum.units
+        .map((unit) => [unit.tituloCapitulo, unit.conteudo, unit.enrichedContent].filter(Boolean).join('\n'))
+        .join('\n\n')
+        .slice(0, 12000)
+      const stagedQuestions: ExamQuestion[] = []
+      let stagedFailure: string | null = isStagedGenerationEnabled() ? null : 'Pipeline fragmentado desligado.'
+
+      if (!stagedFailure) {
+        for (let index = 0; index < aiCount; index++) {
+          const questionType: ExamQuestion['type'] = index < split.objectiveCount ? 'objetiva' : 'descritiva'
+          try {
+            const staged = await generateStagedQuestion({
+              questionNumber: index + 1,
+              subject: exam.subject,
+              gradeYear: exam.gradeYear,
+              segment: exam.segment,
+              curriculumContent: stagedCurriculumContent,
+              contentPlanInstruction: `tipo ${questionType}`,
+              questionType,
+            })
+            const corrected = correctSingleQuestion({ ...staged.question, number: index + 1 }, activeCurriculum, { allowMathReviewFallback: true })
+            if (corrected.issues.length) throw new Error(corrected.issues.join(' '))
+            stagedQuestions.push({ ...corrected.question, number: index + 1 })
+            warnings.push(...staged.issues.map((issue) => `Questão ${index + 1} [${issue.severity}]: ${issue.reason}`))
+            warnings.push(...corrected.warnings)
+          } catch (error) {
+            stagedFailure = `Questão ${index + 1}: ${error instanceof Error ? error.message : 'falha no pipeline fragmentado'}.`
+            break
           }
-          const fidelity = await validateGeneratedExamPedagogicalFidelity(curriculum, validation.corrected)
-          return {
-            value: fidelity.corrected,
-            issues: fidelity.issues,
-            warnings: [...validation.warnings, ...fidelity.warnings],
-          }
-        },
-      })
-      const examWithImages = await attachImagesToExam(generated.value, qualityGateEnabled
-        ? { requireResolvedImages: true, maxAttemptsPerImage: 2 }
-        : undefined)
-      aiQuestions = examWithImages.questions
-      warnings = generated.warnings
-      if (generated.repaired) warnings.push(`Resposta da IA validada após reparo (${generated.attempts} tentativa(s)).`)
-      unmappedWarnings = curriculum.unmappedWarnings
-      alternativesCount = examWithImages.metadata.alternativesCount
+        }
+      }
+
+      if (!stagedFailure) {
+        const examWithImages = await attachImagesToExam({
+          metadata: {
+            segment: exam.segment,
+            gradeYear: exam.gradeYear,
+            subject: exam.subject,
+            bimester: exam.bimester ?? null,
+            questionCount: stagedQuestions.length,
+            objectiveCount: stagedQuestions.filter((question) => question.type === 'objetiva').length,
+            discursiveCount: stagedQuestions.filter((question) => question.type === 'descritiva').length,
+            alternativesCount,
+          },
+          questions: stagedQuestions,
+        }, qualityGateEnabled ? { requireResolvedImages: true, maxAttemptsPerImage: 2, subject: exam.subject } : { subject: exam.subject })
+        aiQuestions = examWithImages.questions
+        alternativesCount = examWithImages.metadata.alternativesCount
+      } else {
+        warnings.push(`${stagedFailure} Regenerando pelo fluxo monolítico.`)
+        const prompt = await buildExamPrompt(activeCurriculum, genParams)
+        const generated = await generateValidatedStructuredContent<ExamGenerationResult, ExamGenerationResult>({
+          context: 'exams/regenerate',
+          prompt,
+          responseSchema: GEMINI_RESPONSE_SCHEMA,
+          zodSchema: examGenerationResultSchema,
+          validate: async (parsedExam) => {
+            const validation = validateExamResult(parsedExam, activeCurriculum, { ...genParams, enforcePedagogicalCompleteness: qualityGateEnabled })
+            if (validation.issues.length || !qualityGateEnabled) {
+              return { value: validation.corrected, issues: validation.issues, warnings: validation.warnings }
+            }
+            const fidelity = await validateGeneratedExamPedagogicalFidelity(activeCurriculum, validation.corrected)
+            return {
+              value: fidelity.corrected,
+              issues: fidelity.issues,
+              warnings: [...validation.warnings, ...fidelity.warnings],
+            }
+          },
+        })
+        const examWithImages = await attachImagesToExam(generated.value, qualityGateEnabled
+          ? { requireResolvedImages: true, maxAttemptsPerImage: 2 }
+          : undefined)
+        aiQuestions = examWithImages.questions
+        warnings.push(...generated.warnings)
+        if (generated.repaired) warnings.push(`Resposta da IA validada após reparo (${generated.attempts} tentativa(s)).`)
+        alternativesCount = examWithImages.metadata.alternativesCount
+      }
+
+      unmappedWarnings = activeCurriculum.unmappedWarnings
     }
 
     const bankQuestions = await buildBankExamQuestions(bankIds, aiQuestions.length + 1)
     const allQuestions = [...aiQuestions, ...bankQuestions]
+
+    // Regenerar apagava o relatório de qualidade e deixava a prova sem como
+    // ser aprovada. Reauditamos o conjunto final e persistimos o relatório
+    // canônico junto do payload.
+    if (!curriculum) {
+      curriculum = await getCurriculumForExam({
+        segment: exam.segment,
+        gradeYear: exam.gradeYear,
+        subject: exam.subject,
+        bimester: exam.bimester ?? undefined,
+      })
+    }
+    const quality = await runQuestionQualityTest(curriculum, allQuestions)
+    warnings = [...warnings, ...quality.warnings]
+
     const examWithBank = {
       metadata: {
         segment: exam.segment,
@@ -92,6 +165,13 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
         objectiveCount: allQuestions.filter((q) => q.type === 'objetiva').length,
         discursiveCount: allQuestions.filter((q) => q.type === 'descritiva').length,
         alternativesCount,
+        qualityTest: {
+          version: QUALITY_REPORT_VERSION,
+          checkedAt: new Date().toISOString(),
+          repairedQuestionNumbers: [],
+          warnings: quality.warnings,
+          reports: [{ phase: 'Auditoria após regeneração', results: quality.report }],
+        },
       },
       questions: allQuestions,
     }

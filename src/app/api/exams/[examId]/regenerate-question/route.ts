@@ -20,6 +20,8 @@ import { persistGeneratedQuestionClassifications } from '@/lib/pedagogical/gener
 import { generateValidatedStructuredContent, StructuredGenerationError } from '@/lib/gemini/structuredRepair'
 import { aiFailureResponse } from '@/lib/ai/routeFailure'
 import { runQuestionQualityTest } from '@/lib/exams/questionQualityTest'
+import { mergeQualityResults } from '@/lib/exams/qualityReport'
+import { generateStagedQuestion, isStagedGenerationEnabled } from '@/lib/generation'
 import {
   REPLACEMENT_STRATEGIES,
   findExcludedTopicsInQuestion,
@@ -39,7 +41,9 @@ const bodySchema = z.object({
 // Mesmas séries de status em que toggle-image permite edição — a troca de
 // questão é uma ação de revisão, então segue a mesma janela (antes da
 // prova ser aprovada pela coordenação).
-const EDITABLE_STATUSES = ['rascunho', 'atribuido', 'em_andamento', 'revisao_concluida']
+// `em_revisao` é o estado formal da revisão; sem ele a tela mostrava o
+// botão "Recusar e gerar nova" mas o servidor recusava com 409.
+const EDITABLE_STATUSES = ['rascunho', 'atribuido', 'em_andamento', 'revisao_concluida', 'em_revisao']
 
 export async function POST(req: NextRequest, props: { params: Promise<{ examId: string }> }) {
   const params = await props.params;
@@ -82,43 +86,74 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
         }
       : undefined
 
-    const prompt = await buildSingleQuestionPrompt(curriculum, {
-      type: original.type,
-      questionNumber: original.number,
-      avoidStatement: original.statement,
-      reviewFeedback: parsed.data.reviewFeedback,
-      replacement,
-    })
+    const warnings: string[] = []
+    let question: ExamQuestion | null = null
 
-    const generated = await generateValidatedStructuredContent<SingleQuestionResult, ExamQuestion>({
-      context: 'exams/regenerate-question',
-      prompt,
-      responseSchema: SINGLE_QUESTION_RESPONSE_SCHEMA,
-      zodSchema: singleQuestionResultSchema,
-      validate: async (parsedQuestion) => {
-        // O número é identidade do item no payload. Não deixamos uma resposta
-        // de substituição com número provisório chegar à revisão cega, que
-        // exige uma numeração positiva e auditável.
-        const generatedQuestion = { ...parsedQuestion.question, number: original.number }
-        const { question, issues, warnings } = correctSingleQuestion(generatedQuestion, curriculum)
-        const quality = await runQuestionQualityTest(curriculum, [question])
-        issues.push(...quality.issues.filter((issue) => issue.severity === 'bloqueante').map((issue) => issue.reason))
-        warnings.push(...quality.warnings)
-        if (original.type === 'objetiva' && question.type !== 'objetiva') issues.push(`Esperado tipo "objetiva", veio "${question.type}".`)
-        if (original.type === 'descritiva' && question.type !== 'descritiva') issues.push(`Esperado tipo "descritiva", veio "${question.type}".`)
-        if (replacement?.excludedTopics.length) {
-          const foundExcludedTopics = findExcludedTopicsInQuestion(question, replacement.excludedTopics)
-          if (foundExcludedTopics.length) {
-            issues.push(`A questão ainda contém o(s) tópico(s) que deveriam ser excluídos: ${foundExcludedTopics.join(', ')}.`)
+    // Pipeline fragmentado (fases 1–2) quando ligado: gera a substituição em
+    // estágios com gates determinísticos. Falha é isolada — cai no fluxo
+    // monolítico logo abaixo, sem derrubar a troca.
+    if (isStagedGenerationEnabled()) {
+      try {
+        const staged = await generateStagedQuestion({
+          questionNumber: original.number,
+          subject: exam.subject,
+          gradeYear: exam.gradeYear,
+          segment: exam.segment,
+          curriculumContent: curriculum.units.map((unit) => `${unit.tituloCapitulo} ${unit.conteudo ?? ''}`).join('\n').slice(0, 6000),
+          contentPlanInstruction: [
+            `substituir a questão ${original.number}; tipo ${original.type}`,
+            parsed.data.reviewFeedback ? `feedback do revisor: ${parsed.data.reviewFeedback}` : null,
+            replacement?.excludedTopics.length ? `excluir tópicos: ${replacement.excludedTopics.join(', ')}` : null,
+          ].filter(Boolean).join('; '),
+          questionType: original.type,
+        })
+        question = { ...staged.question, number: original.number, review: null }
+        warnings.push(`Questão ${original.number}: gerada pelo pipeline fragmentado.`)
+        warnings.push(...staged.issues.map((issue) => `[${issue.severity}] ${issue.reason}`))
+      } catch (error) {
+        warnings.push(`Pipeline fragmentado falhou (${error instanceof Error ? error.message : 'erro'}); usando o fluxo padrão.`)
+      }
+    }
+
+    if (!question) {
+      const prompt = await buildSingleQuestionPrompt(curriculum, {
+        type: original.type,
+        questionNumber: original.number,
+        avoidStatement: original.statement,
+        reviewFeedback: parsed.data.reviewFeedback,
+        replacement,
+      })
+
+      const generated = await generateValidatedStructuredContent<SingleQuestionResult, ExamQuestion>({
+        context: 'exams/regenerate-question',
+        prompt,
+        responseSchema: SINGLE_QUESTION_RESPONSE_SCHEMA,
+        zodSchema: singleQuestionResultSchema,
+        validate: async (parsedQuestion) => {
+          // O número é identidade do item no payload. Não deixamos uma resposta
+          // de substituição com número provisório chegar à revisão cega, que
+          // exige uma numeração positiva e auditável.
+          const generatedQuestion = { ...parsedQuestion.question, number: original.number }
+          const { question: corrected, issues, warnings: questionWarnings } = correctSingleQuestion(generatedQuestion, curriculum)
+          const quality = await runQuestionQualityTest(curriculum, [corrected])
+          issues.push(...quality.issues.filter((issue) => issue.severity === 'bloqueante').map((issue) => issue.reason))
+          questionWarnings.push(...quality.warnings)
+          if (original.type === 'objetiva' && corrected.type !== 'objetiva') issues.push(`Esperado tipo "objetiva", veio "${corrected.type}".`)
+          if (original.type === 'descritiva' && corrected.type !== 'descritiva') issues.push(`Esperado tipo "descritiva", veio "${corrected.type}".`)
+          if (replacement?.excludedTopics.length) {
+            const foundExcludedTopics = findExcludedTopicsInQuestion(corrected, replacement.excludedTopics)
+            if (foundExcludedTopics.length) {
+              issues.push(`A questão ainda contém o(s) tópico(s) que deveriam ser excluídos: ${foundExcludedTopics.join(', ')}.`)
+            }
           }
-        }
-        return { value: question, issues, warnings }
-      },
-    })
+          return { value: corrected, issues, warnings: questionWarnings }
+        },
+      })
 
-    if (generated.repaired) generated.warnings.push(`Resposta da IA validada após reparo (${generated.attempts} tentativa(s)).`)
-
-    let question = { ...generated.value, number: original.number, review: null }
+      if (generated.repaired) warnings.push(`Resposta da IA validada após reparo (${generated.attempts} tentativa(s)).`)
+      warnings.push(...generated.warnings)
+      question = { ...generated.value, number: original.number, review: null }
+    }
 
     if (question.needsImage) {
       let resolved = null
@@ -132,9 +167,22 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
       if (resolved) question = { ...question, image: { ...resolved, approved: false } }
     }
 
+    // Reaudita a questão final: a auditoria dentro do validate serve para o
+    // reparo, mas o relatório persistido precisa refletir o item que ficou na
+    // prova. Sem isso ele ficava "fantasma" (auditava o item antigo) e a
+    // barreira de aprovação bloqueava a prova já corrigida.
+    const replacementQuality = await runQuestionQualityTest(curriculum, [question])
+    const qualityResult = replacementQuality.report.find((item) => item.questionNumber === question.number)
     const newQuestions = [...payload.questions]
     newQuestions[index] = question
-    const newPayload: ExamGenerationResult = { ...payload, questions: newQuestions }
+    const newPayload: ExamGenerationResult = qualityResult
+      ? mergeQualityResults({
+          payload: { ...payload, questions: newQuestions },
+          updates: [{ questionNumber: question.number, result: qualityResult }],
+          warnings: replacementQuality.warnings,
+          phase: 'Auditoria da questão substituída',
+        })
+      : { ...payload, questions: newQuestions }
 
     await db.update(generatedExams).set({ generationPayload: newPayload }).where(eq(generatedExams.id, examId))
 
@@ -152,10 +200,10 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
       pedagogicalClassificationsCreated = pedagogical.created.length
     } catch (classificationError) {
       console.error('[exams/regenerate-question] erro ao persistir classificações pedagógicas:', classificationError)
-      generated.warnings.push('Questão trocada, mas houve erro ao persistir classificações pedagógicas estruturadas.')
+      warnings.push('Questão trocada, mas houve erro ao persistir classificações pedagógicas estruturadas.')
     }
 
-    return NextResponse.json({ ok: true, question, warnings: generated.warnings, pedagogicalClassificationsCreated })
+    return NextResponse.json({ ok: true, question, warnings, pedagogicalClassificationsCreated })
   } catch (err) {
     if (err instanceof StructuredGenerationError) {
       return aiFailureResponse(err, 'A IA não retornou uma questão válida após as tentativas de reparo.')

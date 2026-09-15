@@ -5,7 +5,7 @@ import { scoringMethodForQuestions } from '@/lib/scoring/scoringPolicy'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
 import { TabResolutionError } from '@/lib/sheets/tabResolver'
 import { SheetNotConfiguredError } from '@/config/gradeSheets'
-import { buildExamPrompt, buildSingleQuestionPrompt } from '@/lib/gemini/promptBuilder'
+import { buildExamPrompt, buildSingleQuestionPrompt, computeQuestionSplit } from '@/lib/gemini/promptBuilder'
 import { examGenerationResultSchema, GEMINI_RESPONSE_SCHEMA, singleQuestionResultSchema, SINGLE_QUESTION_RESPONSE_SCHEMA, type ExamGenerationResult, type ExamQuestion, type SingleQuestionResult } from '@/lib/gemini/examSchema'
 import { correctSingleQuestion, validateExamResult } from '@/lib/gemini/examValidator'
 import { attachImagesToExam } from '@/lib/images/questionImageService'
@@ -18,6 +18,8 @@ import { buildPlannedQuestionSlots, shouldRequireVisualAid, validateCurriculumPl
 import { assembleBestExamCandidates, compactQuestionContext, validateExamAssembly, type QuestionCandidate } from '@/lib/exams/examQualityAssembly'
 import { auditFinalExamQuality } from '@/lib/exams/examQualityAudit'
 import { runQuestionQualityTest } from '@/lib/exams/questionQualityTest'
+import { QUALITY_REPORT_VERSION } from '@/lib/exams/qualityReport'
+import { generateStagedQuestion, isStagedGenerationEnabled } from '@/lib/generation'
 import type { CurriculumPlanItem } from '@/types/exam'
 
 // Core da geração de prova, compartilhado entre a rota síncrona
@@ -165,6 +167,42 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
         if (!unit) throw new ExamGenerationInputError(`Capítulo ${slot.unitRowIndex} não foi encontrado no planejamento.`)
         const unitCurriculum = { ...curriculum, units: [unit] }
         const visualAid = slot.visualAid === 'auto' && shouldRequireVisualAid(unit) ? 'obrigatorio' : slot.visualAid
+
+        // Pipeline fragmentado (fases 1–2): quando ligado, gera a questão em
+        // estágios com gates determinísticos entre eles. A falha é isolada
+        // por questão — cai no fluxo monolítico logo abaixo, sem derrubar a
+        // prova inteira.
+        if (isStagedGenerationEnabled()) {
+          try {
+            const staged = await generateStagedQuestion({
+              questionNumber: slot.number,
+              subject: params.subject,
+              gradeYear: params.gradeYear,
+              segment: params.segment,
+              curriculumContent: [unit.tituloCapitulo, unit.conteudo, unit.enrichedContent].filter(Boolean).join('\n'),
+              contentPlanInstruction: `capítulo "${unit.tituloCapitulo}"; tipo ${slot.type}; recurso visual ${visualAid}`,
+              questionType: slot.type,
+            })
+            let question: ExamQuestion = { ...staged.question, number: slot.number, curriculumUnitRowIndex: slot.unitRowIndex }
+            // Correção determinística (integridade de texto, BNCC, SAEB,
+            // alternativas e ficha técnica canônica) antes de aceitar a
+            // questão fragmentada. Problemas aqui acionam o fallback padrão.
+            const corrected = correctSingleQuestion(question, unitCurriculum, { allowMathReviewFallback: true })
+            if (corrected.issues.length) throw new Error(corrected.issues.join(' '))
+            question = { ...corrected.question, curriculumUnitRowIndex: slot.unitRowIndex }
+            if (visualAid === 'obrigatorio' && (!question.needsImage || !question.imageQuery?.trim())) {
+              const fallbackQuery = `${unit.tituloCapitulo} ${unit.conteudo ?? ''}`.replace(/\s+/g, ' ').trim().slice(0, 180)
+              question = { ...question, needsImage: true, imageQuery: fallbackQuery }
+            }
+            warnings.push(`Questão ${slot.number}: gerada pelo pipeline fragmentado.`)
+            warnings.push(...staged.issues.map((issue) => `Questão ${slot.number} [${issue.severity}]: ${issue.reason}`))
+            warnings.push(...corrected.warnings)
+            return { slotNumber: slot.number, candidateNumber, question }
+          } catch (error) {
+            warnings.push(`Questão ${slot.number}: pipeline fragmentado falhou (${error instanceof Error ? error.message : 'erro'}). Usando o fluxo padrão.`)
+          }
+        }
+
         const prompt = await buildSingleQuestionPrompt(unitCurriculum, {
           type: slot.type,
           questionNumber: slot.number,
@@ -261,6 +299,46 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
       }
       alternativesCount = params.segment === 'anos-iniciais' ? 4 : 5
     } else {
+      // Sem matriz: gera cada questão pelo pipeline fragmentado (padrão). Se
+      // alguma questão falhar de forma definitiva, cai no fluxo monolítico da
+      // prova inteira para não perder a geração.
+      const split = computeQuestionSplit(params.questionCount)
+      const stagedCurriculumContent = curriculum.units
+        .map((unit) => [unit.tituloCapitulo, unit.conteudo, unit.enrichedContent].filter(Boolean).join('\n'))
+        .join('\n\n')
+        .slice(0, 12000)
+      const stagedQuestions: ExamQuestion[] = []
+      let stagedFailure: string | null = null
+
+      for (let index = 0; index < params.questionCount; index++) {
+        const questionType: ExamQuestion['type'] = index < split.objectiveCount ? 'objetiva' : 'descritiva'
+        try {
+          const staged = await generateStagedQuestion({
+            questionNumber: index + 1,
+            subject: params.subject,
+            gradeYear: params.gradeYear,
+            segment: params.segment,
+            curriculumContent: stagedCurriculumContent,
+            contentPlanInstruction: `${examKind === 'atividade' ? 'atividade' : 'prova'}; tipo ${questionType}`,
+            questionType,
+          })
+          const corrected = correctSingleQuestion({ ...staged.question, number: index + 1 }, curriculum, { allowMathReviewFallback: true })
+          if (corrected.issues.length) throw new Error(corrected.issues.join(' '))
+          stagedQuestions.push({ ...corrected.question, number: index + 1 })
+          warnings.push(...staged.issues.map((issue) => `Questão ${index + 1} [${issue.severity}]: ${issue.reason}`))
+          warnings.push(...corrected.warnings)
+        } catch (error) {
+          stagedFailure = `Questão ${index + 1}: ${error instanceof Error ? error.message : 'falha no pipeline fragmentado'}.`
+          break
+        }
+      }
+
+      if (!stagedFailure) {
+        aiQuestions = stagedQuestions
+        warnings.push(`${params.questionCount} questão(ões) geradas pelo pipeline fragmentado.`)
+        alternativesCount = params.segment === 'anos-iniciais' ? 4 : 5
+      } else {
+      warnings.push(`${stagedFailure} Regenerando a prova inteira pelo fluxo monolítico.`)
       const prompt = await buildExamPrompt(curriculum, { questionCount: params.questionCount, mode: examKind === 'atividade' ? 'atividade' : 'prova', selectedBnccCodes })
       const generated = await generateValidatedStructuredContent<ExamGenerationResult, ExamGenerationResult>({
       context: 'exams/generate',
@@ -294,9 +372,10 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
       },
       })
       aiQuestions = generated.value.questions
-      warnings = generated.warnings
+      warnings.push(...generated.warnings)
       if (generated.repaired) warnings.push(`Resposta da IA validada após reparo (${generated.attempts} tentativa(s)).`)
       alternativesCount = generated.value.metadata.alternativesCount
+      }
     }
     // Se uma questão declara imagem (por análise automática ou regra
     // obrigatória da matriz), ela não pode seguir sem o recurso visual.
@@ -318,6 +397,19 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
   }
 
   const allQuestions = [...aiQuestions, ...bankQuestions]
+  // A revisão humana é para adequação didática. Auditamos o conjunto FINAL
+  // (inclusive itens do banco), preservamos o histórico de fases e salvamos a
+  // prova mesmo com pendências, para o professor conferi-las. A barreira
+  // dura fica na aprovação (qualityApprovalBlocks).
+  const finalQualityTest = await runQuestionQualityTest(curriculum, allQuestions)
+  qualityTestReports.push({ phase: 'Auditoria final', results: finalQualityTest.report })
+  qualityTestWarnings = [...qualityTestWarnings, ...finalQualityTest.warnings]
+  warnings.push(...finalQualityTest.warnings)
+  const finalQualityBlocks = finalQualityTest.issues.filter((issue) => issue.severity === 'bloqueante')
+  if (finalQualityBlocks.length) {
+    const affected = [...new Set(finalQualityBlocks.flatMap((issue) => issue.questionNumbers))]
+    warnings.push(`Auditoria final apontou pendências nas questões ${affected.join(', ')}. A prova foi salva para revisão humana; confira o relatório de qualidade antes de aprovar.`)
+  }
   const examWithBank = {
       metadata: {
       segment: params.segment,
@@ -328,7 +420,7 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
       objectiveCount: allQuestions.filter((q) => q.type === 'objetiva').length,
       discursiveCount: allQuestions.filter((q) => q.type === 'descritiva').length,
         alternativesCount,
-        qualityTest: { version: 'quality-test-v1', checkedAt: new Date().toISOString(), repairedQuestionNumbers: qualityTestRepairedNumbers, warnings: qualityTestWarnings, reports: qualityTestReports },
+        qualityTest: { version: QUALITY_REPORT_VERSION, checkedAt: new Date().toISOString(), repairedQuestionNumbers: qualityTestRepairedNumbers, warnings: qualityTestWarnings, reports: qualityTestReports },
     },
     questions: allQuestions,
   }
