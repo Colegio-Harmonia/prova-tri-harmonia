@@ -16,6 +16,7 @@ x-app-common: &app-common
     NODE_ENV: production
     DATABASE_URL: postgresql://prova_tri:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD em .env.local}@postgres:5432/prova_tri
     OMR_PYTHON_BIN: /opt/omr/bin/python
+    SCHEMDRAW_URL: http://schemdraw:8000
     PDFTOPPM_PATH: /usr/bin/pdftoppm
   depends_on:
     postgres:
@@ -79,6 +80,18 @@ services:
       replicas: 2
     mem_limit: 768m
     cpus: 1.5
+
+  schemdraw:
+    build:
+      context: ./services/schemdraw
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    read_only: true
+    tmpfs: ['/tmp']
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 192m
+    cpus: 0.5
 
 secrets:
   env_local:

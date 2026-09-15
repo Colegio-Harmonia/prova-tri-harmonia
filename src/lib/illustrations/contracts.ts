@@ -17,7 +17,7 @@ export type IllustrationProvenance = {
 }
 
 export type RenderedIllustration = {
-  mimeType: 'image/svg+xml'
+  mimeType: 'image/svg+xml' | 'image/png'
   content: Buffer
   provenance: IllustrationProvenance
 }
@@ -25,6 +25,6 @@ export type RenderedIllustration = {
 export type IllustrationGenerator<TInput = unknown> = {
   id: string
   title: string
-  subject: 'matematica'
-  render: (input: TInput) => RenderedIllustration
+  subject: 'matematica' | 'geografia' | 'historia' | 'biologia' | 'quimica' | 'fisica'
+  render: (input: TInput) => RenderedIllustration | Promise<RenderedIllustration>
 }

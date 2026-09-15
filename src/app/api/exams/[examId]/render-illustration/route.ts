@@ -12,7 +12,7 @@ import { getIllustrationGenerator } from '@/lib/illustrations/registry'
 
 const bodySchema = z.object({
   questionNumber: z.number().int().positive(),
-  generator: z.literal('math.function.graph'),
+  generator: z.string().min(1).max(80),
   parameters: z.unknown(),
 })
 
@@ -35,19 +35,18 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
   if (!EDITABLE_STATUSES.includes(exam.status)) {
     return NextResponse.json({ error: 'Só é possível adicionar ilustrações antes da prova ser aprovada.' }, { status: 409 })
   }
-  if (!/^matemática$/i.test(exam.subject.trim()) && !/^matematica$/i.test(exam.subject.trim())) {
-    return NextResponse.json({ error: 'O gráfico de função só está disponível para provas de Matemática.' }, { status: 422 })
-  }
 
   const payload = exam.generationPayload as ExamGenerationResult
   const question = payload.questions.find((item) => item.number === parsed.data.questionNumber)
   if (!question) return NextResponse.json({ error: 'Questão não encontrada.' }, { status: 404 })
   const generator = getIllustrationGenerator(parsed.data.generator)
   if (!generator) return NextResponse.json({ error: 'Gerador de ilustração indisponível.' }, { status: 400 })
+  const normalizedSubject = exam.subject.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  if (generator.subject !== normalizedSubject) return NextResponse.json({ error: 'Este gerador não é compatível com a disciplina da prova.' }, { status: 422 })
 
   try {
-    const rendered = generator.render(parsed.data.parameters)
-    const png = await sharp(rendered.content, { density: 180 }).png().toBuffer()
+    const rendered = await generator.render(parsed.data.parameters)
+    const png = rendered.mimeType === 'image/png' ? rendered.content : await sharp(rendered.content, { density: 180 }).png().toBuffer()
     const { driveFileId, previewUrl } = await uploadToStaging(png, 'image/png', `grafico-funcao-q${question.number}-${Date.now()}.png`)
 
     question.needsImage = true
