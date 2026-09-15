@@ -163,6 +163,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   const [actionError, setActionError] = useState<Record<number, string>>({})
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [expandedImageQuestion, setExpandedImageQuestion] = useState<number | null>(null)
+  const [restoringImage, setRestoringImage] = useState<string | null>(null)
   const [reviewBlocker, setReviewBlocker] = useState<{ items: string[]; firstQuestion: number | null } | null>(null)
   const [qualityReportOpen, setQualityReportOpen] = useState(false)
 
@@ -300,6 +301,18 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
     } catch {
       setError('Falha de rede ao remover imagem.')
     }
+  }
+
+  async function handleRestoreImage(questionNumber: number, driveFileId: string) {
+    setRestoringImage(driveFileId)
+    setActionError((previous) => ({ ...previous, [questionNumber]: '' }))
+    try {
+      const res = await fetch(`/api/exams/${examId}/restore-image`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionNumber, driveFileId }) })
+      const data = await res.json()
+      if (!res.ok) { setActionError((previous) => ({ ...previous, [questionNumber]: data.error ?? 'Não foi possível restaurar a versão.' })); return }
+      patchQuestion(questionNumber, { image: data.image, imageHistory: data.imageHistory, imageAuditLog: data.imageAuditLog, needsImage: true })
+      setActionMessage(`A versão anterior da imagem da questão ${questionNumber} foi restaurada e aguarda nova aprovação.`)
+    } catch { setActionError((previous) => ({ ...previous, [questionNumber]: 'Falha de rede ao restaurar a versão.' })) } finally { setRestoringImage(null) }
   }
 
   async function handleReviewNote(
@@ -758,6 +771,15 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
                     <button onClick={() => handleRemoveImage(q.number)} disabled={!reviewEditable} className="rounded border border-red-300 bg-surface px-2 py-1 font-medium text-red-700 disabled:opacity-60">Remover imagem</button>
                     {isMathExam && <button onClick={() => { setGraphEditorQuestion(q.number); setGraphExpression('x^2'); setGraphDomain('-5, 5') }} disabled={!reviewEditable} className="rounded border border-border bg-surface px-2 py-1 font-medium disabled:opacity-60">Substituir por gráfico de função</button>}
                   </div>
+                  <details className="mt-2 rounded border border-border bg-surface p-2">
+                    <summary className="cursor-pointer font-medium">Histórico e auditoria ({q.imageHistory?.length ?? 0} versões anteriores)</summary>
+                    <div className="mt-2 space-y-2 text-xs text-neutral-600">
+                      <p>Versão atual: {q.image.provenance ? `${q.image.provenance.generator} · v${q.image.provenance.generatorVersion}` : IMAGE_SOURCE_LABELS[q.image.source] ?? q.image.source}.</p>
+                      {(q.imageHistory ?? []).length === 0 && <p>Nenhuma versão anterior registrada.</p>}
+                      {[...(q.imageHistory ?? [])].reverse().map((version, index) => <div key={`${version.driveFileId}-${version.replacedAt}-${index}`} className="flex flex-wrap items-center gap-2 border-t border-border pt-2"><span>Versão anterior · {IMAGE_SOURCE_LABELS[version.source] ?? version.source} · {new Date(version.replacedAt).toLocaleString('pt-BR')}</span>{version.changedBy && <span>por {version.changedBy}</span>}<button onClick={() => handleRestoreImage(q.number, version.driveFileId)} disabled={!reviewEditable || restoringImage === version.driveFileId} className="rounded border border-border px-2 py-1 font-medium disabled:opacity-60">{restoringImage === version.driveFileId ? 'Restaurando…' : 'Restaurar esta versão'}</button></div>)}
+                      {(q.imageAuditLog ?? []).length > 0 && <div className="border-t border-border pt-2"><p className="font-medium">Ações</p>{[...(q.imageAuditLog ?? [])].reverse().slice(0, 8).map((entry, index) => <p key={`${entry.at}-${index}`}>{entry.action} · {new Date(entry.at).toLocaleString('pt-BR')} · {entry.actor}</p>)}</div>}
+                    </div>
+                  </details>
                 </div>
                 </div>
                 {expandedImageQuestion === q.number && (

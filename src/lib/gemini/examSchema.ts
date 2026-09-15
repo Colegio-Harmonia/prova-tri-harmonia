@@ -105,6 +105,11 @@ export const examQuestionSchema = z.object({
     driveFileId: z.string(), previewUrl: z.string(), approved: z.boolean(), sourceUrl: z.string().nullable().optional(),
     provenance: z.object({ mode: z.enum(['deterministic', 'ai']), generator: z.string(), generatorVersion: z.string() }).optional(),
     replacedAt: z.string(),
+    changedBy: z.string().email().optional(),
+  })).optional(),
+  imageAuditLog: z.array(z.object({
+    action: z.enum(['generated', 'replaced', 'approved', 'unapproved', 'removed', 'restored']),
+    at: z.string(), actor: z.string().email(), driveFileId: z.string().nullable(),
   })).optional(),
   // Anotação do professor revisor — nunca preenchida pela IA, só pela tela
   // /revisar. adequacy e difficulty são escalas independentes (uma questão

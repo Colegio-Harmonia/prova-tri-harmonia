@@ -47,11 +47,14 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     // recurso visual e deixa de gerar pendência de aprovação de imagem.
     // O arquivo no Drive não é apagado pois pode ser um item reutilizado;
     // só o vínculo desta questão é removido.
+    question.imageHistory = [...(question.imageHistory ?? []), { ...question.image, replacedAt: new Date().toISOString(), changedBy: session.user.email }]
+    question.imageAuditLog = [...(question.imageAuditLog ?? []), { action: 'removed', at: new Date().toISOString(), actor: session.user.email, driveFileId: question.image.driveFileId }]
     question.image = null
     question.needsImage = false
     question.imageQuery = null
   } else {
     question.image.approved = parsed.data.approved!
+    question.imageAuditLog = [...(question.imageAuditLog ?? []), { action: parsed.data.approved ? 'approved' : 'unapproved', at: new Date().toISOString(), actor: session.user.email, driveFileId: question.image.driveFileId }]
   }
 
   await db.update(generatedExams).set({ generationPayload: payload }).where(eq(generatedExams.id, examId))

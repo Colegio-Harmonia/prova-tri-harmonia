@@ -50,7 +50,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     const { driveFileId, previewUrl } = await uploadToStaging(png, 'image/png', `grafico-funcao-q${question.number}-${Date.now()}.png`)
 
     if (question.image) {
-      question.imageHistory = [...(question.imageHistory ?? []), { ...question.image, replacedAt: new Date().toISOString() }]
+      question.imageHistory = [...(question.imageHistory ?? []), { ...question.image, replacedAt: new Date().toISOString(), changedBy: session.user.email }]
     }
     question.needsImage = true
     question.image = {
@@ -60,6 +60,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
       approved: false,
       provenance: rendered.provenance,
     }
+    question.imageAuditLog = [...(question.imageAuditLog ?? []), { action: question.imageHistory?.length ? 'replaced' : 'generated', at: new Date().toISOString(), actor: session.user.email, driveFileId }]
     await db.update(generatedExams).set({ generationPayload: payload }).where(eq(generatedExams.id, examId))
     return NextResponse.json({ ok: true, image: question.image })
   } catch (error) {

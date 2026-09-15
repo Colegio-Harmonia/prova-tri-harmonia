@@ -65,7 +65,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     }
 
     if (question.image) {
-      question.imageHistory = [...(question.imageHistory ?? []), { ...question.image, replacedAt: new Date().toISOString() }]
+      question.imageHistory = [...(question.imageHistory ?? []), { ...question.image, replacedAt: new Date().toISOString(), changedBy: session.user.email }]
     }
     question.needsImage = true
     question.imageQuery = query
@@ -74,6 +74,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     // tela de revisão antes de ir pro documento final (nunca aprovado
     // automaticamente só por ter sido encontrada/gerada).
     question.image = { ...resolved, approved: false }
+    question.imageAuditLog = [...(question.imageAuditLog ?? []), { action: question.imageHistory?.length ? 'replaced' : 'generated', at: new Date().toISOString(), actor: session.user.email, driveFileId: resolved.driveFileId }]
 
     await db.update(generatedExams).set({ generationPayload: payload }).where(eq(generatedExams.id, examId))
 
