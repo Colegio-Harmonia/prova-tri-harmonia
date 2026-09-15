@@ -179,7 +179,12 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
           zodSchema: singleQuestionResultSchema,
           validate: async (parsedQuestion) => {
             const candidate = { ...parsedQuestion.question, number: slot.number, curriculumUnitRowIndex: slot.unitRowIndex }
-            let { question, issues, warnings: questionWarnings } = correctSingleQuestion(candidate, unitCurriculum)
+            // Um slot da matriz é uma geração independente. Falhas de
+            // metadado matemático/LaTex são expostas na revisão, em vez de
+            // derrubar todo o lote depois de duas tentativas. Regras que
+            // alteram a estrutura da prova (tipo, alternativas, gabarito)
+            // continuam bloqueantes e ainda acionam reparo da IA.
+            let { question, issues, warnings: questionWarnings } = correctSingleQuestion(candidate, unitCurriculum, { allowMathReviewFallback: true })
             if (question.type !== slot.type) issues.push(`Questão ${slot.number}: esperado tipo "${slot.type}", veio "${question.type}".`)
             if (visualAid === 'obrigatorio' && (!question.needsImage || !question.imageQuery?.trim())) {
               // A exigência da matriz é uma regra do sistema. Se o modelo

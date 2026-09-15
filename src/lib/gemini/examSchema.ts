@@ -26,7 +26,11 @@ const pedagogicalClassificationSchema = z.object({
 // ancorados no mesmo modelo verificável.
 export const solutionBlueprintSchema = z.object({
   domain: z.enum(['linear_system', 'rectangular_prism_volume', 'average_speed', 'percentage', 'ratio_proportion', 'other']),
-  variables: z.array(z.object({ symbol: z.string().min(1).max(12), meaning: z.string().min(1) })).default([]),
+  // A ficha é interna. O modelo ocasionalmente devolve um rótulo mais
+  // descritivo aqui; isso não pode invalidar toda uma prova por limite de
+  // apresentação, pois os campos que determinam o cálculo são equations e
+  // values, validados separadamente.
+  variables: z.array(z.object({ symbol: z.string().min(1).max(80), meaning: z.string().min(1) })).default([]),
   equations: z.array(z.string().min(1)).default([]),
   values: z.record(z.string(), z.number()).default({}),
   calculationSteps: z.array(z.string().min(1)).min(1),

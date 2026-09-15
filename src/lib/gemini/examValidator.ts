@@ -56,6 +56,7 @@ function supportTextDefinesAssessedTerm(supportText: string, statement: string):
 export function correctSingleQuestion(
   q: ExamQuestion,
   curriculum: Pick<CurriculumSelection, 'segment' | 'gradeYear' | 'subject'>,
+  options: { allowMathReviewFallback?: boolean } = {},
 ): { question: ExamQuestion; issues: string[]; warnings: string[] } {
   const issues: string[] = []
   const warnings: string[] = []
@@ -66,7 +67,12 @@ export function correctSingleQuestion(
   // Matemática é gerada a partir de uma ficha técnica interna: sem modelo e
   // solução verificáveis, enunciado/gabarito/imagem não podem ser confiáveis.
   if (isMathSubject(curriculum.subject)) {
-    issues.push(...validateSolutionBlueprint(q))
+    const blueprintIssues = validateSolutionBlueprint(q)
+    if (options.allowMathReviewFallback && blueprintIssues.length) {
+      warnings.push(...blueprintIssues.map((issue) => `${issue} A questão seguirá para revisão humana; confira cálculo e gabarito antes de aprovar.`))
+    } else {
+      issues.push(...blueprintIssues)
+    }
     if (/\bpor\s+(?:a|o)\s+(?:dist[âa]ncia|quantidade|valor|n[uú]mero)\b/i.test(`${q.statement}\n${q.supportText ?? ''}`)) {
       issues.push(`Questão ${q.number}: variável matemática ausente no enunciado (ex.: "por a distância"); gere novamente com o símbolo delimitado, como $x$ ou $y$.`)
     }
@@ -124,7 +130,11 @@ export function correctSingleQuestion(
     needsImage: correctedNeedsImage,
     imageQuery: correctedImageQuery,
   })
-  issues.push(...textIntegrity.issues)
+  if (options.allowMathReviewFallback && textIntegrity.issues.length) {
+    warnings.push(...textIntegrity.issues.map((issue) => `${issue} A questão seguirá para revisão humana; confira a notação antes de aprovar.`))
+  } else {
+    issues.push(...textIntegrity.issues)
+  }
   if (textIntegrity.normalized) {
     warnings.push(`Questão ${q.number}: comandos matemáticos sem delimitador foram normalizados para renderização segura.`)
   }
