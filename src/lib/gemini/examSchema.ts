@@ -90,6 +90,13 @@ export const examQuestionSchema = z.object({
       // Só preenchido pra source:'importado' — link original colado pelo
       // professor, mantido pra referência/crédito da fonte.
       sourceUrl: z.string().nullable().optional(),
+      // Registro do gerador determinístico usado. É preservado junto da
+      // questão para que a origem técnica do visual seja auditável.
+      provenance: z.object({
+        mode: z.enum(['deterministic', 'ai']),
+        generator: z.string(),
+        generatorVersion: z.string(),
+      }).optional(),
     })
     .nullable()
     .optional(),

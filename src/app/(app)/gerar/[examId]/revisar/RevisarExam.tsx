@@ -144,6 +144,10 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   const [regeneratingQuestion, setRegeneratingQuestion] = useState<number | null>(null)
   const [savingReview, setSavingReview] = useState<number | null>(null)
   const [requestingImage, setRequestingImage] = useState<number | null>(null)
+  const [renderingIllustration, setRenderingIllustration] = useState<number | null>(null)
+  const [graphEditorQuestion, setGraphEditorQuestion] = useState<number | null>(null)
+  const [graphExpression, setGraphExpression] = useState('x^2')
+  const [graphDomain, setGraphDomain] = useState('-5, 5')
   const [imageConfirmation, setImageConfirmation] = useState<number | null>(null)
   const [actionError, setActionError] = useState<Record<number, string>>({})
   const [actionMessage, setActionMessage] = useState<string | null>(null)
@@ -383,6 +387,38 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
     }
   }
 
+  async function handleRenderFunctionGraph(questionNumber: number) {
+    const domain = graphDomain.split(',').map((value) => Number(value.trim()))
+    if (domain.length !== 2 || domain.some((value) => !Number.isFinite(value)) || domain[0] >= domain[1]) {
+      setActionError((previous) => ({ ...previous, [questionNumber]: 'Informe o domínio como dois números, por exemplo: -5, 5.' }))
+      return
+    }
+    setRenderingIllustration(questionNumber)
+    setActionError((previous) => ({ ...previous, [questionNumber]: '' }))
+    try {
+      const res = await fetch(`/api/exams/${examId}/render-illustration`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          questionNumber,
+          generator: 'math.function.graph',
+          parameters: { expression: graphExpression, domain },
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setActionError((previous) => ({ ...previous, [questionNumber]: data.error ?? 'Não foi possível gerar o gráfico.' }))
+        return
+      }
+      patchQuestion(questionNumber, { needsImage: true, image: data.image })
+      setGraphEditorQuestion(null)
+    } catch {
+      setActionError((previous) => ({ ...previous, [questionNumber]: 'Falha de rede ao gerar o gráfico.' }))
+    } finally {
+      setRenderingIllustration(null)
+    }
+  }
+
 
   async function handleTransition(action: Action, assignedTo?: number, printWindow?: Window | null) {
     if ((action === 'concluir_revisao' || action === 'aprovar_prova') && exam) {
@@ -444,6 +480,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   if (!exam) return null
 
   const payload = exam.generationPayload
+  const isMathExam = /^matemática$/i.test(exam.subject.trim()) || /^matematica$/i.test(exam.subject.trim())
   const reviewEditable =
     exam.status === 'rascunho' || exam.status === 'atribuido' || exam.status === 'em_andamento' || exam.status === 'revisao_concluida' || exam.status === 'em_revisao'
   const isAssignee = exam.assignedTo != null && exam.assignedTo === currentUserId
@@ -694,6 +731,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
                       </>
                     )}
                     <button onClick={() => handleRemoveImage(q.number)} disabled={!reviewEditable} className="rounded border border-red-300 bg-surface px-2 py-1 font-medium text-red-700 disabled:opacity-60">Remover imagem</button>
+                    {isMathExam && <button onClick={() => { setGraphEditorQuestion(q.number); setGraphExpression('x^2'); setGraphDomain('-5, 5') }} disabled={!reviewEditable} className="rounded border border-border bg-surface px-2 py-1 font-medium disabled:opacity-60">Substituir por gráfico de função</button>}
                   </div>
                 </div>
                 </div>
@@ -737,10 +775,12 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
                       <button onClick={() => handleAcceptQuestion(q.number)} disabled={savingReview === q.number} className="rounded bg-harmonia-green px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">{savingReview === q.number ? 'Salvando…' : 'Aceitar questão'}</button>
                       {q.source !== 'enem_bank' && <button onClick={() => handleRegenerateQuestion(q.number)} disabled={regeneratingQuestion === q.number} className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">{regeneratingQuestion === q.number ? 'Gerando…' : 'Recusar e gerar nova'}</button>}
                       {!q.image && <button onClick={() => handleRequestImage(q.number)} disabled={requestingImage === q.number} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary disabled:opacity-60">{requestingImage === q.number ? 'Gerando imagem…' : 'Gerar imagem'}</button>}
+                      {isMathExam && <button onClick={() => { setGraphEditorQuestion(q.number); setGraphExpression('x^2'); setGraphDomain('-5, 5') }} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary">Gerar gráfico de função</button>}
                     </>
                   )}
                 </div>
                 {imageConfirmation === q.number && <div className="flex flex-wrap items-center gap-2 rounded bg-amber-50 p-2 text-xs text-amber-900"><span>Esta questão não precisa de imagem. Gerar mesmo assim?</span><button onClick={() => handleRequestImage(q.number, true)} className="rounded bg-amber-700 px-2 py-1 font-medium text-white">Gerar mesmo assim</button><button onClick={() => setImageConfirmation(null)} className="underline">Cancelar</button></div>}
+                {graphEditorQuestion === q.number && <div className="space-y-2 rounded border border-harmonia-green/30 bg-surface p-3 text-xs"><p className="font-medium">Gráfico determinístico (sem IA)</p><label className="block">Função, usando apenas x e operações básicas (ex.: <code>x^2 - 4*x + 3</code>)<input value={graphExpression} onChange={(event) => setGraphExpression(event.target.value)} className="mt-1 block w-full rounded border border-border px-2 py-1.5 text-sm" /></label><label className="block">Domínio, mínimo e máximo (ex.: <code>-5, 5</code>)<input value={graphDomain} onChange={(event) => setGraphDomain(event.target.value)} className="mt-1 block w-full rounded border border-border px-2 py-1.5 text-sm" /></label><div className="flex gap-2"><button onClick={() => handleRenderFunctionGraph(q.number)} disabled={renderingIllustration === q.number} className="rounded bg-harmonia-green px-2 py-1.5 font-medium text-white disabled:opacity-60">{renderingIllustration === q.number ? 'Renderizando…' : 'Gerar gráfico'}</button><button onClick={() => setGraphEditorQuestion(null)} className="rounded border border-border px-2 py-1.5">Cancelar</button></div></div>}
 
                 {actionError[q.number] && <p className="text-xs text-red-600">{actionError[q.number]}</p>}
               </div>

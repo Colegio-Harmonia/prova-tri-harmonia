@@ -21,3 +21,10 @@ export type RenderedIllustration = {
   content: Buffer
   provenance: IllustrationProvenance
 }
+
+export type IllustrationGenerator<TInput = unknown> = {
+  id: string
+  title: string
+  subject: 'matematica'
+  render: (input: TInput) => RenderedIllustration
+}

@@ -1,4 +1,4 @@
-import { evaluate } from 'mathjs'
+import { evaluate, parse } from 'mathjs'
 import { scaleLinear } from 'd3-scale'
 import { line } from 'd3-shape'
 import { functionGraphSchema, type FunctionGraphSpec, type RenderedIllustration } from './contracts'
@@ -7,12 +7,41 @@ const WIDTH = 1200
 const HEIGHT = 700
 const MARGIN = 72
 const SAMPLE_COUNT = 480
+const ALLOWED_FUNCTIONS = new Set(['sin', 'cos', 'tan', 'sqrt', 'abs', 'log', 'exp'])
+
+/**
+ * Expressions come from a teacher-facing request, but are evaluated on the
+ * server. mathjs is intentionally flexible, so reject every node outside the
+ * small mathematical language we support before calling evaluate().
+ */
+function assertSafeExpression(expression: string): void {
+  const tree = parse(expression)
+  tree.traverse((node) => {
+    const inspected = node as unknown as { type: string; name?: string; op?: string; fn?: { name?: string } }
+    if (inspected.type === 'ConstantNode' || inspected.type === 'ParenthesisNode') return
+    if (inspected.type === 'SymbolNode') {
+      if (inspected.name !== 'x') throw new Error(`Símbolo não permitido: ${inspected.name}. Use apenas a variável x.`)
+      return
+    }
+    if (inspected.type === 'OperatorNode') {
+      if (!inspected.op || !['+', '-', '*', '/', '^'].includes(inspected.op)) throw new Error('Operador não permitido na expressão.')
+      return
+    }
+    if (inspected.type === 'FunctionNode') {
+      const functionName = inspected.fn?.name
+      if (!functionName || !ALLOWED_FUNCTIONS.has(functionName)) throw new Error(`Função não permitida: ${functionName ?? 'desconhecida'}.`)
+      return
+    }
+    throw new Error('A expressão contém uma construção não permitida.')
+  })
+}
 
 function escapeXml(value: string): string {
   return value.replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&apos;', '"': '&quot;' })[char]!)
 }
 
 function calculateSamples(spec: FunctionGraphSpec) {
+  assertSafeExpression(spec.expression)
   const [minX, maxX] = spec.domain
   const samples: Array<[number, number]> = []
   for (let index = 0; index <= SAMPLE_COUNT; index++) {
