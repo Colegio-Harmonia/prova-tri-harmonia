@@ -49,6 +49,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     const png = rendered.mimeType === 'image/png' ? rendered.content : await sharp(rendered.content, { density: 180 }).png().toBuffer()
     const { driveFileId, previewUrl } = await uploadToStaging(png, 'image/png', `grafico-funcao-q${question.number}-${Date.now()}.png`)
 
+    if (question.image) {
+      question.imageHistory = [...(question.imageHistory ?? []), { ...question.image, replacedAt: new Date().toISOString() }]
+    }
     question.needsImage = true
     question.image = {
       source: 'diagrama',

@@ -100,6 +100,12 @@ export const examQuestionSchema = z.object({
     })
     .nullable()
     .optional(),
+  imageHistory: z.array(z.object({
+    source: z.enum(['busca', 'gerada', 'grafico', 'diagrama', 'quimica', 'importado', 'enem']),
+    driveFileId: z.string(), previewUrl: z.string(), approved: z.boolean(), sourceUrl: z.string().nullable().optional(),
+    provenance: z.object({ mode: z.enum(['deterministic', 'ai']), generator: z.string(), generatorVersion: z.string() }).optional(),
+    replacedAt: z.string(),
+  })).optional(),
   // Anotação do professor revisor — nunca preenchida pela IA, só pela tela
   // /revisar. adequacy e difficulty são escalas independentes (uma questão
   // pode ser "adequada" em conteúdo mas "muito difícil" em nível, por

@@ -64,6 +64,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
       return NextResponse.json({ error: 'Não foi possível encontrar nem gerar uma imagem para essa busca.' }, { status: 502 })
     }
 
+    if (question.image) {
+      question.imageHistory = [...(question.imageHistory ?? []), { ...question.image, replacedAt: new Date().toISOString() }]
+    }
     question.needsImage = true
     question.imageQuery = query
     // Uma imagem pedida manualmente pelo revisor já é, por definição, uma
