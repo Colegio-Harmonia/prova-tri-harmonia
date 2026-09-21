@@ -3,6 +3,7 @@ import { db } from '@/db/client'
 import { examCorrections, examScanAuditEvents, examScanPages, examScanReadings, examScanUploads, examSheetAssignments, generatedExams, generationJobs } from '@/db/schema'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { suggestGrade } from '@/lib/gemini/gradeSuggestion'
+import { questionMaxGrade } from '@/lib/corrections/gradeNormalization'
 import { enqueuePontuarProvaJob } from '@/lib/queue/enqueue'
 import { cropDiscursiveAnswer, DiscursiveOcrError, transcribeDiscursiveAnswer } from '@/lib/scan-ingest/discursiveOcr'
 import { stageAndArchivePrivateArtifact } from '@/lib/scan-ingest/privateArtifact'
@@ -199,6 +200,7 @@ export async function executeDiscursiveTranscriptionJob(input: { examId: number;
             expectedAnswer: question.expectedAnswer ?? null,
             gradingCriteria: question.gradingCriteria ?? null,
             studentAnswer: ocr.transcription,
+            maxGrade: questionMaxGrade(question),
           })
         } catch (error) {
           console.warn('[scan OCR] transcrição concluída, mas a sugestão de nota falhou:', error instanceof Error ? error.message : error)
@@ -214,6 +216,9 @@ export async function executeDiscursiveTranscriptionJob(input: { examId: number;
           ? {
               ...answer,
               transcribedAnswer: ocr.transcription,
+              weight: answer.weight ?? (question ? questionMaxGrade(question) : 1),
+              aiSuggestedRawGrade: suggestion?.rawGrade ?? answer.aiSuggestedRawGrade,
+              aiSuggestedGradeScale: suggestion?.sourceScale ?? answer.aiSuggestedGradeScale,
               aiSuggestedGrade: suggestion?.grade ?? answer.aiSuggestedGrade,
               aiSuggestedFeedback: suggestion?.feedback ?? answer.aiSuggestedFeedback,
               finalGrade: suggestion?.grade ?? answer.finalGrade,

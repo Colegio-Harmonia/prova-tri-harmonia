@@ -10,6 +10,7 @@ import { isStaffSuperuser } from '@/lib/auth/roles'
 import { persistSoloObservedForCorrection } from '@/lib/pedagogical/soloObservedClassificationService'
 import { enqueuePontuarProvaJob } from '@/lib/queue/enqueue'
 import { updateExamCorrectionStatus } from '@/lib/corrections/updateExamCorrectionStatus'
+import { normalizeAiGrade, questionMaxGrade } from '@/lib/corrections/gradeNormalization'
 
 const answerSchema = z.object({
   questionNumber: z.number().int(),
@@ -18,6 +19,8 @@ const answerSchema = z.object({
   correctLetter: z.string().nullable(),
   isCorrect: z.boolean().nullable(),
   aiSuggestedGrade: z.number().nullable(),
+  aiSuggestedRawGrade: z.number().nullable().optional(),
+  aiSuggestedGradeScale: z.enum(['question', '0-10']).nullable().optional(),
   aiSuggestedFeedback: z.string().nullable(),
   finalGrade: z.number().min(0).max(10).nullable(),
   finalFeedback: z.string().nullable(),
@@ -68,15 +71,24 @@ export async function PATCH(
   for (const answer of parsed.data.answers) {
     const question = questionsByNumber.get(answer.questionNumber)
     if (!question) return NextResponse.json({ error: `Questão ${answer.questionNumber} não pertence a esta prova.` }, { status: 400 })
-    const maxGrade = question.weight ?? 1
-    if (answer.type === 'descritiva' && answer.finalGrade !== null && answer.finalGrade > maxGrade) {
-      return NextResponse.json({ error: `A nota da questão ${answer.questionNumber} não pode ultrapassar ${maxGrade}.` }, { status: 400 })
-    }
   }
   const answers: CorrectionAnswer[] = parsed.data.answers.map((a) => {
     const question = questionsByNumber.get(a.questionNumber)!
-    const maxGrade = question.weight ?? 1
-    if (a.type !== 'objetiva') return a
+    const maxGrade = questionMaxGrade(question)
+    if (a.type === 'descritiva') {
+      const raw = a.aiSuggestedRawGrade ?? a.aiSuggestedGrade
+      const suggestion = raw === null ? null : normalizeAiGrade(raw, maxGrade)
+      return {
+        ...a,
+        weight: maxGrade,
+        aiSuggestedRawGrade: suggestion?.rawGrade ?? null,
+        aiSuggestedGradeScale: suggestion?.sourceScale ?? null,
+        aiSuggestedGrade: suggestion?.grade ?? null,
+        // Independent server-side invariant for manually entered and
+        // automatic grades: storage never exceeds the question maximum.
+        finalGrade: a.finalGrade === null ? null : Math.min(maxGrade, Math.max(0, a.finalGrade)),
+      }
+    }
     const isCorrect = a.transcribedAnswer ? a.transcribedAnswer.trim().toUpperCase() === (a.correctLetter ?? '').toUpperCase() : null
     return { ...a, isCorrect, finalGrade: isCorrect === null ? null : isCorrect ? maxGrade : 0 }
   })

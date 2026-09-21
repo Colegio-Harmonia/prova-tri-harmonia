@@ -8,6 +8,7 @@ import type { CorrectionAnswer } from '@/types/correction'
 import { suggestGrade } from '@/lib/gemini/gradeSuggestion'
 import { isStaffSuperuser } from '@/lib/auth/roles'
 import { aiFailureResponse } from '@/lib/ai/routeFailure'
+import { questionMaxGrade } from '@/lib/corrections/gradeNormalization'
 
 const AI_SUGGESTION_CONCURRENCY = 2
 
@@ -76,12 +77,9 @@ export async function POST(
           expectedAnswer: question.expectedAnswer ?? null,
           gradingCriteria: question.gradingCriteria ?? null,
           studentAnswer: a.transcribedAnswer,
+          maxGrade: questionMaxGrade(question),
         })
-        // A IA avalia sempre em 0–10. A nota guardada na correção, porém,
-        // usa a escala real da questão (por exemplo, 4,5/10 vira 0,45/1).
-        const maxGrade = question.weight ?? 1
-        const grade = Math.round(Math.min(maxGrade, Math.max(0, suggestion.grade / 10 * maxGrade)) * 100) / 100
-        return { questionNumber: a.questionNumber, suggestion: { ...suggestion, grade } }
+        return { questionNumber: a.questionNumber, suggestion }
       },
     )
   } catch (err) {
@@ -93,7 +91,14 @@ export async function POST(
   const updatedAnswers: CorrectionAnswer[] = answers.map((a) => {
     const s = bySuggestion.get(a.questionNumber)
     if (!s) return a
-    return { ...a, aiSuggestedGrade: s.grade, aiSuggestedFeedback: s.feedback }
+    return {
+      ...a,
+      weight: a.weight ?? questionMaxGrade(payload.questions.find((question) => question.number === a.questionNumber)!),
+      aiSuggestedRawGrade: s.rawGrade,
+      aiSuggestedGradeScale: s.sourceScale,
+      aiSuggestedGrade: s.grade,
+      aiSuggestedFeedback: s.feedback,
+    }
   })
 
   const [updated] = await db

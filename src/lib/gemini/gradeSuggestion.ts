@@ -1,11 +1,12 @@
 import { z } from 'zod'
 import { prepareStudentAnswerForAi } from '@/lib/ai/promptSafety'
+import { normalizeAiGrade } from '@/lib/corrections/gradeNormalization'
 import { generateValidatedStructuredContent } from './structuredRepair'
 
 const SUGGESTION_SCHEMA = {
   type: 'object',
   properties: {
-    grade: { type: 'number', description: 'Nota de 0 a 10, pode usar até 1 casa decimal.' },
+    grade: { type: 'number', description: 'Nota numérica na escala indicada no enunciado da correção.' },
     feedback: { type: 'string', description: 'Justificativa curta (2-4 frases) explicando a nota, em português, direcionada ao professor.' },
   },
   required: ['grade', 'feedback'],
@@ -16,7 +17,14 @@ const suggestionResultSchema = z.object({
   feedback: z.string(),
 })
 
-export type GradeSuggestion = z.infer<typeof suggestionResultSchema>
+export type GradeSuggestion = {
+  /** Nota literal do modelo, preservada para diagnóstico. */
+  rawGrade: number
+  /** Nota já normalizada para o máximo da questão. */
+  grade: number
+  sourceScale: 'question' | '0-10'
+  feedback: string
+}
 
 /**
  * Sugestão de nota pra 1 questão descritiva — nunca autoritativa, sempre
@@ -28,11 +36,15 @@ export async function suggestGrade(params: {
   expectedAnswer: string | null
   gradingCriteria: string | null
   studentAnswer: string
+  maxGrade: number
 }): Promise<GradeSuggestion> {
-  const { statement, expectedAnswer, gradingCriteria, studentAnswer } = params
+  const { statement, expectedAnswer, gradingCriteria, studentAnswer, maxGrade } = params
   const safeStudentAnswer = prepareStudentAnswerForAi(studentAnswer)
 
-  const prompt = `Você é um professor corrigindo uma questão descritiva. Avalie a resposta do aluno e sugira uma nota de 0 a 10.
+  const prompt = `Você é um professor corrigindo uma questão descritiva. Avalie a resposta do aluno na escala oficial desta questão.
+
+VALOR MÁXIMO DA QUESTÃO: ${maxGrade.toFixed(2)} ponto(s).
+Retorne o campo "grade" obrigatoriamente entre 0 e ${maxGrade.toFixed(2)}, inclusive. Não use a escala genérica de 0 a 10, exceto quando o máximo desta questão for 10.
 
 Enunciado da questão:
 """
@@ -52,5 +64,6 @@ Avalie com justiça: dê crédito parcial por respostas parcialmente corretas, n
     responseSchema: SUGGESTION_SCHEMA,
     zodSchema: suggestionResultSchema,
   })
-  return result.value
+  const normalized = normalizeAiGrade(result.value.grade, maxGrade)
+  return { ...normalized, feedback: result.value.feedback }
 }
