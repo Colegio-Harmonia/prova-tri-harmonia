@@ -6,6 +6,7 @@ import { computeQuestionSplit } from './promptBuilder'
 import { normalizeAndValidateQuestionText } from '@/lib/math/mathTextIntegrity'
 import { isMathSubject, validateSolutionBlueprint } from '@/lib/math/solutionBlueprint'
 import { isCanonicalDomainId } from '@/lib/generation/domains'
+import { missingRequiredSupportTextReason } from '@/lib/exams/supportTextIntegrity'
 
 export type ValidationResult = {
   corrected: ExamGenerationResult
@@ -141,6 +142,9 @@ export function correctSingleQuestion(
   if (textIntegrity.normalized) {
     warnings.push(`Questão ${q.number}: comandos matemáticos sem delimitador foram normalizados para renderização segura.`)
   }
+
+  const supportTextIssue = missingRequiredSupportTextReason(textIntegrity.question)
+  if (supportTextIssue) issues.push(`Questão ${q.number}: ${supportTextIssue}`)
 
   return {
     question: { ...textIntegrity.question, bnccCodes: correctedBnccCodes, bnccStatus: correctedBnccStatus },

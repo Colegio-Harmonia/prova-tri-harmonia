@@ -1,7 +1,10 @@
 import { comparableNumber, computeCanonicalDomain, hasCanonicalDomain } from './domains'
+import { detectAlternativeAmbiguities } from './alternatives'
+import { parseSingleNumber } from './similarity'
 import { getRuleEngine } from './rules'
 import { StageGateError } from './types'
-import type { PipelineContext, QuestionPlan, StatementDraft, TruthObject } from './types'
+import { missingRequiredSupportTextReason } from '@/lib/exams/supportTextIntegrity'
+import type { MetadataDraft, PipelineContext, QuestionPlan, StatementDraft, TruthObject, VisualPlan } from './types'
 
 const NUMERIC_TOLERANCE = 1e-6
 
@@ -46,6 +49,16 @@ export function gateStrategy(ctx: PipelineContext, plan: QuestionPlan): void {
   if (!material) {
     throw new StageGateError('stage0', 'source_missing', `Estratégia ${plan.truthStrategy} exige material-fonte para ancorar a evidência.`)
   }
+}
+
+/** Gate V — a decisão visual precisa ser coerente antes do enunciado. */
+export function gateVisualPlan(plan: VisualPlan): void {
+  if (!plan.rationale.trim()) throw new StageGateError('stage_visual', 'visual_rationale', 'O plano visual precisa explicar por que a imagem é necessária ou dispensável.')
+  if (plan.required && plan.visualType === 'none') throw new StageGateError('stage_visual', 'visual_type', 'Um visual obrigatório precisa ter um tipo de recurso definido.')
+  if (!plan.required && plan.visualType !== 'none') throw new StageGateError('stage_visual', 'visual_type', 'Um visual dispensado deve usar visualType "none".')
+  if (!plan.required && plan.purpose !== 'nenhum') throw new StageGateError('stage_visual', 'visual_purpose', 'Um visual dispensado deve ter purpose "nenhum".')
+  if (plan.required && plan.purpose === 'nenhum') throw new StageGateError('stage_visual', 'visual_purpose', 'Um visual obrigatório precisa informar seu objetivo pedagógico.')
+  if (!plan.required && plan.data && Object.keys(plan.data).length) throw new StageGateError('stage_visual', 'visual_data', 'Um visual dispensado não deve carregar dados de renderização.')
 }
 
 /** Gate 1 — o objeto-fonte de verdade é validado por código, nunca pela prosa do modelo. */
@@ -115,6 +128,8 @@ function numericTokens(text: string): number[] {
  * derivada ou derivação canônica).
  */
 export function gateStatement(ctx: PipelineContext, plan: QuestionPlan, truth: TruthObject, draft: StatementDraft): void {
+  const supportTextIssue = missingRequiredSupportTextReason(draft)
+  if (supportTextIssue) throw new StageGateError('stage3', 'missing_support_text', supportTextIssue)
   if (plan.truthStrategy !== 'calculavel') return
   const allowed = [
     ...Object.values(truth.values),
@@ -124,9 +139,29 @@ export function gateStatement(ctx: PipelineContext, plan: QuestionPlan, truth: T
   ].filter((value) => Number.isFinite(value))
 
   const invented = numericTokens(`${draft.statement} ${draft.supportText ?? ''}`)
+    // Inteiros de 0 a 9 são ordinais/contexto ("duas etapas", "1º") e não
+    // indicam dado inventado; decimais e números ≥ 10 são verificados.
+    .filter((value) => Math.abs(value) >= 10 || !Number.isInteger(value))
     .filter((value) => !allowed.some((candidate) => equivalentNumbers(candidate, value)))
   if (invented.length) {
     throw new StageGateError('stage3', 'statement_fidelity', `O enunciado citou valor(es) que não existem no objeto-fonte de verdade: ${invented.join(', ')}.`)
+  }
+  if (plan.domain === 'average_speed') {
+    const normalizedStatement = normalize(`${draft.statement} ${draft.supportText ?? ''}`)
+    const hasDistanceUnit = /\bkm\b|\bquilometros?\b/.test(normalizedStatement)
+    const hasTimeUnit = /\bh\b|\bhora(s)?\b/.test(normalizedStatement)
+    if (!hasDistanceUnit || !hasTimeUnit) {
+      throw new StageGateError('stage3', 'average_speed_units', 'Velocidade média exige unidades explícitas de distância e tempo no enunciado.')
+    }
+  }
+}
+
+/** Impede que um enunciado dependa de uma figura que o plano visual dispensou. */
+export function gateVisualReference(visualPlan: VisualPlan, draft: StatementDraft): void {
+  if (visualPlan.required) return
+  const text = normalize(`${draft.statement} ${draft.supportText ?? ''}`)
+  if (/\b(figura|imagem|grafico|mapa|diagrama|ilustracao)\s+(abaixo|acima|a seguir|apresentad[ao])\b/.test(text)) {
+    throw new StageGateError('stage3', 'unexpected_visual_reference', 'O enunciado faz referência a um recurso visual, mas o plano visual determinou que ele não é necessário.')
   }
 }
 
@@ -143,11 +178,43 @@ export function gateDistractors(plan: QuestionPlan, truth: TruthObject, distract
       throw new StageGateError('stage2', 'distractor_equals_answer', `O distrator ${index + 1} é igual à resposta correta.`)
     }
     if (plan.truthStrategy === 'calculavel' && truth.answerNumeric !== undefined) {
-      const parsed = comparableNumber(distractor)
+      // Só compara como número quando a alternativa É um número único — não a
+      // primeira parcela de uma expressão com vários valores.
+      const parsed = parseSingleNumber(distractor)
       if (parsed !== null && equivalentNumbers(parsed, truth.answerNumeric)) {
         throw new StageGateError('stage2', 'distractor_equals_answer', `O distrator ${index + 1} reproduz numericamente a resposta correta.`)
       }
     }
+  }
+
+  // Gate de ambiguidade por par: nenhuma alternativa pode ser equivalente a
+  // outra (duplicada, numericamente igual, quase idêntica ou só separada por
+  // negação), sob pena de haver mais de uma resposta defensável.
+  const allOptions = [
+    { letter: 'R', text: correctAnswerText },
+    ...distractors.map((text, index) => ({ letter: String.fromCharCode(66 + index), text })),
+  ]
+  const ambiguity = detectAlternativeAmbiguities(allOptions).find((issue) => issue.severity === 'bloqueante')
+  if (ambiguity) throw new StageGateError('stage2', 'alternative_ambiguity', ambiguity.reason)
+}
+
+/** A alternativa contém a resposta, nunca a linha final da resolução. */
+export function gateAlternativePresentation(correctAnswerText: string): void {
+  if (/^\s*(?:[a-z]\s*\d*|[a-z]\s*\([^)]*\))\s*=/i.test(correctAnswerText)) {
+    throw new StageGateError('stage2', 'answer_presentation', 'A alternativa correta contém uma atribuição ou resolução (ex.: x = ...); use apenas o valor ou a forma curta da resposta.')
+  }
+}
+
+/** Gate 4 — metadados não podem criar uma pendência tardia no validador legado. */
+export function gateMetadata(metadata: MetadataDraft): void {
+  if (metadata.bnccStatus === 'mapeado' && metadata.bnccCodes.length === 0) {
+    throw new StageGateError('stage4', 'bncc_mapping', 'Metadados marcaram BNCC como mapeada sem informar código.')
+  }
+  if (metadata.bnccStatus === 'nao_mapeado' && metadata.bnccCodes.length > 0) {
+    throw new StageGateError('stage4', 'bncc_mapping', 'Metadados informaram códigos BNCC, mas marcaram o item como não mapeado.')
+  }
+  if (metadata.needsImage && !metadata.imageQuery?.trim()) {
+    throw new StageGateError('stage4', 'image_query', 'Questão marcada como dependente de imagem sem consulta para gerar o recurso.')
   }
 }
 

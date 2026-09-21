@@ -11,6 +11,8 @@ import { canonicalDomainsForSubject } from '@/lib/generation/domains'
 
 export type ExamGenerationParams = {
   questionCount: number
+  /** Percentual de questões objetivas escolhido pelo professor (0..100). */
+  objectivePercentage?: number
   mode?: 'prova' | 'atividade'
   selectedBnccCodes?: string[]
   contentPlan?: CurriculumPlanItem[]
@@ -19,14 +21,13 @@ export type ExamGenerationParams = {
 export type QuestionSplit = { objectiveCount: number; discursiveCount: number }
 
 /**
- * 60% objetiva / 40% descritiva, min 40% descritiva, rounding down on the
- * objective side — per the root CLAUDE.md's own worked examples (15 → 9+6,
- * 12 → 7+5). floor(0.6N) always leaves the remainder >= 40% of N, so this
- * single rule satisfies both the ratio and the "never go under 40%
- * descritiva" constraint without a separate branch.
+ * A composição é uma decisão do professor. `objectivePercentage` usa o
+ * arredondamento mais próximo porque não há fração de questão: por exemplo,
+ * 15 questões a 70% se tornam 11 objetivas e 4 dissertativas.
  */
-export function computeQuestionSplit(questionCount: number): QuestionSplit {
-  const objectiveCount = Math.floor(questionCount * 0.6)
+export function computeQuestionSplit(questionCount: number, objectivePercentage = 60): QuestionSplit {
+  const percentage = Math.max(0, Math.min(100, Math.round(objectivePercentage)))
+  const objectiveCount = Math.round(questionCount * percentage / 100)
   return { objectiveCount, discursiveCount: questionCount - objectiveCount }
 }
 
@@ -192,7 +193,7 @@ async function buildStyleExemplarsBlock(subject: string, segment: Segment): Prom
 
 export async function buildExamPrompt(curriculum: CurriculumSelection, params: ExamGenerationParams): Promise<string> {
   const { segment, gradeYear, subject } = curriculum
-  const split = computeQuestionSplit(params.questionCount)
+  const split = computeQuestionSplit(params.questionCount, params.objectivePercentage)
   const alternativesCount = alternativesCountForSegment(segment)
   const saebInstruction = buildSaebInstruction(curriculum)
   const unitsBlock = buildUnitsBlock(curriculum)
@@ -232,6 +233,7 @@ ${selectedBnccInstruction ? `- ${selectedBnccInstruction}\n` : ''}${activity ? '
 - Não inclua gabarito nem indicação de BNCC no texto do enunciado (statement) — esses campos vão em campos estruturados separados.
 - ${buildPedagogicalClassificationInstruction()}
 - supportText é OPCIONAL e só pode trazer situação-problema, dados ou evidência indispensável para raciocinar. NUNCA use supportText para definir, parafrasear ou explicar o conceito que a questão avalia; o aluno não pode descobrir a alternativa correta apenas relendo esse texto. Se a questão mede conhecimento de um conceito e não depende de dados externos, retorne supportText:null. Nunca descreva uma imagem dentro de supportText, use o campo needsImage/imageQuery para isso. Quando houver tabela, use Markdown completo e válido: uma linha de cabeçalho com pipes, uma linha separadora com ao menos três hifens por coluna e uma ou mais linhas de dados. Não use tabela para organizar alternativas.
+- REGRA DE FONTE TEXTUAL: só cite texto, trecho, artigo, poema, capítulo ou “material didático” quando supportText trouxer toda a fonte necessária para a leitura. Um título, número de capítulo, lista de tópicos ou resumo inventado NÃO é texto de apoio. O currículo abaixo informa temas, não autoriza inventar um texto externo; sem fonte suficiente, escreva uma questão autocontida e não mencione leitura/capítulo/material externo.
 - IMPORTANTE sobre a ordem de exibição: supportText SEMPRE aparece ANTES do statement na tela/documento final (texto de apoio primeiro, pergunta depois). Se o statement referenciar o supportText, use "acima"/"no texto" — NUNCA "abaixo" (o texto nunca vem depois da pergunta). Prefira formas sem direção ("leia o texto e responda", "com base no texto") pra não depender de posição nenhuma.
 - ${buildContextualizationInstruction()}
 - ${buildMathNotationInstruction()}
@@ -309,6 +311,7 @@ REGRAS FIXAS (não negociáveis):
 - Não inclua gabarito nem indicação de BNCC no texto do enunciado (statement).
 - ${buildPedagogicalClassificationInstruction()}
 - supportText é só texto — nunca descreva uma imagem dentro dele, use needsImage/imageQuery. Quando houver tabela, use Markdown completo e válido: cabeçalho com pipes, divisor com ao menos três hifens por coluna e uma ou mais linhas de dados.
+- REGRA DE FONTE TEXTUAL: só cite texto, trecho, artigo, poema, capítulo ou “material didático” quando supportText trouxer toda a fonte necessária para a leitura. Título, número de capítulo, lista de tópicos ou resumo inventado não substituem o texto. Sem fonte suficiente, formule uma questão autocontida e não mencione leitura/capítulo/material externo.
 - IMPORTANTE sobre a ordem de exibição: supportText SEMPRE aparece ANTES do statement na tela/documento final. Se o statement referenciar o supportText, use "acima"/"no texto" — NUNCA "abaixo". Prefira formas sem direção ("leia o texto e responda", "com base no texto").
 - ${buildContextualizationInstruction()}
 - ${buildMathNotationInstruction()}
