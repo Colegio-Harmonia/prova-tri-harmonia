@@ -5,26 +5,26 @@ import { db } from '@/db/client'
 import { generatedExams } from '@/db/schema'
 import { auth } from '@/auth/auth'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
-import { buildSingleQuestionPrompt } from '@/lib/gemini/promptBuilder'
 import {
-  singleQuestionResultSchema,
-  SINGLE_QUESTION_RESPONSE_SCHEMA,
   type ExamGenerationResult,
   type ExamQuestion,
-  type SingleQuestionResult,
 } from '@/lib/gemini/examSchema'
-import { correctSingleQuestion } from '@/lib/gemini/examValidator'
 import { resolveQuestionImage } from '@/lib/images/questionImageService'
 import { authorizeExamAccess } from '@/lib/exams/authorizeExamAccess'
 import { persistGeneratedQuestionClassifications } from '@/lib/pedagogical/generatedQuestionClassificationService'
-import { generateValidatedStructuredContent, StructuredGenerationError } from '@/lib/gemini/structuredRepair'
+import { StructuredGenerationError } from '@/lib/gemini/structuredRepair'
 import { aiFailureResponse } from '@/lib/ai/routeFailure'
 import { runQuestionQualityTest } from '@/lib/exams/questionQualityTest'
 import { mergeQualityResults } from '@/lib/exams/qualityReport'
-import { generateStagedQuestion, isStagedGenerationEnabled } from '@/lib/generation'
+import { diagnosticsForQuestion } from '@/lib/exams/qualityDiagnostics'
+import { repairQuestionFromDiagnostics } from '@/lib/exams/repairQuestion'
+import { generateQuestionWithUnifiedFlow } from '@/lib/exams/unifiedQuestionGeneration'
+import {
+  MAX_FULL_QUESTION_GENERATION_ATTEMPTS,
+  shouldRetryQuestionGeneration,
+} from '@/lib/exams/regenerationRetry'
 import {
   REPLACEMENT_STRATEGIES,
-  findExcludedTopicsInQuestion,
   normalizeExcludedTopics,
   type ReplacementRequest,
 } from '@/lib/gemini/replacementPolicy'
@@ -36,6 +36,7 @@ const bodySchema = z.object({
     strategy: z.enum(REPLACEMENT_STRATEGIES),
     excludedTopics: z.array(z.string().trim().min(3).max(120)).max(8).default([]),
   }).optional(),
+  repairOnly: z.boolean().optional().default(false),
 })
 
 // Mesmas séries de status em que toggle-image permite edição — a troca de
@@ -89,70 +90,54 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     const warnings: string[] = []
     let question: ExamQuestion | null = null
 
-    // Pipeline fragmentado (fases 1–2) quando ligado: gera a substituição em
-    // estágios com gates determinísticos. Falha é isolada — cai no fluxo
-    // monolítico logo abaixo, sem derrubar a troca.
-    if (isStagedGenerationEnabled()) {
-      try {
-        const staged = await generateStagedQuestion({
-          questionNumber: original.number,
-          subject: exam.subject,
-          gradeYear: exam.gradeYear,
-          segment: exam.segment,
-          curriculumContent: curriculum.units.map((unit) => `${unit.tituloCapitulo} ${unit.conteudo ?? ''}`).join('\n').slice(0, 6000),
-          contentPlanInstruction: [
-            `substituir a questão ${original.number}; tipo ${original.type}`,
-            parsed.data.reviewFeedback ? `feedback do revisor: ${parsed.data.reviewFeedback}` : null,
-            replacement?.excludedTopics.length ? `excluir tópicos: ${replacement.excludedTopics.join(', ')}` : null,
-          ].filter(Boolean).join('; '),
-          questionType: original.type,
-        })
-        question = { ...staged.question, number: original.number, review: null }
-        warnings.push(`Questão ${original.number}: gerada pelo pipeline fragmentado.`)
-        warnings.push(...staged.issues.map((issue) => `[${issue.severity}] ${issue.reason}`))
-      } catch (error) {
-        warnings.push(`Pipeline fragmentado falhou (${error instanceof Error ? error.message : 'erro'}); usando o fluxo padrão.`)
+    // Reparo local é acionado somente pela revisão e só para diagnósticos
+    // declaradamente reparáveis. Se não houver plano local, não fingimos que
+    // uma regeneração ampla é uma correção: devolvemos uma mensagem clara.
+    if (parsed.data.repairOnly) {
+      const diagnostics = diagnosticsForQuestion(payload, original.number)
+      const repaired = await repairQuestionFromDiagnostics({
+        question: original,
+        curriculum,
+        diagnostics,
+        context: `exams/manual-quality-repair-${original.number}`,
+      })
+      if (!repaired) {
+        return NextResponse.json({ error: 'Esta questão não possui um reparo local seguro. Use “Recusar e gerar nova” ou faça a revisão humana indicada.' }, { status: 422 })
       }
+      question = repaired.question
+      warnings.push(`Questão ${original.number}: reparo local aplicado a partir do diagnóstico de qualidade.`)
+      warnings.push(...repaired.warnings)
     }
 
     if (!question) {
-      const prompt = await buildSingleQuestionPrompt(curriculum, {
-        type: original.type,
-        questionNumber: original.number,
-        avoidStatement: original.statement,
-        reviewFeedback: parsed.data.reviewFeedback,
-        replacement,
-      })
-
-      const generated = await generateValidatedStructuredContent<SingleQuestionResult, ExamQuestion>({
-        context: 'exams/regenerate-question',
-        prompt,
-        responseSchema: SINGLE_QUESTION_RESPONSE_SCHEMA,
-        zodSchema: singleQuestionResultSchema,
-        validate: async (parsedQuestion) => {
-          // O número é identidade do item no payload. Não deixamos uma resposta
-          // de substituição com número provisório chegar à revisão cega, que
-          // exige uma numeração positiva e auditável.
-          const generatedQuestion = { ...parsedQuestion.question, number: original.number }
-          const { question: corrected, issues, warnings: questionWarnings } = correctSingleQuestion(generatedQuestion, curriculum)
-          const quality = await runQuestionQualityTest(curriculum, [corrected])
-          issues.push(...quality.issues.filter((issue) => issue.severity === 'bloqueante').map((issue) => issue.reason))
-          questionWarnings.push(...quality.warnings)
-          if (original.type === 'objetiva' && corrected.type !== 'objetiva') issues.push(`Esperado tipo "objetiva", veio "${corrected.type}".`)
-          if (original.type === 'descritiva' && corrected.type !== 'descritiva') issues.push(`Esperado tipo "descritiva", veio "${corrected.type}".`)
-          if (replacement?.excludedTopics.length) {
-            const foundExcludedTopics = findExcludedTopicsInQuestion(corrected, replacement.excludedTopics)
-            if (foundExcludedTopics.length) {
-              issues.push(`A questão ainda contém o(s) tópico(s) que deveriam ser excluídos: ${foundExcludedTopics.join(', ')}.`)
-            }
-          }
-          return { value: corrected, issues, warnings: questionWarnings }
-        },
-      })
-
-      if (generated.repaired) warnings.push(`Resposta da IA validada após reparo (${generated.attempts} tentativa(s)).`)
-      warnings.push(...generated.warnings)
-      question = { ...generated.value, number: original.number, review: null }
+      let lastGenerationError: unknown
+      for (let attempt = 1; attempt <= MAX_FULL_QUESTION_GENERATION_ATTEMPTS && !question; attempt++) {
+        try {
+          const generated = await generateQuestionWithUnifiedFlow({
+            curriculum,
+            questionNumber: original.number,
+            type: original.type,
+            instruction: [
+              `substituir a questão ${original.number}; tipo ${original.type}`,
+              attempt > 1 ? 'a tentativa anterior não gerou um JSON válido; gere uma nova questão completa, autocontida e conforme o contrato' : null,
+              parsed.data.reviewFeedback ? `feedback do revisor: ${parsed.data.reviewFeedback}` : null,
+              replacement?.excludedTopics.length ? `excluir tópicos: ${replacement.excludedTopics.join(', ')}` : null,
+            ].filter(Boolean).join('; '),
+          })
+          question = generated.question
+          warnings.push(...generated.warnings)
+          if (attempt > 1) warnings.push(`Questão ${original.number}: gerada na ${attempt}ª tentativa completa após uma resposta inválida da IA.`)
+        } catch (error) {
+          lastGenerationError = error
+          if (!shouldRetryQuestionGeneration(error) || attempt === MAX_FULL_QUESTION_GENERATION_ATTEMPTS) throw error
+          console.warn('[exams/regenerate-question] repetindo geração completa após falha estruturada:', {
+            questionNumber: original.number,
+            attempt,
+            failureCode: error.failureCode,
+          })
+        }
+      }
+      if (!question) throw lastGenerationError ?? new Error('A geração não retornou uma questão.')
     }
 
     if (question.needsImage) {
@@ -206,7 +191,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     return NextResponse.json({ ok: true, question, warnings, pedagogicalClassificationsCreated })
   } catch (err) {
     if (err instanceof StructuredGenerationError) {
-      return aiFailureResponse(err, 'A IA não retornou uma questão válida após as tentativas de reparo.')
+      return aiFailureResponse(err, 'A IA retornou uma resposta incompleta para esta substituição. Nenhuma alteração foi salva; tente novamente.')
     }
     console.error('[exams/regenerate-question] erro:', err)
     return aiFailureResponse(err, 'Erro ao gerar questão de substituição.')
