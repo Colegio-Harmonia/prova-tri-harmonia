@@ -130,6 +130,35 @@ aquele ano não tinha outro. Agora a ordem sorteada por ano é mantida e uma
 passada garante nível diferente enquanto houver no banco. 0 falhas em 100
 execuções.
 
+### PR #9 — `fix/versionar-rota-cobertura`
+A regra `coverage/` do `.gitignore` ignorava `src/app/api/curriculum/coverage/`:
+a rota do painel de cobertura existia só no servidor. Regra passou a
+`/coverage/` e a rota entrou no repositório.
+
+### Bloco 7 — `feature/bloco-7-planejamento-interno`
+Planejamento pedagógico interno (Prova TRI como fonte oficial).
+- `/planejamento`: lista com filtros (professor vê só os atribuídos),
+  "Novo planejamento" (do zero), "Copiar ano anterior" (versões aprovadas →
+  rascunhos do ano seguinte, com responsáveis, sem sobrescrever), "Encerrar
+  bimestre" e aba "Importar planilha" (a importação agora recusa criar versão
+  se já houver rascunho/revisão aberto).
+- `/planejamento/[id]`: editor de unidades, conteúdos, objetivos e
+  habilidades (código, descrição — em branco usa o texto oficial — e meta),
+  responsáveis, histórico, exportação CSV (`;` + BOM) e PDF
+  (`/planejamento/[id]/imprimir`).
+- Fluxo: rascunho → em revisão (professor/gestão) → aprovado ou devolvido com
+  justificativa (gestão) → encerrado (gestão). Aprovado/encerrado não se edita:
+  alteração = nova versão com o conteúdo oficial, que passa por revisão. Após
+  encerrar o bimestre, só a gestão abre nova versão, com justificativa.
+- Versão oficial = aprovada/encerrada mais recente; cobertura e relatórios
+  usam a oficial, ou a mais recente quando ainda não há aprovada (2026).
+- Código: `planningPolicy.ts` (regras puras), `planningService.ts` (todas as
+  escritas), `planningRoute.ts`, rotas em `src/app/api/curriculum/plans/**`
+  e `plan-versions/**`. Teste de integração com Postgres real em memória
+  (`planningService.integration.test.ts`, PGlite como devDependency).
+- **Entrega operacional pendente:** criar e aprovar o planejamento de 2027
+  (copiar 2026 ou criar do zero) — ação da coordenação na tela.
+
 ### Validação com dados reais (só leitura, agregados, 30/09/2026)
 - 1.786 correções revisadas, 322 alunos, 83 turmas, 14.563 respostas com
   BNCC, 0 linhas inválidas.

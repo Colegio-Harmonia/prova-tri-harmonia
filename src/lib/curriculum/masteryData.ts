@@ -121,6 +121,7 @@ export async function loadPlannedSkills(years: number[], match: (plan: MasterySc
     subject: curriculumPlans.subject,
     bimester: curriculumPlans.bimester,
     versionNumber: curriculumPlanVersions.versionNumber,
+    status: curriculumPlanVersions.status,
     code: curriculumPlanSkills.code,
     description: curriculumPlanSkills.description,
     targetMasteryPercent: curriculumPlanSkills.targetMasteryPercent,
@@ -130,8 +131,15 @@ export async function loadPlannedSkills(years: number[], match: (plan: MasterySc
     .innerJoin(curriculumPlanSkills, eq(curriculumPlanSkills.unitId, curriculumPlanUnits.id))
     .where(inArray(curriculumPlans.academicYear, years))
 
+  // Versão oficial (aprovada/encerrada mais recente) de cada planejamento; sem
+  // nenhuma aprovada (ex.: fotografias de 2026 importadas), vale a mais recente.
   const latestVersion = new Map<number, number>()
-  for (const row of planRows) latestVersion.set(row.planId, Math.max(latestVersion.get(row.planId) ?? 0, row.versionNumber))
+  const officialNumber = new Map<number, number>()
+  for (const row of planRows) {
+    latestVersion.set(row.planId, Math.max(latestVersion.get(row.planId) ?? 0, row.versionNumber))
+    if (row.status === 'aprovado' || row.status === 'encerrado') officialNumber.set(row.planId, Math.max(officialNumber.get(row.planId) ?? 0, row.versionNumber))
+  }
+  for (const [planId, versionNumber] of officialNumber) latestVersion.set(planId, versionNumber)
   const unique = new Set<string>()
   const planned: PlannedMasterySkill[] = []
   for (const row of planRows) {

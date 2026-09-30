@@ -75,7 +75,8 @@ export function AppNavigation({ isSuperuser, mobile = false, onNavigate }: AppNa
   const pathname = usePathname()
   // Badges separam a fila de provas da fila de atividades formativas.
   const { activeProofCount, activeActivityCount, activeReinforcementCount } = useGenerationJobs()
-  const items = isSuperuser ? [...primaryItems, planningItem, managementItem, aiManagementItem] : primaryItems
+  // Planejamento aparece para todos: professor vê os planejamentos atribuídos a ele.
+  const items = isSuperuser ? [...primaryItems, planningItem, managementItem, aiManagementItem] : [...primaryItems, planningItem]
 
   return (
     <nav aria-label="Navegação principal" className={cn('flex flex-col gap-1', mobile && 'p-3')}>
