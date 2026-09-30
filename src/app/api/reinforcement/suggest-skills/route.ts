@@ -34,6 +34,8 @@ export async function GET(req: NextRequest) {
 
   const subject = req.nextUrl.searchParams.get('subject')
   const gradeYearParam = req.nextUrl.searchParams.get('gradeYear')
+  const classroomStudentId = req.nextUrl.searchParams.get('studentId')?.trim()
+  const studentName = req.nextUrl.searchParams.get('student')?.trim()
   const gradeYear = gradeYearParam ? Number(gradeYearParam) : null
   const area = subject ? getEnemAreaForSubject(subject) : null
   if (!area) {
@@ -53,12 +55,15 @@ export async function GET(req: NextRequest) {
   })
   if (!exams.length) return NextResponse.json({ suggestions: [], sampleNote: 'Sem provas do EM no recorte — selecione as habilidades manualmente.' })
 
-  const corrections = await db.query.examCorrections.findMany({
-    where: and(
+  const correctionConditions = [
       inArray(examCorrections.examId, exams.map((e) => e.id)),
       eq(examCorrections.status, 'revisado'),
       eq(examCorrections.attendanceStatus, 'presente'),
-    ),
+  ]
+  if (classroomStudentId) correctionConditions.push(eq(examCorrections.classroomStudentId, classroomStudentId))
+  else if (studentName) correctionConditions.push(eq(examCorrections.studentName, studentName))
+  const corrections = await db.query.examCorrections.findMany({
+    where: and(...correctionConditions),
     columns: { examId: true, answers: true },
   })
 

@@ -1,7 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { useEffect, useRef, useState } from 'react'
 import { SEGMENT_SUBJECTS } from '@/config/subjects'
 import { getEnemAreaForSubject } from '@/config/enemAreaMap'
 
@@ -23,10 +24,16 @@ const fieldClassName = 'mt-1 min-h-10 w-full rounded border border-border bg-sur
 const labelClassName = 'text-sm font-semibold text-content-primary'
 
 export default function ReforcoForm() {
-  const [gradeYear, setGradeYear] = useState(3)
-  const [subject, setSubject] = useState(EM_SUBJECTS[0])
-  const [classLabel, setClassLabel] = useState('')
-  const [academicYear, setAcademicYear] = useState(new Date().getFullYear())
+  const searchParams = useSearchParams()
+  const requestedGrade = Number(searchParams.get('gradeYear'))
+  const requestedSubject = searchParams.get('subject')
+  const studentName = searchParams.get('student')?.trim() ?? ''
+  const studentId = searchParams.get('studentId')?.trim() ?? ''
+  const fromReport = searchParams.get('origem') === 'relatorio'
+  const [gradeYear, setGradeYear] = useState([1, 2, 3].includes(requestedGrade) ? requestedGrade : 3)
+  const [subject, setSubject] = useState(requestedSubject && EM_SUBJECTS.includes(requestedSubject) ? requestedSubject : EM_SUBJECTS[0])
+  const [classLabel, setClassLabel] = useState(studentName ? `Reforço — ${studentName}` : '')
+  const [academicYear, setAcademicYear] = useState(Number(searchParams.get('academicYear')) || new Date().getFullYear())
   const [enemQuestionYear, setEnemQuestionYear] = useState<number | ''>('')
   const [questionCount, setQuestionCount] = useState(15)
   const [skills, setSkills] = useState<SkillOption[]>([])
@@ -39,6 +46,7 @@ export default function ReforcoForm() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [enqueuedJobId, setEnqueuedJobId] = useState<number | null>(null)
+  const reportSuggestionRequested = useRef(false)
 
   const area = getEnemAreaForSubject(subject)
 
@@ -78,7 +86,10 @@ export default function ReforcoForm() {
     setSuggestionNote(null)
     setError(null)
     try {
-      const res = await fetch(`/api/reinforcement/suggest-skills?subject=${encodeURIComponent(subject)}&gradeYear=${gradeYear}`)
+      const params = new URLSearchParams({ subject, gradeYear: String(gradeYear) })
+      if (studentId) params.set('studentId', studentId)
+      else if (studentName) params.set('student', studentName)
+      const res = await fetch(`/api/reinforcement/suggest-skills?${params.toString()}`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Erro ao buscar sugestões.')
       setSuggestions(data.suggestions ?? [])
@@ -94,6 +105,14 @@ export default function ReforcoForm() {
       setSuggesting(false)
     }
   }
+
+  useEffect(() => {
+    if (!fromReport || searchParams.get('autoSuggest') !== '1' || reportSuggestionRequested.current || !area) return
+    reportSuggestionRequested.current = true
+    void suggestSkills()
+  // Os parâmetros de origem são imutáveis durante a abertura deste formulário.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [area])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -148,6 +167,7 @@ export default function ReforcoForm() {
 
   return (
     <form onSubmit={submit} className="space-y-6">
+      {fromReport && <div className="rounded border border-status-info-border bg-status-info-surface p-4 text-sm text-status-info-content"><p className="font-semibold">Reforço ENEM para {studentName || 'o aluno selecionado'}</p><p className="mt-1">As habilidades INEP são sugeridas a partir dos erros deste aluno em questões ENEM revisadas. Confira a seleção antes de gerar.</p></div>}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
         <div className="space-y-1">
           <label className={labelClassName}>Série (EM)</label>

@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { createColumnHelper } from '@tanstack/react-table'
 import { DataTable, type DataTableFeatures } from '@/components/ui/data-table'
 import type { MasteryConsolidation, MasteryLevel, StudentMasteryRow } from '@/lib/curriculum/studentMastery'
@@ -31,7 +32,7 @@ function masteryBadge(level: MasteryLevel) {
 function formatMastery(value: number | null) { return value === null ? '—' : `${value.toLocaleString('pt-BR')}%` }
 
 const masteryColumnHelper = createColumnHelper<DataTableFeatures, StudentMasteryRow>()
-const masteryColumns = [
+const baseMasteryColumns = [
   masteryColumnHelper.accessor((row) => `${row.code} ${row.description ?? ''} ${row.subject} ${MASTERY_LEVEL_LABELS[row.level]}`, {
     id: 'habilidade', header: 'Habilidade', cell: ({ row }) => <div><p className="font-medium">{row.original.code}</p><p className="max-w-md text-xs text-content-secondary">{row.original.description ?? 'Descrição não informada no planejamento'}</p></div>,
   }),
@@ -43,13 +44,27 @@ const masteryColumns = [
   masteryColumnHelper.accessor('planned', { header: 'Planejada', cell: ({ getValue }) => getValue() ? 'Sim' : 'Não' }),
 ]
 
-export default function MasterySection({ mastery, error: masteryError }: { mastery: MasteryResponse | null; error: string | null }) {
+function recoveryUrl(row: StudentMasteryRow, studentName: string, classroomCourseId?: string) {
+  const params = new URLSearchParams({ origem: 'relatorio', segment: row.segment, gradeYear: String(row.gradeYear), subject: row.subject, academicYear: String(row.academicYear), bimester: String(row.bimester), skill: row.code, questionCount: '5', student: studentName })
+  if (classroomCourseId) params.set('classroomCourseId', classroomCourseId)
+  return `/atividades?${params.toString()}`
+}
+
+function enemUrl(row: StudentMasteryRow, studentName: string, studentId?: string) {
+  const params = new URLSearchParams({ origem: 'relatorio', gradeYear: String(row.gradeYear), subject: row.subject, academicYear: String(row.academicYear), autoSuggest: '1', student: studentName })
+  if (studentId) params.set('studentId', studentId)
+  return `/reforco?${params.toString()}`
+}
+
+export default function MasterySection({ mastery, error: masteryError, studentName, studentId, classroomCourseId }: { mastery: MasteryResponse | null; error: string | null; studentName: string; studentId?: string; classroomCourseId?: string }) {
+  const masteryColumns = [...baseMasteryColumns, masteryColumnHelper.display({ id: 'acao', header: 'Ação pedagógica', cell: ({ row }) => ['em_desenvolvimento', 'proximo_do_dominio'].includes(row.original.level) ? <Link href={recoveryUrl(row.original, studentName, classroomCourseId)} className="inline-flex min-h-9 items-center rounded border border-action-primary px-3 py-1.5 text-xs font-semibold text-action-primary hover:bg-action-primary/10">Criar atividade de recuperação</Link> : <span className="text-xs text-content-muted">—</span> })]
+  const enemContext = mastery?.rows.find((row) => row.segment === 'ensino-medio' && ['em_desenvolvimento', 'proximo_do_dominio'].includes(row.level))
   return <>
       <MasteryRuleReminder />
       {mastery && <MasteryCharts rows={mastery.rows} consolidated={mastery.consolidated} />}
 
       <section className="rounded border border-border bg-surface p-5">
-        <h2 className="font-semibold text-content-primary">Domínio das habilidades planejadas</h2>
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-semibold text-content-primary">Domínio das habilidades planejadas</h2><p className="mt-1 text-xs text-content-secondary">Use a ação da habilidade para abrir uma atividade de recuperação já preenchida para este aluno.</p></div>{enemContext && <Link href={enemUrl(enemContext, studentName, studentId)} className="inline-flex min-h-10 items-center rounded bg-action-primary px-3 py-2 text-sm font-semibold text-action-primary-foreground hover:bg-action-primary-hover">Preparar Reforço ENEM</Link>}</div>
         <p className="mt-2 text-sm text-content-secondary">Aproveitamento = pontos obtidos ÷ pontos possíveis nas questões revisadas da habilidade, respeitando o peso de cada questão e a nota parcial das discursivas.{mastery && ` Com menos de ${mastery.rules.minItemsForReading} itens a leitura fica como evidência insuficiente; domínio no bimestre exige ao menos ${mastery.rules.minItemsForMastery} itens em ${mastery.rules.minAssessmentsForMastery} avaliações do mesmo bimestre e ${mastery.rules.masteryPercent}% de aproveitamento.`}</p>
         {masteryError ? <p className="mt-3 rounded bg-status-warning-surface p-3 text-sm text-status-warning-content">{masteryError}</p> : mastery ? <div className="mt-4 space-y-4">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
