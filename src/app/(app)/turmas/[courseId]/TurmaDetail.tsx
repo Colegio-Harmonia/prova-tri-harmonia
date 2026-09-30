@@ -60,7 +60,10 @@ export default function TurmaDetail({ courseId }: { courseId: string }) {
       <Link href="/turmas" className="text-sm text-content-secondary underline">← Turmas</Link>
       <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
         <div><h1 className="text-xl font-semibold text-content-primary">{course.name}</h1>{course.section && <p className="mt-1 text-sm text-content-secondary">{course.section}</p>}</div>
-        <a href={course.alternateLink} target="_blank" rel="noopener noreferrer" className="rounded-md border border-border px-3 py-2 text-sm font-medium text-content-primary hover:bg-surface-subtle">Abrir no Classroom ↗</a>
+        <div className="flex flex-wrap gap-2">
+          <Link href={`/desempenho/trajetoria?classroomCourseId=${encodeURIComponent(courseId)}&turma=${encodeURIComponent(course.name)}`} className="rounded-md border border-border px-3 py-2 text-sm font-medium text-content-primary hover:bg-surface-subtle">Trajetória da turma</Link>
+          <a href={course.alternateLink} target="_blank" rel="noopener noreferrer" className="rounded-md border border-border px-3 py-2 text-sm font-medium text-content-primary hover:bg-surface-subtle">Abrir no Classroom ↗</a>
+        </div>
       </div>
     </div>
 
