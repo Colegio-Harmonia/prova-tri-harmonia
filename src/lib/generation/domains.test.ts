@@ -11,7 +11,7 @@ describe('motor de domínios canônicos', () => {
   it('cobre os domínios exigidos, sem buraco para `other`', () => {
     const required = [
       'linear_system', 'percentage', 'ratio_proportion', 'simple_interest', 'compound_interest',
-      'arithmetic_progression', 'geometric_progression', 'linear_recurrence', 'linear_function',
+      'arithmetic_progression', 'geometric_progression', 'linear_recurrence', 'linear_recurrence_order2', 'linear_function',
       'quadratic_function', 'point_distance', 'circle_relative_position', 'sphere_point_position',
       'rectangular_prism_volume', 'average_speed',
       // fase 3
@@ -67,12 +67,32 @@ describe('motor de domínios canônicos', () => {
     expect(computeCanonicalDomain('geometric_progression', { a1: 1, q: 2, n: 8 }).answer.numeric).toBe(128)
   })
 
+  it('separa a resposta técnica da forma curta exibida na alternativa', () => {
+    const pg = computeCanonicalDomain('geometric_progression', { a1: 1, q: 2, n: 8 }).answer
+    const recurrence = computeCanonicalDomain('linear_recurrence', { a0: 3, a: 2, b: 1, n: 5 }).answer
+    const fn = computeCanonicalDomain('linear_function', { a: 2, b: 1, x: 4 }).answer
+    expect(pg.display).toBe('a8 = 128')
+    expect(pg.choiceDisplay).toBe('128')
+    expect(recurrence.display).toBe('x5 = 127')
+    expect(recurrence.choiceDisplay).toBe('127')
+    expect(fn.choiceDisplay).toBe('9')
+  })
+
   it('resolve a recorrência linear que falhou na prova 331', () => {
     // x0 = 5; x_{k+1} = 2·x_k + 1  =>  x4 = 95
     const result = computeCanonicalDomain('linear_recurrence', { a0: 5, a: 2, b: 1, n: 4 })
     expect(result.answer.numeric).toBe(95)
     expect(result.distractorHints.length).toBeGreaterThan(0)
     expect(result.distractorHints.some((hint) => hint.includes('95'))).toBe(false)
+  })
+
+  it('resolve recorrência linear de 2ª ordem (o caso da prova 333)', () => {
+    // Fibonacci: u1=1, u2=1, u_n = u_(n-2) + u_(n-1)  =>  u6 = 8
+    const fibonacci = computeCanonicalDomain('linear_recurrence_order2', { firstTerm: 1, secondTerm: 1, previousCoefficient: 1, currentCoefficient: 1, termIndex: 6 })
+    expect(fibonacci.answer.numeric).toBe(8)
+    // u_n = 4·u_(n-2) - 4·u_(n-1), u1=6, u2=1 => u3=20, u4=-76, u5=384
+    const second = computeCanonicalDomain('linear_recurrence_order2', { firstTerm: 6, secondTerm: 1, previousCoefficient: 4, currentCoefficient: -4, termIndex: 5 })
+    expect(second.answer.numeric).toBe(384)
   })
 
   it('resolve função afim e quadrática', () => {

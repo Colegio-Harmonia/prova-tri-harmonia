@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assembleAlternatives, gateDistractors, gateInterpretiveSupport, gateStatement, gateStrategy, gateTruth } from './gates'
+import { assembleAlternatives, gateAlternativePresentation, gateAlternativeShape, gateDistractors, gateInterpretiveSupport, gateStatement, gateStrategy, gateTruth } from './gates'
 import { StageGateError } from './types'
 import type { PipelineContext, QuestionPlan, TruthObject } from './types'
 
@@ -70,6 +70,21 @@ describe('gates determinísticos', () => {
     expect(correctLetter).toBe('A')
     expect(alternatives[0].text).toBe('20')
     expect(alternatives.map((item) => item.letter)).toEqual(['A', 'B', 'C', 'D'])
+  })
+
+  it('bloqueia alternativa que traz a linha final da resolução', () => {
+    expect(() => gateAlternativePresentation('x5 = 730')).toThrow(/atribuição ou resolução/i)
+    expect(() => gateAlternativePresentation('a8 = 5.743')).toThrow(/atribuição ou resolução/i)
+    expect(() => gateAlternativePresentation('730')).not.toThrow()
+  })
+
+  it('bloqueia referência a campos internos no enunciado', () => {
+    expect(() => gateStatement(ctx, { truthStrategy: 'interpretativa' }, { strategy: 'interpretativa', values: {}, derivation: '' }, { statement: 'Leia o trecho em supportText.', supportText: 'Um texto de apoio suficientemente longo para a questão, com informações completas e autocontidas para o estudante.' })).toThrow(/nome interno/i)
+  })
+
+  it('bloqueia alternativas com formatos incompatíveis', () => {
+    expect(() => gateAlternativeShape('lindas', ['Selfie com minhas amigas: duas garotas muito lindo.', 'Selfie com minhas amigas: duas garotas muito lindíssimo.', 'Selfie com minhas amigas: duas garotas muito lindos.', 'Selfie com minhas amigas: duas garotas muito linda.'])).toThrow(/mesmo formato/i)
+    expect(() => gateAlternativeShape('lindas', ['lindo', 'lindíssima', 'lindos', 'linda'])).not.toThrow()
   })
 
   it('Gate 0 aceita motor de regras registrado', () => {

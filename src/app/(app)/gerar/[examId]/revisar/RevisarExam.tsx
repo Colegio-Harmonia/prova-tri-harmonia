@@ -12,7 +12,8 @@ import SheetAssignmentsPanel from './SheetAssignmentsPanel'
 import { downloadSheetAssignments } from './downloadSheetAssignments'
 import { canFinalizeOwnActivity, canMarkOwnActivityApplied } from '@/lib/exams/activityWorkflow'
 import { questionImageUrl } from '@/lib/images/questionImageUrl'
-import type { IllustrationRecommendation } from '@/lib/illustrations/recommendations'
+import type { IllustrationAnalysis, IllustrationRecommendation } from '@/lib/illustrations/recommendations'
+import { diagnosticsForQuestion, humanReviewDiagnostics } from '@/lib/exams/qualityDiagnostics'
 
 // Fórmula em $...$ vira imagem tipografada de verdade (renderização
 // externa, mesmo padrão já usado pros gráficos de questão) — pedido
@@ -40,17 +41,20 @@ function MathText({ text }: { text: string | null | undefined }) {
 function SupportText({ text }: { text: string }) {
   const lines = text.split('\n')
   const dividerIndex = lines.findIndex((line, index) => index > 0 && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line))
-  if (dividerIndex <= 0) return <p className="mt-2 text-content-secondary"><MathText text={text} /></p>
+  if (dividerIndex <= 0) return <details className="mt-2 rounded border border-border bg-surface-subtle p-2 text-content-secondary"><summary className="cursor-pointer list-none text-xs font-medium">ⓘ Texto de apoio obrigatório</summary><p className="mt-2 whitespace-pre-wrap"><MathText text={text} /></p></details>
   const header = lines[dividerIndex - 1].split('|').map((cell) => cell.trim()).filter(Boolean)
   const rows = lines.slice(dividerIndex + 1).filter((line) => line.includes('|')).map((line) => line.split('|').map((cell) => cell.trim()).filter(Boolean))
-  if (header.length < 2 || !rows.length || rows.some((row) => row.length !== header.length)) return <p className="mt-2 text-content-secondary"><MathText text={text} /></p>
+  if (header.length < 2 || !rows.length || rows.some((row) => row.length !== header.length)) return <details className="mt-2 rounded border border-border bg-surface-subtle p-2 text-content-secondary"><summary className="cursor-pointer list-none text-xs font-medium">ⓘ Texto de apoio obrigatório</summary><p className="mt-2 whitespace-pre-wrap"><MathText text={text} /></p></details>
   const before = lines.slice(0, dividerIndex - 1).join('\n').trim()
   const after = lines.slice(dividerIndex + 1 + rows.length).join('\n').trim()
-  return <div className="mt-2 space-y-2 text-content-secondary">
+  return <details className="mt-2 rounded border border-border bg-surface-subtle p-2 text-content-secondary">
+    <summary className="cursor-pointer list-none text-xs font-medium">ⓘ Texto de apoio obrigatório</summary>
+    <div className="mt-2 space-y-2">
     {before && <p><MathText text={before} /></p>}
     <div className="overflow-x-auto rounded border border-border"><table className="min-w-full text-left text-sm"><thead className="bg-surface-subtle"> <tr>{header.map((cell, index) => <th key={index} className="border-b border-border px-3 py-2 font-medium"><MathText text={cell} /></th>)}</tr></thead><tbody>{rows.map((row, rowIndex) => <tr key={rowIndex} className="border-b border-border/70 last:border-0">{row.map((cell, index) => <td key={index} className="px-3 py-2"><MathText text={cell} /></td>)}</tr>)}</tbody></table></div>
     {after && <p><MathText text={after} /></p>}
-  </div>
+    </div>
+  </details>
 }
 
 type ExamRow = {
@@ -88,15 +92,6 @@ const IMAGE_SOURCE_LABELS: Record<string, string> = {
   importado: 'Importada de link colado pelo professor',
   enem: 'Original da prova do ENEM (mesma imagem aplicada na época)',
 }
-const ILLUSTRATION_OPTIONS: Record<string, Array<{ id: string; label: string; example: string }>> = {
-  matematica: [{ id: 'math.function.graph', label: 'Gráfico de função', example: '{"expression":"x^2 - 4*x + 3","domain":[-5,5]}' }, { id: 'math.data.chart', label: 'Gráfico estatístico', example: '{"title":"Pesquisa","type":"bar","labels":["A","B"],"values":[12,18]}' }],
-  geografia: [{ id: 'geography.choropleth', label: 'Mapa temático', example: '{"title":"Mapa","geoJson":{"type":"FeatureCollection","features":[]},"highlightNames":[]}' }],
-  historia: [{ id: 'history.historical-map', label: 'Mapa histórico (GeoJSON autorizado)', example: '{"title":"Mapa histórico","geoJson":{"type":"FeatureCollection","features":[]},"highlightNames":[]}' }],
-  biologia: [{ id: 'biology.phylogeny', label: 'Cladograma', example: '{"title":"Cladograma","newick":"((Humano,Chimpanzé),Gorila);"}' }],
-  quimica: [{ id: 'chemistry.structure', label: 'Estrutura química', example: '{"smiles":"CCO"}' }],
-  fisica: [{ id: 'physics.circuit', label: 'Circuito elétrico', example: '{"components":[{"kind":"source","label":"9 V"},{"kind":"resistor","label":"100 Ω"},{"kind":"ground"}]}' }],
-}
-
 const STATUS_LABELS: Record<string, string> = {
   rascunho: 'Rascunho',
   atribuido: 'Atribuído',
@@ -154,13 +149,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   const [savingReview, setSavingReview] = useState<number | null>(null)
   const [requestingImage, setRequestingImage] = useState<number | null>(null)
   const [renderingIllustration, setRenderingIllustration] = useState<number | null>(null)
-  const [graphEditorQuestion, setGraphEditorQuestion] = useState<number | null>(null)
-  const [graphExpression, setGraphExpression] = useState('x^2')
-  const [graphDomain, setGraphDomain] = useState('-5, 5')
-  const [technicalEditorQuestion, setTechnicalEditorQuestion] = useState<number | null>(null)
-  const [technicalGenerator, setTechnicalGenerator] = useState('')
-  const [technicalParameters, setTechnicalParameters] = useState('')
-  const [illustrationRecommendations, setIllustrationRecommendations] = useState<Record<number, IllustrationRecommendation[]>>({})
+  const [illustrationAnalyses, setIllustrationAnalyses] = useState<Record<number, IllustrationAnalysis>>({})
   const [analyzingIllustrations, setAnalyzingIllustrations] = useState<number | null>(null)
   const [imageConfirmation, setImageConfirmation] = useState<number | null>(null)
   const [actionError, setActionError] = useState<Record<number, string>>({})
@@ -386,6 +375,28 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
     }
   }
 
+  async function handleRepairQuestion(questionNumber: number) {
+    setRegeneratingQuestion(questionNumber)
+    setActionError((prev) => ({ ...prev, [questionNumber]: '' }))
+    try {
+      const res = await fetch(`/api/exams/${examId}/regenerate-question`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ questionNumber, repairOnly: true }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setActionError((prev) => ({ ...prev, [questionNumber]: data.error ?? 'Não foi possível corrigir a questão automaticamente.' }))
+        return
+      }
+      setActionMessage(`Questão ${questionNumber} corrigida automaticamente e reenviada ao controle de qualidade.`)
+      await load()
+    } catch {
+      setActionError((prev) => ({ ...prev, [questionNumber]: 'Falha de rede ao corrigir a questão.' }))
+    } finally {
+      setRegeneratingQuestion(null)
+    }
+  }
+
   async function handleRequestImage(questionNumber: number, force = false) {
     if (force) setImageConfirmation(null)
     setRequestingImage(questionNumber)
@@ -414,57 +425,14 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
     }
   }
 
-  async function handleRenderFunctionGraph(questionNumber: number) {
-    const domain = graphDomain.split(',').map((value) => Number(value.trim()))
-    if (domain.length !== 2 || domain.some((value) => !Number.isFinite(value)) || domain[0] >= domain[1]) {
-      setActionError((previous) => ({ ...previous, [questionNumber]: 'Informe o domínio como dois números, por exemplo: -5, 5.' }))
-      return
-    }
-    setRenderingIllustration(questionNumber)
-    setActionError((previous) => ({ ...previous, [questionNumber]: '' }))
-    try {
-      const res = await fetch(`/api/exams/${examId}/render-illustration`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          questionNumber,
-          generator: 'math.function.graph',
-          parameters: { expression: graphExpression, domain },
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        setActionError((previous) => ({ ...previous, [questionNumber]: data.error ?? 'Não foi possível gerar o gráfico.' }))
-        return
-      }
-      patchQuestion(questionNumber, { needsImage: true, image: data.image })
-      setGraphEditorQuestion(null)
-    } catch {
-      setActionError((previous) => ({ ...previous, [questionNumber]: 'Falha de rede ao gerar o gráfico.' }))
-    } finally {
-      setRenderingIllustration(null)
-    }
-  }
-
-  async function handleRenderTechnicalIllustration(questionNumber: number) {
-    let parameters: unknown
-    try { parameters = JSON.parse(technicalParameters) } catch { setActionError((previous) => ({ ...previous, [questionNumber]: 'Os parâmetros precisam estar em JSON válido.' })); return }
-    setRenderingIllustration(questionNumber)
-    try {
-      const res = await fetch(`/api/exams/${examId}/render-illustration`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionNumber, generator: technicalGenerator, parameters }) })
-      const data = await res.json()
-      if (!res.ok) { setActionError((previous) => ({ ...previous, [questionNumber]: data.error ?? 'Não foi possível gerar a ilustração.' })); return }
-      patchQuestion(questionNumber, { needsImage: true, image: data.image }); setTechnicalEditorQuestion(null)
-    } catch { setActionError((previous) => ({ ...previous, [questionNumber]: 'Falha de rede ao gerar a ilustração.' })) } finally { setRenderingIllustration(null) }
-  }
-
   async function handleAnalyzeIllustrations(questionNumber: number) {
     setAnalyzingIllustrations(questionNumber); setActionError((previous) => ({ ...previous, [questionNumber]: '' }))
     try {
       const res = await fetch(`/api/exams/${examId}/recommend-illustrations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionNumber }) })
       const data = await res.json()
       if (!res.ok) { setActionError((previous) => ({ ...previous, [questionNumber]: data.error ?? 'Não foi possível analisar a questão.' })); return }
-      setIllustrationRecommendations((previous) => ({ ...previous, [questionNumber]: data.recommendations ?? [] }))
+      if (!data.analysis) { setActionError((previous) => ({ ...previous, [questionNumber]: 'A análise visual retornou um formato inválido.' })); return }
+      setIllustrationAnalyses((previous) => ({ ...previous, [questionNumber]: data.analysis }))
     } catch { setActionError((previous) => ({ ...previous, [questionNumber]: 'Falha de rede ao analisar a questão.' })) } finally { setAnalyzingIllustrations(null) }
   }
 
@@ -474,7 +442,8 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
       const res = await fetch(`/api/exams/${examId}/render-illustration`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionNumber, generator: recommendation.generator, parameters: recommendation.parameters }) })
       const data = await res.json()
       if (!res.ok) { setActionError((previous) => ({ ...previous, [questionNumber]: data.error ?? 'Não foi possível gerar a ilustração.' })); return }
-      patchQuestion(questionNumber, { needsImage: true, image: data.image }); setIllustrationRecommendations((previous) => ({ ...previous, [questionNumber]: [] }))
+      patchQuestion(questionNumber, { needsImage: true, image: data.image })
+      setIllustrationAnalyses((previous) => { const next = { ...previous }; delete next[questionNumber]; return next })
     } catch { setActionError((previous) => ({ ...previous, [questionNumber]: 'Falha de rede ao gerar a ilustração.' })) } finally { setRenderingIllustration(null) }
   }
 
@@ -484,6 +453,16 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
       const pending = reviewPendingItems(exam.generationPayload)
       if (pending.length) {
         setReviewBlocker({ items: pending, firstQuestion: firstPendingQuestion(exam.generationPayload) })
+        return
+      }
+    }
+    if (action === 'finalizar_atividade' && exam) {
+      const pendingHumanReview = humanReviewDiagnostics(exam.generationPayload).filter((item) => !item.acknowledged)
+      if (pendingHumanReview.length) {
+        setReviewBlocker({
+          items: pendingHumanReview.map((item) => `Questão ${item.questionNumber}: ${item.diagnostic.message}`),
+          firstQuestion: pendingHumanReview[0]?.questionNumber ?? null,
+        })
         return
       }
     }
@@ -543,9 +522,6 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   const qualityResults = [...(finalQualityReport?.results ?? [])]
     .filter((result) => result.approved)
     .sort((a, b) => a.questionNumber - b.questionNumber)
-  const subjectKey = exam.subject.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-  const isMathExam = subjectKey === 'matematica'
-  const illustrationOptions = ILLUSTRATION_OPTIONS[subjectKey] ?? []
   const reviewEditable =
     exam.status === 'rascunho' || exam.status === 'atribuido' || exam.status === 'em_andamento' || exam.status === 'revisao_concluida' || exam.status === 'em_revisao'
   const isAssignee = exam.assignedTo != null && exam.assignedTo === currentUserId
@@ -554,6 +530,8 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   const canFinalizeActivity = canFinalizeOwnActivity(exam, currentUserId, isCoordenacao)
   const canMarkActivityApplied = canMarkOwnActivityApplied(exam, currentUserId, isCoordenacao)
   const pendingReviewItems = reviewPendingItems(payload)
+  const humanReviewItems = humanReviewDiagnostics(payload).filter((item) => !item.acknowledged)
+  const diagnosticsByQuestion = new Map(payload.questions.map((question) => [question.number, diagnosticsForQuestion(payload, question.number)]))
   const hasFixedApprovalAction =
     (canActOnOwnStep && exam.status === 'em_revisao') ||
     (isCoordenacao && exam.status === 'revisao_concluida')
@@ -620,7 +598,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
               disabled={transitioning}
               className="min-h-10 whitespace-nowrap rounded bg-harmonia-green px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
             >
-              {transitioning ? 'Finalizando e gerando documentos…' : 'Finalizar atividade e gerar documentos'}
+              {transitioning ? 'Finalizando e gerando documentos…' : humanReviewItems.length ? 'Revisar pendências antes de finalizar' : 'Finalizar atividade e gerar documentos'}
             </button>
           )}
 
@@ -637,8 +615,8 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
           {exam.examKind === 'prova' && (
             <button
               onClick={handlePrint}
-              disabled={transitioning || !isCoordenacao || !['aprovado', 'impresso', 'aplicado', 'parcialmente_corrigida', 'corrigido'].includes(exam.status)}
-              title={exam.status === 'aprovado' ? undefined : 'A impressão é liberada após a aprovação da prova.'}
+              disabled={transitioning || !isCoordenacao || exam.status !== 'aprovado'}
+              title={exam.status === 'aprovado' ? undefined : ['impresso', 'aplicado', 'parcialmente_corrigida', 'corrigido'].includes(exam.status) ? 'A prova já foi marcada como impressa.' : 'A impressão é liberada após a aprovação da prova.'}
               className="rounded bg-harmonia-green px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
             >
               {transitioning ? 'Preparando impressão…' : exam.classroomCourseId ? 'Imprimir prova e cartões' : 'Imprimir prova'}
@@ -699,6 +677,15 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
 
       {error && <div className="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
 
+      {humanReviewItems.length > 0 && (
+        <section className="rounded border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950" aria-label="Pendências de revisão humana">
+          <p className="font-semibold">Atenção: {humanReviewItems.length} questão(ões) exigem revisão humana antes da finalização.</p>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">
+            {humanReviewItems.map((item) => <li key={`${item.questionNumber}-${item.diagnostic.code}`}><a href={`#question-${item.questionNumber}`} className="font-medium underline">Questão {item.questionNumber}</a>: {item.diagnostic.message}</li>)}
+          </ul>
+        </section>
+      )}
+
       {exam.examKind === 'prova' && ['aprovado', 'impresso'].includes(exam.status) && (
         <SheetAssignmentsPanel
           examId={examId}
@@ -739,15 +726,6 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
         </div>
       )}
 
-      {exam.unmappedWarnings && exam.unmappedWarnings.length > 0 && (
-        <div className="rounded border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          <p className="font-medium">Avisos</p>
-          <ul className="mt-1 list-disc pl-5">
-            {exam.unmappedWarnings.map((w, i) => <li key={i}>{w}</li>)}
-          </ul>
-        </div>
-      )}
-
       <div className="space-y-6">
         {payload.questions.map((q) => (
           <article id={`question-${q.number}`} key={q.number} className="relative scroll-mt-6 overflow-hidden rounded-xl border border-border bg-surface p-5 text-sm text-content-primary shadow-sm">
@@ -772,8 +750,26 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
               </span>
             </div>
 
+            {(diagnosticsByQuestion.get(q.number) ?? []).filter((item) => item.severity !== 'alerta').map((item) => {
+              const acknowledged = item.severity === 'revisao_humana' && q.review?.adequacy === 'adequada'
+              return (
+                <div key={`${item.code}-${item.message}`} className={`mt-3 rounded border p-3 text-xs ${item.severity === 'revisao_humana' ? 'border-amber-300 bg-amber-50 text-amber-950' : 'border-red-300 bg-red-50 text-red-800'}`}>
+                  <p className="font-semibold">{item.severity === 'revisao_humana' ? 'Revisão humana obrigatória' : 'Correção necessária'}</p>
+                  <p className="mt-1">{item.message}</p>
+                  {item.evidence && <p className="mt-1 text-[11px] opacity-80">Evidência: {item.evidence}</p>}
+                  {acknowledged && <p className="mt-2 font-medium text-harmonia-green">Revisão confirmada pelo professor.</p>}
+                  {item.repairAction === 'reparo_local' && reviewEditable && q.review?.adequacy !== 'adequada' && (
+                    <button type="button" onClick={() => handleRepairQuestion(q.number)} disabled={regeneratingQuestion === q.number} className="mt-2 rounded border border-current px-2 py-1 font-medium disabled:opacity-60">
+                      {regeneratingQuestion === q.number ? 'Corrigindo…' : 'Corrigir automaticamente'}
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+
             {q.supportText && <SupportText text={q.supportText} />}
             <p className="mt-2 font-medium"><MathText text={q.statement} /></p>
+            {q.whatIfImage && <details className="mt-2 inline-block text-xs text-content-secondary"><summary className="cursor-pointer list-none rounded-full border border-border bg-surface px-2 py-1 hover:bg-surface-subtle">ⓘ Informação de ilustração</summary><p className="mt-1 max-w-2xl rounded border border-border bg-surface-subtle p-2">Briefing interno, sem resposta: {q.whatIfImage}</p></details>}
 
             {q.image && (
               <div className="mt-3 rounded border border-border bg-surface-subtle p-3">
@@ -854,18 +850,15 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
                     <button onClick={() => handleReviewNote(q.number, { adequacy: null })} disabled={savingReview === q.number} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary disabled:opacity-60">Cancelar aceitação da questão</button>
                   ) : (
                     <>
-                      <button onClick={() => handleAcceptQuestion(q.number)} disabled={savingReview === q.number} className="rounded bg-harmonia-green px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">{savingReview === q.number ? 'Salvando…' : 'Aceitar questão'}</button>
+                      <button onClick={() => handleAcceptQuestion(q.number)} disabled={savingReview === q.number} className="rounded bg-harmonia-green px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">{savingReview === q.number ? 'Salvando…' : (diagnosticsByQuestion.get(q.number) ?? []).some((item) => item.severity === 'revisao_humana' && item.blocksApproval) ? 'Confirmar revisão e aceitar questão' : 'Aceitar questão'}</button>
                       {q.source !== 'enem_bank' && <button onClick={() => handleRegenerateQuestion(q.number)} disabled={regeneratingQuestion === q.number} className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">{regeneratingQuestion === q.number ? 'Gerando…' : 'Recusar e gerar nova'}</button>}
                       {!q.image && <button onClick={() => handleRequestImage(q.number)} disabled={requestingImage === q.number} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary disabled:opacity-60">{requestingImage === q.number ? 'Gerando imagem…' : 'Gerar imagem'}</button>}
-                      {illustrationOptions.length > 0 && <button onClick={() => handleAnalyzeIllustrations(q.number)} disabled={analyzingIllustrations === q.number} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary disabled:opacity-60">{analyzingIllustrations === q.number ? 'Analisando recursos visuais…' : 'Ver ilustrações recomendadas'}</button>}
-                      {isMathExam && <button onClick={() => { setGraphEditorQuestion(q.number); setGraphExpression('x^2'); setGraphDomain('-5, 5') }} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary">Gerar gráfico de função</button>}
+                      <button onClick={() => handleAnalyzeIllustrations(q.number)} disabled={analyzingIllustrations === q.number} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary disabled:opacity-60">{analyzingIllustrations === q.number ? 'Analisando recursos visuais…' : 'Ver ilustrações recomendadas'}</button>
                     </>
                   )}
                 </div>
                 {imageConfirmation === q.number && <div className="flex flex-wrap items-center gap-2 rounded bg-amber-50 p-2 text-xs text-amber-900"><span>Esta questão não precisa de imagem. Gerar mesmo assim?</span><button onClick={() => handleRequestImage(q.number, true)} className="rounded bg-amber-700 px-2 py-1 font-medium text-white">Gerar mesmo assim</button><button onClick={() => setImageConfirmation(null)} className="underline">Cancelar</button></div>}
-                {graphEditorQuestion === q.number && <div className="space-y-2 rounded border border-harmonia-green/30 bg-surface p-3 text-xs"><p className="font-medium">Gráfico determinístico (sem IA)</p><label className="block">Função, usando apenas x e operações básicas (ex.: <code>x^2 - 4*x + 3</code>)<input value={graphExpression} onChange={(event) => setGraphExpression(event.target.value)} className="mt-1 block w-full rounded border border-border px-2 py-1.5 text-sm" /></label><label className="block">Domínio, mínimo e máximo (ex.: <code>-5, 5</code>)<input value={graphDomain} onChange={(event) => setGraphDomain(event.target.value)} className="mt-1 block w-full rounded border border-border px-2 py-1.5 text-sm" /></label><div className="flex gap-2"><button onClick={() => handleRenderFunctionGraph(q.number)} disabled={renderingIllustration === q.number} className="rounded bg-harmonia-green px-2 py-1.5 font-medium text-white disabled:opacity-60">{renderingIllustration === q.number ? 'Renderizando…' : 'Gerar gráfico'}</button><button onClick={() => setGraphEditorQuestion(null)} className="rounded border border-border px-2 py-1.5">Cancelar</button></div></div>}
-                {technicalEditorQuestion === q.number && <div className="space-y-2 rounded border border-harmonia-green/30 bg-surface p-3 text-xs"><p className="font-medium">Ilustração técnica determinística</p><select value={technicalGenerator} onChange={(event) => { const option = illustrationOptions.find((item) => item.id === event.target.value); setTechnicalGenerator(event.target.value); if (option) setTechnicalParameters(option.example) }} className="w-full rounded border border-border px-2 py-1.5 text-sm">{illustrationOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select><textarea value={technicalParameters} onChange={(event) => setTechnicalParameters(event.target.value)} rows={5} className="w-full rounded border border-border p-2 font-mono text-xs" aria-label="Parâmetros da ilustração" /><div className="flex gap-2"><button onClick={() => handleRenderTechnicalIllustration(q.number)} disabled={renderingIllustration === q.number} className="rounded bg-harmonia-green px-2 py-1.5 font-medium text-white disabled:opacity-60">{renderingIllustration === q.number ? 'Renderizando…' : 'Gerar ilustração'}</button><button onClick={() => setTechnicalEditorQuestion(null)} className="rounded border border-border px-2 py-1.5">Cancelar</button></div></div>}
-                {illustrationRecommendations[q.number] && <div className="space-y-2 rounded border border-harmonia-green/30 bg-surface p-3 text-xs"><p className="font-medium">Sugestões da questão</p>{illustrationRecommendations[q.number].length === 0 ? <div className="space-y-2"><p className="text-neutral-600">Não há dados suficientes para uma ilustração determinística confiável.</p><button onClick={() => handleRequestImage(q.number)} disabled={requestingImage === q.number} className="rounded bg-harmonia-green px-2 py-1 font-medium text-white disabled:opacity-60">{requestingImage === q.number ? 'Gerando imagem…' : 'Gerar imagem (IA/banco)'}</button></div> : illustrationRecommendations[q.number].map((recommendation) => <div key={recommendation.generator} className="flex flex-wrap items-center gap-2"><span><strong>{recommendation.title}</strong> — {recommendation.rationale}</span><button onClick={() => handleGenerateRecommendedIllustration(q.number, recommendation)} disabled={renderingIllustration === q.number} className="rounded bg-harmonia-green px-2 py-1 font-medium text-white disabled:opacity-60">{renderingIllustration === q.number ? 'Gerando…' : 'Usar esta ilustração'}</button></div>)}</div>}
+                {illustrationAnalyses[q.number] && <div className={`space-y-2 rounded border p-3 text-xs ${illustrationAnalyses[q.number].decision === 'missing_required_visual' ? 'border-red-500/40 bg-red-500/5' : 'border-harmonia-green/30 bg-surface'}`}><p className="font-medium">Análise visual da questão</p><p className="text-neutral-600">{illustrationAnalyses[q.number].reason}</p>{illustrationAnalyses[q.number].recommendations.map((recommendation) => <div key={recommendation.generator} className="flex flex-wrap items-center gap-2"><span><strong>{recommendation.title}</strong> — {recommendation.rationale}</span><button onClick={() => handleGenerateRecommendedIllustration(q.number, recommendation)} disabled={renderingIllustration === q.number} className="rounded bg-harmonia-green px-2 py-1 font-medium text-white disabled:opacity-60">{renderingIllustration === q.number ? 'Gerando…' : 'Usar esta ilustração'}</button></div>)}</div>}
 
                 {actionError[q.number] && <p className="text-xs text-red-600">{actionError[q.number]}</p>}
               </div>

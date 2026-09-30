@@ -5,6 +5,8 @@ import { db } from '@/db/client'
 import { generatedExams } from '@/db/schema'
 import { auth } from '@/auth/auth'
 import { resolveQuestionImage } from '@/lib/images/questionImageService'
+import { generateIllustrationBrief } from '@/lib/images/illustrationBrief'
+import { AiBudgetExceededError } from '@/lib/ai/operationBudget'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { authorizeExamAccess } from '@/lib/exams/authorizeExamAccess'
 
@@ -54,11 +56,23 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     })
   }
 
-  const query = parsed.data.query?.trim() || question.imageQuery?.trim() ||
-    `${exam.subject}: ${question.bnccSummary ?? question.statement.slice(0, 220)}. Ilustração didática sem texto.`
-
   try {
     const questionContext = [question.supportText, question.statement, question.alternatives?.map((a) => `${a.letter}) ${a.text}`).join('\n')].filter(Boolean).join('\n')
+    // Provas anteriores ainda não possuem whatIfImage. Criamos e guardamos o
+    // briefing uma vez, sem voltar a usar o enunciado bruto como prompt.
+    const hadWhatIfImage = Boolean(question.whatIfImage?.trim())
+    const explicitQuery = parsed.data.query?.trim()
+    // Pedido manual não depende de uma chamada adicional de IA. O contexto
+    // informado pelo professor basta para buscar ou gerar a imagem, em
+    // qualquer disciplina ou tipo de questão.
+    const whatIfImage = question.whatIfImage?.trim()
+      || explicitQuery
+      || await generateIllustrationBrief({ subject: exam.subject, statement: question.statement, supportText: question.supportText })
+    if (!hadWhatIfImage) {
+      question.whatIfImage = whatIfImage
+      await db.update(generatedExams).set({ generationPayload: payload }).where(eq(generatedExams.id, examId))
+    }
+    const query = parsed.data.query?.trim() || whatIfImage
     const resolved = await resolveQuestionImage(query, questionContext, parsed.data.expectedText)
     if (!resolved) {
       return NextResponse.json({ error: 'Não foi possível encontrar nem gerar uma imagem para essa busca.' }, { status: 502 })
@@ -69,6 +83,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     }
     question.needsImage = true
     question.imageQuery = query
+    question.whatIfImage = whatIfImage
     // Uma imagem pedida manualmente pelo revisor já é, por definição, uma
     // escolha humana — mas ainda passa pelo mesmo par aprovar/rejeitar da
     // tela de revisão antes de ir pro documento final (nunca aprovado
@@ -80,6 +95,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
 
     return NextResponse.json({ ok: true, image: question.image })
   } catch (err) {
+    if (err instanceof AiBudgetExceededError) {
+      return NextResponse.json({ error: 'O limite diário de IA foi atingido. A ilustração poderá ser gerada após o próximo reset da cota.' }, { status: 429 })
+    }
     console.error('[exams/request-image] erro:', err)
     return NextResponse.json({ error: 'Erro ao buscar/gerar imagem.' }, { status: 502 })
   }

@@ -117,7 +117,7 @@ describe('teste de qualidade determinístico', () => {
     expect(blocks).toEqual([])
   })
 
-  it('continua bloqueando questão discursiva com falha real descrita no critério', () => {
+  it('não deixa avaliação editorial de linguagem bloquear questão discursiva', () => {
     const item = descriptiveQuestion()
     const blocks = qualityApprovalBlocks(payloadWithReport(item, {
       approved: false,
@@ -127,6 +127,6 @@ describe('teste de qualidade determinístico', () => {
       ],
       issues: [],
     }))
-    expect(blocks).toContain('Questão 1: o relatório de qualidade a reprovou.')
+    expect(blocks).toEqual([])
   })
 })

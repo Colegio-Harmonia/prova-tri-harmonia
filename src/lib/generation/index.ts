@@ -6,15 +6,26 @@ import type { PipelineContext, PipelineOptions } from './types'
 
 export * from './types'
 export * from './domains'
+export * from './similarity'
+export * from './alternatives'
+export * from './coherence'
 export { assembleExamQuestion } from './finalize'
 export { llmStageRunners } from './runners'
+export { generateUnifiedQuestion, type UnifiedGenerationResult } from './unifiedRunner'
+export { generateExamBlueprint, type BlueprintSlot, type BlueprintParams } from './blueprint'
+export { runLocalQualityGate, type LocalGateResult, type LocalGateIssue } from './localQualityGate'
+
+/** A aplicação usa exclusivamente a geração unificada. */
+export function isUnifiedGenerationEnabled(): boolean {
+  return true
+}
 
 /**
- * Pipeline fragmentado é o PADRÃO de geração. `STAGED_GENERATION_ENABLED=false`
- * funciona como kill switch: volta ao fluxo monolítico sem mudar código.
+ * Compatibilidade temporária para registros antigos. Nenhuma entrada atual
+ * deve depender deste sinal; a geração nova usa somente o fluxo unificado.
  */
 export function isStagedGenerationEnabled(): boolean {
-  return process.env.STAGED_GENERATION_ENABLED !== 'false'
+  return false
 }
 
 /**

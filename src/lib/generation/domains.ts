@@ -22,6 +22,7 @@ export const CANONICAL_DOMAIN_IDS = [
   'arithmetic_progression',
   'geometric_progression',
   'linear_recurrence',
+  'linear_recurrence_order2',
   'linear_function',
   'quadratic_function',
   'point_distance',
@@ -51,6 +52,8 @@ export type DomainAnswer = {
   numeric: number
   /** Texto exibível, em pt-BR, com unidade quando houver. */
   display: string
+  /** Forma curta para uma alternativa objetiva; nunca inclui a resolução. */
+  choiceDisplay?: string
   unit?: string
   /** Para respostas categóricas (ex.: posição relativa de circunferências). */
   category?: string
@@ -120,7 +123,7 @@ const DOMAINS: Record<CanonicalDomainId, CanonicalDomain> = {
       const y = (a1 * c2 - c1 * a2) / det
       const display = `x = ${formatNumber(x)} e y = ${formatNumber(y)}`
       return {
-        answer: { numeric: x, display },
+        answer: { numeric: x, display, choiceDisplay: `(${formatNumber(x)}; ${formatNumber(y)})` },
         derivation: `det = ${formatNumber(a1)}·${formatNumber(b2)} − ${formatNumber(b1)}·${formatNumber(a2)} = ${formatNumber(det)}; x = ${formatNumber(x)}; y = ${formatNumber(y)}.`,
         distractorHints: uniq([`x = ${formatNumber(y)} e y = ${formatNumber(x)}`, `x = ${formatNumber(-x)} e y = ${formatNumber(-y)}`, `x = ${formatNumber(x)} e y = ${formatNumber(-y)}`]),
       }
@@ -170,7 +173,7 @@ const DOMAINS: Record<CanonicalDomainId, CanonicalDomain> = {
       const interest = (values.principal * values.rate * values.time) / 100
       const total = values.principal + interest
       return {
-        answer: { numeric: interest, display: `R$ ${formatNumber(interest)}` },
+        answer: { numeric: interest, display: `R${formatNumber(interest)}` },
         derivation: `J = C·i·t = ${formatNumber(values.principal)} × ${formatNumber(values.rate)}% × ${formatNumber(values.time)} = ${formatNumber(interest)}; montante = ${formatNumber(total)}.`,
         distractorHints: numericHints(interest, [values.principal * values.rate * values.time, total - interest * 2, values.principal * values.rate * values.time / 100 + values.principal * 0.1]),
       }
@@ -188,7 +191,7 @@ const DOMAINS: Record<CanonicalDomainId, CanonicalDomain> = {
       const interest = total - values.principal
       const simple = (values.principal * values.rate * values.time) / 100
       return {
-        answer: { numeric: total, display: `R$ ${formatNumber(Number(total.toFixed(2)))}` },
+        answer: { numeric: total, display: `R${formatNumber(Number(total.toFixed(2)))}` },
         derivation: `M = C·(1+i)^t = ${formatNumber(values.principal)} × (1 + ${formatNumber(values.rate)}/100)^${formatNumber(values.time)} = ${formatNumber(Number(total.toFixed(2)))}; juros = ${formatNumber(Number(interest.toFixed(2)))}.`,
         distractorHints: numericHints(Number(total.toFixed(2)), [values.principal + simple, values.principal + interest, values.principal * Math.pow(1 + values.rate / 100, values.time + 1)]),
       }
@@ -205,7 +208,7 @@ const DOMAINS: Record<CanonicalDomainId, CanonicalDomain> = {
       const an = values.a1 + (values.n - 1) * values.d
       const sum = (values.n * (values.a1 + an)) / 2
       return {
-        answer: { numeric: an, display: `a${formatNumber(values.n)} = ${formatNumber(an)}` },
+        answer: { numeric: an, display: `a${formatNumber(values.n)} = ${formatNumber(an)}`, choiceDisplay: formatNumber(an) },
         derivation: `a_n = a1 + (n−1)d = ${formatNumber(values.a1)} + (${formatNumber(values.n)}−1)·${formatNumber(values.d)} = ${formatNumber(an)}; soma dos ${formatNumber(values.n)} primeiros termos = ${formatNumber(sum)}.`,
         distractorHints: numericHints(an, [values.a1 + values.n * values.d, values.a1 + (values.n + 1) * values.d, values.a1 * values.d * values.n]),
       }
@@ -221,7 +224,7 @@ const DOMAINS: Record<CanonicalDomainId, CanonicalDomain> = {
       req(values, this.fields)
       const an = values.a1 * Math.pow(values.q, values.n - 1)
       return {
-        answer: { numeric: an, display: `a${formatNumber(values.n)} = ${formatNumber(an)}` },
+        answer: { numeric: an, display: `a${formatNumber(values.n)} = ${formatNumber(an)}`, choiceDisplay: formatNumber(an) },
         derivation: `a_n = a1·q^(n−1) = ${formatNumber(values.a1)}·${formatNumber(values.q)}^${formatNumber(values.n - 1)} = ${formatNumber(an)}.`,
         distractorHints: numericHints(an, [values.a1 * Math.pow(values.q, values.n), values.a1 * values.q * values.n, values.a1 + values.n * values.q]),
       }
@@ -243,12 +246,42 @@ const DOMAINS: Record<CanonicalDomainId, CanonicalDomain> = {
         if (k <= 6 || k === values.n) steps.push(`x${k} = ${formatNumber(values.a)}·x${k - 1} + ${formatNumber(values.b)} = ${formatNumber(current)}`)
       }
       return {
-        answer: { numeric: current, display: `x${formatNumber(values.n)} = ${formatNumber(current)}` },
+        answer: { numeric: current, display: `x${formatNumber(values.n)} = ${formatNumber(current)}`, choiceDisplay: formatNumber(current) },
         derivation: steps.join('; ') + '.',
         distractorHints: uniq([
           `${formatNumber(values.a * current + values.b)} (avançou um passo além)`,
           `${formatNumber(values.a0 + values.n * values.b)} (tratou como progressão aritmética)`,
           `${formatNumber(values.a * values.a0 + values.b)} (parou no primeiro passo)`,
+        ]),
+      }
+    },
+  },
+  linear_recurrence_order2: {
+    id: 'linear_recurrence_order2',
+    title: 'Recorrência linear de 2ª ordem',
+    subjects: ['matematica'],
+    fields: ['firstTerm', 'secondTerm', 'previousCoefficient', 'currentCoefficient', 'termIndex'],
+    inputDescription: 'Sequência dada por u1 = firstTerm, u2 = secondTerm e u_n = previousCoefficient·u_(n-2) + currentCoefficient·u_(n-1). Envie os dois termos iniciais, os coeficientes e termIndex (n ≥ 3). Nunca envie o resultado.',
+    compute(values) {
+      req(values, this.fields)
+      const n = values.termIndex
+      if (!Number.isInteger(n) || n < 3 || n > 60) throw new Error('termIndex precisa ser inteiro entre 3 e 60.')
+      let previous = values.firstTerm
+      let current = values.secondTerm
+      const steps = [`u1 = ${formatNumber(previous)}; u2 = ${formatNumber(current)}`]
+      for (let index = 3; index <= n; index++) {
+        const next = values.previousCoefficient * previous + values.currentCoefficient * current
+        previous = current
+        current = next
+      }
+      const display = `u${formatNumber(n)} = ${formatNumber(Number(current.toFixed(6)))}`
+      return {
+        answer: { numeric: current, display, choiceDisplay: formatNumber(Number(current.toFixed(6))) },
+        derivation: `${steps[0]}; u_n = ${formatNumber(values.previousCoefficient)}·u_(n-2) + ${formatNumber(values.currentCoefficient)}·u_(n-1) ⇒ ${display}.`,
+        distractorHints: uniq([
+          `${formatNumber(values.currentCoefficient * current + values.previousCoefficient * previous)} (avançou um passo além)`,
+          `${formatNumber(values.currentCoefficient * values.secondTerm + values.previousCoefficient * values.firstTerm)} (parou cedo)`,
+          `${formatNumber(values.firstTerm + values.secondTerm + (n - 2) * values.currentCoefficient)} (tratou como progressão aritmética)`,
         ]),
       }
     },
@@ -263,7 +296,7 @@ const DOMAINS: Record<CanonicalDomainId, CanonicalDomain> = {
       req(values, this.fields)
       const y = values.a * values.x + values.b
       return {
-        answer: { numeric: y, display: `f(${formatNumber(values.x)}) = ${formatNumber(y)}` },
+        answer: { numeric: y, display: `f(${formatNumber(values.x)}) = ${formatNumber(y)}`, choiceDisplay: formatNumber(y) },
         derivation: `f(${formatNumber(values.x)}) = ${formatNumber(values.a)}·${formatNumber(values.x)} + ${formatNumber(values.b)} = ${formatNumber(y)}.`,
         distractorHints: numericHints(y, [values.a * values.x - values.b, (values.a + values.b) * values.x, values.a + values.b * values.x]),
       }
@@ -281,7 +314,7 @@ const DOMAINS: Record<CanonicalDomainId, CanonicalDomain> = {
       const y = values.a * values.x * values.x + values.b * values.x + values.c
       const delta = values.b * values.b - 4 * values.a * values.c
       return {
-        answer: { numeric: y, display: `f(${formatNumber(values.x)}) = ${formatNumber(y)}` },
+        answer: { numeric: y, display: `f(${formatNumber(values.x)}) = ${formatNumber(y)}`, choiceDisplay: formatNumber(y) },
         derivation: `f(${formatNumber(values.x)}) = ${formatNumber(values.a)}·(${formatNumber(values.x)})² + ${formatNumber(values.b)}·${formatNumber(values.x)} + ${formatNumber(values.c)} = ${formatNumber(y)}; Δ = ${formatNumber(delta)}.`,
         distractorHints: numericHints(y, [values.a * values.x * values.x - values.b * values.x + values.c, values.a * values.x + values.b * values.x + values.c, delta]),
       }
@@ -327,12 +360,9 @@ const DOMAINS: Record<CanonicalDomainId, CanonicalDomain> = {
       return {
         answer: { numeric: intersections, display: `${label} — ${intersections} ponto(s) de interseção`, category },
         derivation: `r1 + r2 = ${formatNumber(sum)}; |r1 − r2| = ${formatNumber(diff)}; d = ${formatNumber(distance)} ⇒ ${label}.`,
-        distractorHints: [
-          'secantes (2 pontos) — quando d < r1 + r2 e d > |r1 − r2|',
-          'tangentes (1 ponto) — quando d = r1 + r2 ou d = |r1 − r2|',
-          'externas (nenhum ponto) — quando d > r1 + r2',
-          'uma interna à outra (nenhum ponto) — quando d < |r1 − r2|',
-        ],
+        // Categorias curtas e distintas, nunca a correta — para o modelo não
+        // copiar texto explicativo longo como alternativa.
+        distractorHints: ['externa', 'tangente', 'secante', 'interna'].filter((item) => item !== category),
       }
     },
   },
@@ -351,7 +381,7 @@ const DOMAINS: Record<CanonicalDomainId, CanonicalDomain> = {
       return {
         answer: { numeric: code, display: label, category },
         derivation: `d = ${formatNumber(distance)}; r = ${formatNumber(radius)} ⇒ d ${code < 0 ? '<' : code === 0 ? '=' : '>'} r ⇒ ${label}.`,
-        distractorHints: ['interno à esfera', 'sobre a superfície', 'externo à esfera'],
+        distractorHints: ['interno', 'sobre a superfície', 'externo'].filter((item) => item !== category),
       }
     },
   },
@@ -383,8 +413,8 @@ const DOMAINS: Record<CanonicalDomainId, CanonicalDomain> = {
       if (values.time === 0) throw new Error('O tempo não pode ser zero.')
       const speed = values.distance / values.time
       return {
-        answer: { numeric: speed, display: formatNumber(Number(speed.toFixed(6))) },
-        derivation: `v = d / t = ${formatNumber(values.distance)} ÷ ${formatNumber(values.time)} = ${formatNumber(Number(speed.toFixed(6)))}.`,
+        answer: { numeric: speed, display: `${formatNumber(Number(speed.toFixed(6)))} km/h` },
+        derivation: `v = d / t = ${formatNumber(values.distance)} km ÷ ${formatNumber(values.time)} h = ${formatNumber(Number(speed.toFixed(6)))} km/h.`,
         distractorHints: numericHints(Number(speed.toFixed(6)), [values.distance * values.time, values.time / values.distance, values.distance - values.time]),
       }
     },

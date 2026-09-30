@@ -45,6 +45,14 @@ describe('motor de regras determinísticas de Português', () => {
     expect(evaluate('ortografia', { rule: 'mas_mais', sense: 'intensidade' }).correctForm).toBe('mais')
     expect(evaluate('ortografia', { rule: 'porque', sense: 'causa' }).correctForm).toBe('porque')
     expect(evaluate('ortografia', { rule: 'porque', sense: 'pergunta' }).correctForm).toBe('por que')
+    expect(evaluate('ortografia', { rule: 'senao_se_nao', sense: 'excecao' }).correctForm).toBe('senão')
+    expect(evaluate('ortografia', { rule: 'senao_se_nao', sense: 'condicao' }).correctForm).toBe('se não')
+  })
+
+  it('normaliza sinônimos pedagógicos da intenção ortográfica', () => {
+    expect(evaluate('ortografia', { rule: 'mas_mais', sense: 'adversidade/oposição' }).correctForm).toBe('mas')
+    expect(evaluate('ortografia', { rule: 'mas_mais', sense: 'oposição de sentidos entre orações' }).correctForm).toBe('mas')
+    expect(evaluate('ortografia', { rule: 'porque', sense: 'causa/explicação' }).correctForm).toBe('porque')
   })
 
   it('resolve regência verbal e acentuação pelo lexicon', () => {

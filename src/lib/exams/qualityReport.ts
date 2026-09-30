@@ -1,10 +1,11 @@
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import type { CurriculumSelection } from '@/types/exam'
 import { isNotApplicableEvidence, normalizeQualityChecks, runQuestionQualityTest, type QualityReportResult } from './questionQualityTest'
+import { diagnosticFromIssue } from './qualityDiagnostics'
 
 // Versão canônica do relatório persistido. Ao subir a versão, provas antigas
 // passam a ser reauditadas automaticamente na próxima aprovação (auto-cura).
-export const QUALITY_REPORT_VERSION = 'quality-test-v3'
+export const QUALITY_REPORT_VERSION = 'quality-test-v4'
 
 export function latestQualityReport(payload: ExamGenerationResult) {
   return payload.metadata.qualityTest?.reports?.at(-1)
@@ -35,7 +36,7 @@ export function normalizeStoredQualityReport(payload: ExamGenerationResult): Exa
     results: report.results.map((result) => {
       const checks = normalizeQualityChecks(result.checks)
       const issues = result.issues.map((issue) =>
-        issue.severity === 'bloqueante' && isNotApplicableEvidence(issue.reason)
+        issue.severity === 'bloqueante' && (isNotApplicableEvidence(issue.reason) || /teste de qualidade\s*—\s*(linguagem|alinhamento)/i.test(issue.reason))
           ? { ...issue, severity: 'alerta' as const }
           : issue,
       )
@@ -43,7 +44,8 @@ export function normalizeStoredQualityReport(payload: ExamGenerationResult): Exa
         ...result,
         checks,
         issues,
-        approved: !issues.some((issue) => issue.severity === 'bloqueante') && !checks.some((check) => check.status === 'reprovado'),
+        diagnostics: result.diagnostics ?? issues.map((issue) => diagnosticFromIssue(issue)),
+        approved: !issues.some((issue) => issue.severity === 'bloqueante') && !checks.some((check) => check.status === 'reprovado' && !['linguagem', 'alinhamento'].includes(check.criterion)),
       }
     }),
   }))

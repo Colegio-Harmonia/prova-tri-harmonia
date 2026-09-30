@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { qualityDiagnosticSchema } from '@/lib/exams/qualityDiagnostics'
 
 export const BLOOM_LEVELS = ['lembrar', 'compreender', 'aplicar', 'analisar', 'avaliar', 'criar'] as const
 export const DOK_LEVELS = ['DOK_1', 'DOK_2', 'DOK_3', 'DOK_4'] as const
@@ -29,7 +30,7 @@ const pedagogicalClassificationSchema = z.object({
 // de questões antigas já persistidas — o Gate 0 do pipeline fragmentado
 // proíbe escolhê-lo em gerações novas.
 export const solutionBlueprintSchema = z.object({
-  domain: z.enum(['linear_system', 'rectangular_prism_volume', 'average_speed', 'percentage', 'ratio_proportion', 'simple_interest', 'compound_interest', 'arithmetic_progression', 'geometric_progression', 'linear_recurrence', 'linear_function', 'quadratic_function', 'point_distance', 'circle_relative_position', 'sphere_point_position', 'kinematics_uniform', 'kinematics_accelerated', 'newton_second_law', 'weight_force', 'kinetic_energy', 'ohms_law', 'electric_power', 'density', 'mole_calculation', 'molar_concentration', 'solution_dilution', 'other']),
+  domain: z.enum(['linear_system', 'rectangular_prism_volume', 'average_speed', 'percentage', 'ratio_proportion', 'simple_interest', 'compound_interest', 'arithmetic_progression', 'geometric_progression', 'linear_recurrence', 'linear_recurrence_order2', 'linear_function', 'quadratic_function', 'point_distance', 'circle_relative_position', 'sphere_point_position', 'kinematics_uniform', 'kinematics_accelerated', 'newton_second_law', 'weight_force', 'kinetic_energy', 'ohms_law', 'electric_power', 'density', 'mole_calculation', 'molar_concentration', 'solution_dilution', 'other']),
   // A ficha é interna. O modelo ocasionalmente devolve um rótulo mais
   // descritivo aqui; isso não pode invalidar toda uma prova por limite de
   // apresentação, pois os campos que determinam o cálculo são equations e
@@ -86,6 +87,18 @@ export const examQuestionSchema = z.object({
   }).default({ applicable: false, source: null, value: null, approximate: false }),
   needsImage: z.boolean().optional().default(false),
   imageQuery: z.string().nullable().optional(),
+  whatIfImage: z.string().nullable().optional(),
+  // Plano visual produzido pelo estágio automático. Mantém o motivo, o
+  // renderer e os parâmetros para que a imagem possa ser refeita sem nova IA.
+  visualPlan: z.object({
+    decision: z.enum(['recommended', 'not_needed', 'missing_required_visual', 'ai_optional']),
+    required: z.boolean(),
+    purpose: z.enum(['nenhum', 'interpretar_dados', 'representar_relacao', 'localizar_elemento', 'comparar_elementos', 'identificar_estrutura', 'analisar_documento', 'apoiar_contexto']).optional(),
+    visualType: z.enum(['none', 'blank_coordinate_plane', 'coordinate_plane', 'function_graph', 'statistical_chart', 'geometric_diagram', 'chemical_structure', 'map', 'timeline', 'flowchart', 'phylogeny', 'historical_document', 'illustration']).optional(),
+    renderer: z.string().nullable(),
+    parameters: z.record(z.unknown()).nullable(),
+    rationale: z.string(),
+  }).nullable().optional(),
   // Filled after generation by questionImageService — never by Gemini
   // itself, and never trusted until a human approves it (see
   // examValidator's hard-reset of this block for ineligible subjects).
@@ -145,7 +158,7 @@ export const examGenerationResultSchema = z.object({
     alternativesCount: z.number().int(),
     qualityTest: z.object({
       version: z.string(), checkedAt: z.string(), repairedQuestionNumbers: z.array(z.number().int()), warnings: z.array(z.string()),
-      reports: z.array(z.object({ phase: z.string(), results: z.array(z.object({ questionNumber: z.number().int(), approved: z.boolean(), verdictReason: z.string().optional(), checks: z.array(z.object({ criterion: z.string(), status: z.enum(['aprovado', 'reprovado', 'não_aplicável']), evidence: z.string() })).optional(), answerKeyAudit: z.object({ declaredLetter: z.string().nullable(), independentlyDerivedLetter: z.string().nullable(), matchesDeclared: z.boolean(), evidence: z.string() }).nullable().optional(), issues: z.array(z.object({ severity: z.enum(['bloqueante', 'alerta']), reason: z.string() })) })) })).optional(),
+      reports: z.array(z.object({ phase: z.string(), results: z.array(z.object({ questionNumber: z.number().int(), approved: z.boolean(), verdictReason: z.string().optional(), checks: z.array(z.object({ criterion: z.string(), status: z.enum(['aprovado', 'reprovado', 'não_aplicável']), evidence: z.string() })).optional(), answerKeyAudit: z.object({ declaredLetter: z.string().nullable(), independentlyDerivedLetter: z.string().nullable(), matchesDeclared: z.boolean(), evidence: z.string() }).nullable().optional(), issues: z.array(z.object({ severity: z.enum(['bloqueante', 'alerta']), reason: z.string() })), diagnostics: z.array(qualityDiagnosticSchema).optional() })) })).optional(),
     }).optional(),
   }),
   questions: z.array(examQuestionSchema),
@@ -207,7 +220,7 @@ export const GEMINI_RESPONSE_SCHEMA = {
           solutionBlueprint: {
             type: 'object', nullable: true,
             properties: {
-              domain: { type: 'string', enum: ['linear_system', 'rectangular_prism_volume', 'average_speed', 'percentage', 'ratio_proportion', 'simple_interest', 'compound_interest', 'arithmetic_progression', 'geometric_progression', 'linear_recurrence', 'linear_function', 'quadratic_function', 'point_distance', 'circle_relative_position', 'sphere_point_position', 'kinematics_uniform', 'kinematics_accelerated', 'newton_second_law', 'weight_force', 'kinetic_energy', 'ohms_law', 'electric_power', 'density', 'mole_calculation', 'molar_concentration', 'solution_dilution', 'other'] },
+              domain: { type: 'string', enum: ['linear_system', 'rectangular_prism_volume', 'average_speed', 'percentage', 'ratio_proportion', 'simple_interest', 'compound_interest', 'arithmetic_progression', 'geometric_progression', 'linear_recurrence', 'linear_recurrence_order2', 'linear_function', 'quadratic_function', 'point_distance', 'circle_relative_position', 'sphere_point_position', 'kinematics_uniform', 'kinematics_accelerated', 'newton_second_law', 'weight_force', 'kinetic_energy', 'ohms_law', 'electric_power', 'density', 'mole_calculation', 'molar_concentration', 'solution_dilution', 'other'] },
               variables: { type: 'array', items: { type: 'object', properties: { symbol: { type: 'string' }, meaning: { type: 'string' } }, required: ['symbol', 'meaning'] } },
               equations: { type: 'array', items: { type: 'string' } },
               values: { type: 'object', additionalProperties: { type: 'number' } },

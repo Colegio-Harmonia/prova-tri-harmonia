@@ -3,9 +3,14 @@ import type { AssembledQuestion, PipelineContext } from './types'
 
 /** Estágio 6 — monta o `ExamQuestion` final apenas quando a cadeia passou. */
 export function assembleExamQuestion(ctx: PipelineContext, assembled: AssembledQuestion): ExamQuestion {
-  const { plan, truth, alternatives, correctLetter, statement, supportText, metadata } = assembled
+  const { plan, truth, alternatives, correctLetter, visualPlan, statement, supportText, metadata } = assembled
   const isObjective = ctx.questionType === 'objetiva'
   const steps = truth.derivation.split(/;\s*/).map((step) => step.trim()).filter(Boolean)
+  const visualSpec = visualPlan.visualType === 'coordinate_plane'
+    ? 'coordinate_plane'
+    : visualPlan.visualType === 'function_graph' || visualPlan.visualType === 'statistical_chart'
+      ? 'chart'
+      : 'none'
 
   return {
     number: ctx.questionNumber,
@@ -26,7 +31,7 @@ export function assembleExamQuestion(ctx: PipelineContext, assembled: AssembledQ
           values: truth.values,
           calculationSteps: steps.length ? steps.slice(0, 12) : [truth.derivation],
           derivedAnswer: truth.derivedAnswer ?? truth.derivation,
-          visualSpec: 'none',
+          visualSpec,
         }
       : null,
     bnccCodes: metadata.bnccCodes,
@@ -34,8 +39,18 @@ export function assembleExamQuestion(ctx: PipelineContext, assembled: AssembledQ
     bnccSummary: metadata.bnccSummary,
     pedagogicalClassification: metadata.pedagogicalClassification,
     saeb: { applicable: false, source: null, value: null, approximate: false },
-    needsImage: metadata.needsImage ?? false,
-    imageQuery: metadata.imageQuery ?? null,
+    needsImage: visualPlan.required,
+    imageQuery: visualPlan.required ? visualPlan.rationale : null,
+    whatIfImage: visualPlan.whatIfImage ?? null,
+    visualPlan: {
+      decision: visualPlan.required ? 'recommended' : 'not_needed',
+      required: visualPlan.required,
+      purpose: visualPlan.purpose,
+      visualType: visualPlan.visualType,
+      renderer: null,
+      parameters: visualPlan.data ?? null,
+      rationale: visualPlan.rationale,
+    },
     image: null,
     review: null,
   }

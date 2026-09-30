@@ -130,6 +130,12 @@ function numericTokens(text: string): number[] {
 export function gateStatement(ctx: PipelineContext, plan: QuestionPlan, truth: TruthObject, draft: StatementDraft): void {
   const supportTextIssue = missingRequiredSupportTextReason(draft)
   if (supportTextIssue) throw new StageGateError('stage3', 'missing_support_text', supportTextIssue)
+  // Nunca expor nomes de campos internos do payload ao aluno. Isso acontecia
+  // quando o modelo dizia "leia o trecho em supportText" em vez de usar o
+  // texto de apoio apresentado pela interface.
+  if (/\b(?:supportText|imageQuery|correctLetter|visualPlan|JSON|payload)\b/i.test(`${draft.statement}\n${draft.supportText ?? ''}`)) {
+    throw new StageGateError('stage3', 'internal_field_reference', 'O texto usa um nome interno do sistema; reescreva a questão como texto pedagógico para o aluno.')
+  }
   if (plan.truthStrategy !== 'calculavel') return
   const allowed = [
     ...Object.values(truth.values),
@@ -202,6 +208,21 @@ export function gateDistractors(plan: QuestionPlan, truth: TruthObject, distract
 export function gateAlternativePresentation(correctAnswerText: string): void {
   if (/^\s*(?:[a-z]\s*\d*|[a-z]\s*\([^)]*\))\s*=/i.test(correctAnswerText)) {
     throw new StageGateError('stage2', 'answer_presentation', 'A alternativa correta contém uma atribuição ou resolução (ex.: x = ...); use apenas o valor ou a forma curta da resposta.')
+  }
+}
+
+/**
+ * Evita alternativas de formatos incompatíveis: uma resposta curta como
+ * "lindas" não pode concorrer com quatro frases completas que repetem o
+ * enunciado. O gabarito e os distratores precisam representar a mesma lacuna.
+ */
+export function gateAlternativeShape(correctAnswerText: string, distractors: string[]): void {
+  const correctWords = correctAnswerText.trim().split(/\s+/).filter(Boolean).length
+  if (correctWords > 3 || distractors.length === 0) return
+  const distractorWords = distractors.map((value) => value.trim().split(/\s+/).filter(Boolean).length)
+  const longDistractors = distractorWords.filter((count) => count >= Math.max(4, correctWords * 3)).length
+  if (longDistractors >= Math.ceil(distractors.length / 2)) {
+    throw new StageGateError('stage2', 'alternative_shape', 'As alternativas não têm o mesmo formato da resposta: padronize todas como formas curtas ou como frases completas.')
   }
 }
 

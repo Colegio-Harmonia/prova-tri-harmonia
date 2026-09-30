@@ -2,6 +2,7 @@ import { Readable } from 'node:stream'
 import dns from 'node:dns/promises'
 import net from 'node:net'
 import axios from 'axios'
+import sharp from 'sharp'
 import { getDriveClient, findOrCreateFolder } from '@/lib/docs/driveClient'
 import { searchWikimediaImage } from './wikimediaSearch'
 import { generateIllustration } from './imageGenerate'
@@ -9,6 +10,8 @@ import { tryRenderChart } from './chartRender'
 import { renderBlueprintVisual, tryRenderTechnicalVisual } from './technicalVisualRender'
 import { validateGeneratedQuestionImage } from './imageValidation'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
+import { getIllustrationGenerator } from '@/lib/illustrations/registry'
+import { AiBudgetExceededError } from '@/lib/ai/operationBudget'
 
 export type ResolvedQuestionImage = {
   source: 'busca' | 'gerada' | 'grafico' | 'diagrama' | 'quimica' | 'importado' | 'enem'
@@ -42,6 +45,34 @@ export function isUploadedImageIntact(
   )
 }
 
+// A criação devolve o ID antes de todos os metadados ficarem disponíveis no
+// Drive. Tratar a primeira leitura sem `size` como corrupção descartava
+// imagens corretas (inclusive gráficos locais), principalmente sob carga.
+const DRIVE_METADATA_RETRY_DELAYS_MS = [0, 250, 500, 1_000, 2_000] as const
+
+async function waitForUploadedImageIntegrity(
+  drive: ReturnType<typeof getDriveClient>,
+  driveFileId: string,
+  expectedBytes: number,
+): Promise<void> {
+  let lastReason = 'metadados ainda indisponíveis'
+  for (const delayMs of DRIVE_METADATA_RETRY_DELAYS_MS) {
+    if (delayMs) await new Promise<void>((resolve) => setTimeout(resolve, delayMs))
+    try {
+      const metadata = await drive.files.get({
+        fileId: driveFileId,
+        fields: 'mimeType,size',
+        supportsAllDrives: true,
+      })
+      if (isUploadedImageIntact(metadata.data, expectedBytes)) return
+      lastReason = `mimeType=${metadata.data.mimeType ?? 'ausente'}, size=${metadata.data.size ?? 'ausente'}`
+    } catch (error) {
+      lastReason = error instanceof Error ? error.message : String(error)
+    }
+  }
+  throw new Error(`O Drive não confirmou a integridade da imagem enviada após nova verificação (${lastReason}).`)
+}
+
 export async function uploadToStaging(buffer: Buffer, mimeType: string, name: string): Promise<{ driveFileId: string; previewUrl: string }> {
   const rootId = process.env.DRIVE_ROOT_FOLDER_ID
   if (!rootId) throw new Error('DRIVE_ROOT_FOLDER_ID não configurado')
@@ -59,14 +90,11 @@ export async function uploadToStaging(buffer: Buffer, mimeType: string, name: st
 
   // A criação retorna um ID, mas não garante que o conteúdo tenha sido
   // persistido. Conferimos o arquivo antes de vinculá-lo a uma questão.
-  const metadata = await drive.files.get({
-    fileId: driveFileId,
-    fields: 'mimeType,size',
-    supportsAllDrives: true,
-  })
-  if (!isUploadedImageIntact(metadata.data, buffer.length)) {
+  try {
+    await waitForUploadedImageIntegrity(drive, driveFileId, buffer.length)
+  } catch (error) {
     await drive.files.delete({ fileId: driveFileId, supportsAllDrives: true }).catch(() => undefined)
-    throw new Error('O Drive não confirmou a integridade da imagem enviada.')
+    throw error
   }
 
   // insertInlineImage needs a publicly fetchable URI, same tradeoff as the
@@ -225,6 +253,7 @@ async function resolveGeneratedImage(imageQuery: string, questionContext: string
     const { driveFileId, previewUrl } = await uploadToStaging(Buffer.from(generated.base64, 'base64'), generated.mimeType, `gerada-${Date.now()}.${ext}`)
     return { source: 'gerada', driveFileId, previewUrl }
   } catch (err) {
+    if (err instanceof AiBudgetExceededError) throw err
     console.warn('[questionImageService] geração via IA também falhou:', err instanceof Error ? err.message : err)
     return null
   }
@@ -253,6 +282,16 @@ export async function attachImagesToExam(
         .filter((text): text is string => Boolean(text))
         .join('\n')
       try {
+        if (q.visualPlan?.renderer && q.visualPlan.parameters) {
+          const generator = getIllustrationGenerator(q.visualPlan.renderer)
+          if (generator) {
+            const rendered = await generator.render(q.visualPlan.parameters)
+            const png = rendered.mimeType === 'image/png' ? rendered.content : await sharp(rendered.content, { density: 180 }).png().toBuffer()
+            const { driveFileId, previewUrl } = await uploadToStaging(png, 'image/png', `visual-${q.number}-${Date.now()}.png`)
+            const source: ResolvedQuestionImage['source'] = q.visualPlan.renderer === 'chemistry.structure' ? 'quimica' : 'diagrama'
+            return { ...q, image: { source, driveFileId, previewUrl, approved: false, provenance: rendered.provenance } }
+          }
+        }
         const blueprintVisual = await renderBlueprintVisual(q.solutionBlueprint)
         if (blueprintVisual) {
           const { driveFileId, previewUrl } = await uploadToStaging(blueprintVisual.buffer, 'image/png', `${blueprintVisual.source}-${Date.now()}.png`)

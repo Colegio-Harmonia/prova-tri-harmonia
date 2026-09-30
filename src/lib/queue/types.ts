@@ -4,13 +4,13 @@ import { ASSESSMENT_KINDS, type GenerationJobStatus } from '@/db/schema'
 const curriculumPlanItemSchema = z.object({
   // rowIndex vem da planilha e pode começar em 0.
   unitRowIndex: z.number().int().min(0),
-  questionCount: z.number().int().min(0).max(15),
+  questionCount: z.number().int().min(0).max(30),
   priority: z.enum(['alta', 'media', 'baixa']),
   visualAid: z.enum(['auto', 'obrigatorio', 'sem_imagem']),
 })
 
 // Payload do job 'gerar_prova' — espelha o body da rota síncrona
-// /api/exams/generate (mesmas regras: total de questões entre 12 e 15
+// /api/exams/generate (mesmas regras: total de questões entre 10 e 30
 // somando IA + banco ENEM). O worker revalida com este schema antes de
 // executar: payload em JSONB não tem garantia de shape no banco.
 export const gerarProvaJobPayloadSchema = z
@@ -20,15 +20,16 @@ export const gerarProvaJobPayloadSchema = z
     academicYear: z.number().int().min(2020).max(2100).optional(),
     subject: z.string().min(1),
     bimester: z.number().int().min(1).max(4).optional(),
-    questionCount: z.number().int().min(0).max(15),
-    enemBankQuestionIds: z.array(z.number().int()).max(15).optional().default([]),
+    questionCount: z.number().int().min(0).max(30),
+    objectivePercentage: z.number().int().min(0).max(100).optional().default(70),
+    enemBankQuestionIds: z.array(z.number().int()).max(30).optional().default([]),
     classLabel: z.string().min(1).optional(),
     assessmentKind: z.enum(ASSESSMENT_KINDS).optional().default('padrao'),
     contentPlan: z.array(curriculumPlanItemSchema).max(60).optional(),
     assignedTo: z.number().int().positive().optional(),
   })
-  .refine((v) => v.questionCount + v.enemBankQuestionIds.length >= 12 && v.questionCount + v.enemBankQuestionIds.length <= 15, {
-    message: 'O total de questões (geradas por IA + banco ENEM) precisa ficar entre 12 e 15.',
+  .refine((v) => v.questionCount + v.enemBankQuestionIds.length >= 10 && v.questionCount + v.enemBankQuestionIds.length <= 30, {
+    message: 'O total de questões (geradas por IA + banco ENEM) precisa ficar entre 10 e 30.',
   })
   .refine((v) => v.assessmentKind === 'padrao' || v.segment === 'ensino-medio', {
     message: 'Simulado ENEM só existe no Ensino Médio.',
@@ -52,8 +53,11 @@ export type PontuarProvaJobPayload = z.infer<typeof pontuarProvaJobPayloadSchema
 export const transcreverScanJobPayloadSchema = z.object({
   examId: z.number().int().positive(),
   pageId: z.number().int().positive(),
-  questionNumber: z.number().int().positive(),
-}).strict()
+  questionNumber: z.number().int().positive().optional(),
+  questionNumbers: z.array(z.number().int().positive()).min(1).max(20).optional(),
+}).strict().refine((payload) => Boolean(payload.questionNumber) !== Boolean(payload.questionNumbers), {
+  message: 'O job precisa informar questionNumber ou questionNumbers.',
+})
 
 export type TranscreverScanJobPayload = z.infer<typeof transcreverScanJobPayloadSchema>
 
@@ -63,6 +67,9 @@ export const processarScanJobPayloadSchema = z.object({
   uploadId: z.number().int().positive(),
   examId: z.number().int().positive(),
   attemptId: z.number().int().positive(),
+  // Optional only for jobs created before the per-page queue. New jobs always
+  // carry it so a slow page cannot block the rest of the upload.
+  pageId: z.number().int().positive().optional(),
 }).strict()
 
 export type ProcessarScanJobPayload = z.infer<typeof processarScanJobPayloadSchema>
@@ -104,13 +111,29 @@ export const gerarAtividadeJobPayloadSchema = z.object({
   academicYear: z.number().int().min(2020).max(2100).optional(),
   subject: z.string().min(1),
   bimester: z.number().int().min(1).max(4).optional(),
-  questionCount: z.number().int().min(12).max(15),
+  questionCount: z.number().int().min(1).max(30),
   bnccCodes: z.array(z.string().min(3)).min(1),
+  // Matriz opcional para compatibilidade com atividades já enfileiradas.
+  // Quando presente, distribui exatamente as questões entre as habilidades.
+  bnccPlan: z.array(z.object({
+    code: z.string().trim().min(3).max(40),
+    questionCount: z.number().int().min(1).max(30),
+  })).min(1).max(60).optional(),
   classLabel: z.string().min(1).max(120).optional(),
   classroomCourseId: z.string().min(1).optional(),
 }).refine((payload) => isActivityGradeCompatible(payload.segment, payload.gradeYear), {
   message: 'A série precisa pertencer ao segmento selecionado.',
   path: ['gradeYear'],
+}).superRefine((payload, ctx) => {
+  if (!payload.bnccPlan) return
+  const codes = payload.bnccPlan.map((item) => item.code.trim().toUpperCase())
+  if (new Set(codes).size !== codes.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['bnccPlan'], message: 'Cada habilidade BNCC pode aparecer apenas uma vez na matriz.' })
+  }
+  const total = payload.bnccPlan.reduce((sum, item) => sum + item.questionCount, 0)
+  if (total !== payload.questionCount) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['bnccPlan'], message: 'A soma da matriz BNCC deve ser igual à quantidade de questões.' })
+  }
 })
 
 export type GerarAtividadeJobPayload = z.infer<typeof gerarAtividadeJobPayloadSchema>

@@ -33,4 +33,12 @@ describe('contentPlan', () => {
     expect(slots.filter((slot) => slot.unitRowIndex === 0)).toHaveLength(6)
     expect(slots.filter((slot) => slot.visualAid === 'obrigatorio')).toHaveLength(6)
   })
+
+  it('aplica a proporção objetiva definida pelo professor', () => {
+    const slots = buildPlannedQuestionSlots([
+      { unitRowIndex: 0, questionCount: 10, priority: 'alta', visualAid: 'auto' },
+    ], 10, 70)
+    expect(slots.filter((slot) => slot.type === 'objetiva')).toHaveLength(7)
+    expect(slots.filter((slot) => slot.type === 'descritiva')).toHaveLength(3)
+  })
 })

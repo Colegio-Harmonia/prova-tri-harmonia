@@ -15,7 +15,7 @@ import { RequiredQuestionImageError } from '@/lib/images/questionImageService'
 const curriculumPlanItemSchema = z.object({
   // rowIndex vem da planilha e pode começar em 0.
   unitRowIndex: z.number().int().min(0),
-  questionCount: z.number().int().min(0).max(15),
+  questionCount: z.number().int().min(0).max(30),
   priority: z.enum(['alta', 'media', 'baixa']),
   visualAid: z.enum(['auto', 'obrigatorio', 'sem_imagem']),
 })
@@ -34,14 +34,15 @@ const bodySchema = z
     bimester: z.number().int().min(1).max(4).optional(),
     // Nº de questões geradas por IA — pode ser 0 se a prova for só do
     // banco ENEM. O total (com enemBankQuestionIds) ainda precisa ficar
-    // entre 12 e 15, ver o .refine() abaixo.
-    questionCount: z.number().int().min(0).max(15),
-    enemBankQuestionIds: z.array(z.number().int()).max(15).optional().default([]),
+    // entre 10 e 30, ver o .refine() abaixo.
+    questionCount: z.number().int().min(0).max(30),
+    objectivePercentage: z.number().int().min(0).max(100).optional().default(70),
+    enemBankQuestionIds: z.array(z.number().int()).max(30).optional().default([]),
     assessmentKind: z.enum(['padrao', 'enem']).optional(),
     contentPlan: z.array(curriculumPlanItemSchema).max(60).optional(),
   })
-  .refine((v) => v.questionCount + v.enemBankQuestionIds.length >= 12 && v.questionCount + v.enemBankQuestionIds.length <= 15, {
-    message: 'O total de questões (geradas por IA + banco ENEM) precisa ficar entre 12 e 15.',
+  .refine((v) => v.questionCount + v.enemBankQuestionIds.length >= 10 && v.questionCount + v.enemBankQuestionIds.length <= 30, {
+    message: 'O total de questões (geradas por IA + banco ENEM) precisa ficar entre 10 e 30.',
   })
   .refine((v) => v.assessmentKind !== 'enem' || v.enemBankQuestionIds.length > 0, {
     message: 'Simulado ENEM precisa incluir ao menos uma questão real do banco ENEM.',

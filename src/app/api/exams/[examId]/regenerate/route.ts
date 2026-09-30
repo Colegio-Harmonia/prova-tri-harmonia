@@ -4,20 +4,19 @@ import { db } from '@/db/client'
 import { generatedExams } from '@/db/schema'
 import { auth } from '@/auth/auth'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
-import { buildExamPrompt, computeQuestionSplit } from '@/lib/gemini/promptBuilder'
-import { examGenerationResultSchema, GEMINI_RESPONSE_SCHEMA, type ExamGenerationResult, type ExamQuestion } from '@/lib/gemini/examSchema'
-import { validateExamResult, correctSingleQuestion } from '@/lib/gemini/examValidator'
+import { computeQuestionSplit } from '@/lib/gemini/promptBuilder'
+import type { ExamQuestion } from '@/lib/gemini/examSchema'
 import { attachImagesToExam, RequiredQuestionImageError } from '@/lib/images/questionImageService'
 import { buildBankExamQuestions } from '@/lib/gemini/enemBankMerge'
 import { authorizeExamAccess } from '@/lib/exams/authorizeExamAccess'
 import { persistGeneratedQuestionClassifications } from '@/lib/pedagogical/generatedQuestionClassificationService'
-import { generateValidatedStructuredContent, StructuredGenerationError } from '@/lib/gemini/structuredRepair'
+import { StructuredGenerationError } from '@/lib/gemini/structuredRepair'
 import { aiFailureResponse } from '@/lib/ai/routeFailure'
 import { isPedagogicalQualityGateEnabled } from '@/lib/pedagogical/generationQualityGate'
-import { validateGeneratedExamPedagogicalFidelity } from '@/lib/pedagogical/generationQualityGateService'
 import { runQuestionQualityTest } from '@/lib/exams/questionQualityTest'
 import { QUALITY_REPORT_VERSION } from '@/lib/exams/qualityReport'
-import { generateStagedQuestion, isStagedGenerationEnabled } from '@/lib/generation'
+import { coherenceIssues, EXAM_OVERLAP_ALERT, EXAM_OVERLAP_BLOCK, questionCoherenceText, textSimilarity } from '@/lib/generation'
+import { generateQuestionWithUnifiedFlow } from '@/lib/exams/unifiedQuestionGeneration'
 
 export async function POST(_req: NextRequest, props: { params: Promise<{ examId: string }> }) {
   const params = await props.params;
@@ -55,87 +54,57 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
       })
       curriculum = activeCurriculum
 
-      const genParams = { questionCount: aiCount }
       const split = computeQuestionSplit(aiCount)
-      const stagedCurriculumContent = activeCurriculum.units
-        .map((unit) => [unit.tituloCapitulo, unit.conteudo, unit.enrichedContent].filter(Boolean).join('\n'))
-        .join('\n\n')
-        .slice(0, 12000)
-      const stagedQuestions: ExamQuestion[] = []
-      let stagedFailure: string | null = isStagedGenerationEnabled() ? null : 'Pipeline fragmentado desligado.'
-
-      if (!stagedFailure) {
-        for (let index = 0; index < aiCount; index++) {
-          const questionType: ExamQuestion['type'] = index < split.objectiveCount ? 'objetiva' : 'descritiva'
-          try {
-            const staged = await generateStagedQuestion({
-              questionNumber: index + 1,
-              subject: exam.subject,
-              gradeYear: exam.gradeYear,
-              segment: exam.segment,
-              curriculumContent: stagedCurriculumContent,
-              contentPlanInstruction: `tipo ${questionType}`,
-              questionType,
-            })
-            const corrected = correctSingleQuestion({ ...staged.question, number: index + 1 }, activeCurriculum, { allowMathReviewFallback: true })
-            if (corrected.issues.length) throw new Error(corrected.issues.join(' '))
-            stagedQuestions.push({ ...corrected.question, number: index + 1 })
-            warnings.push(...staged.issues.map((issue) => `Questão ${index + 1} [${issue.severity}]: ${issue.reason}`))
-            warnings.push(...corrected.warnings)
-          } catch (error) {
-            stagedFailure = `Questão ${index + 1}: ${error instanceof Error ? error.message : 'falha no pipeline fragmentado'}.`
-            break
-          }
+      const generatedQuestions: ExamQuestion[] = []
+      for (let index = 0; index < aiCount; index++) {
+        const questionNumber = index + 1
+        const questionType = index < split.objectiveCount ? 'objetiva' as const : 'descritiva' as const
+        const priorText = generatedQuestions.slice(-5).map((question) => question.statement.slice(0, 200)).join(' | ')
+        let accepted = null
+        for (let attempt = 0; attempt < 2 && !accepted; attempt++) {
+          const generated = await generateQuestionWithUnifiedFlow({
+            curriculum: activeCurriculum,
+            questionNumber,
+            type: questionType,
+            instruction: [
+              `regenerar questão ${questionNumber}; tipo ${questionType}`,
+              priorText ? `não repita estes enunciados: ${priorText}` : null,
+              attempt ? 'Use outro cenário e outra redação; a versão anterior ficou semelhante a outra questão.' : null,
+            ].filter(Boolean).join('; '),
+          })
+          const worst = generatedQuestions.reduce(
+            (max, question) => Math.max(max, textSimilarity(questionCoherenceText(generated.question), questionCoherenceText(question))),
+            0,
+          )
+          warnings.push(...generated.warnings)
+          if (worst >= EXAM_OVERLAP_BLOCK && attempt === 0) continue
+          if (worst >= EXAM_OVERLAP_ALERT) warnings.push(`Questão ${questionNumber}: semelhança de ${Math.round(worst * 100)}% com outra questão; confira na revisão.`)
+          accepted = generated.question
         }
+        if (!accepted) throw new Error(`Questão ${questionNumber}: não foi possível obter uma versão distinta.`)
+        generatedQuestions.push(accepted)
       }
-
-      if (!stagedFailure) {
-        const examWithImages = await attachImagesToExam({
-          metadata: {
-            segment: exam.segment,
-            gradeYear: exam.gradeYear,
-            subject: exam.subject,
-            bimester: exam.bimester ?? null,
-            questionCount: stagedQuestions.length,
-            objectiveCount: stagedQuestions.filter((question) => question.type === 'objetiva').length,
-            discursiveCount: stagedQuestions.filter((question) => question.type === 'descritiva').length,
-            alternativesCount,
-          },
-          questions: stagedQuestions,
-        }, qualityGateEnabled ? { requireResolvedImages: true, maxAttemptsPerImage: 2, subject: exam.subject } : { subject: exam.subject })
-        aiQuestions = examWithImages.questions
-        alternativesCount = examWithImages.metadata.alternativesCount
-      } else {
-        warnings.push(`${stagedFailure} Regenerando pelo fluxo monolítico.`)
-        const prompt = await buildExamPrompt(activeCurriculum, genParams)
-        const generated = await generateValidatedStructuredContent<ExamGenerationResult, ExamGenerationResult>({
-          context: 'exams/regenerate',
-          prompt,
-          responseSchema: GEMINI_RESPONSE_SCHEMA,
-          zodSchema: examGenerationResultSchema,
-          validate: async (parsedExam) => {
-            const validation = validateExamResult(parsedExam, activeCurriculum, { ...genParams, enforcePedagogicalCompleteness: qualityGateEnabled })
-            if (validation.issues.length || !qualityGateEnabled) {
-              return { value: validation.corrected, issues: validation.issues, warnings: validation.warnings }
-            }
-            const fidelity = await validateGeneratedExamPedagogicalFidelity(activeCurriculum, validation.corrected)
-            return {
-              value: fidelity.corrected,
-              issues: fidelity.issues,
-              warnings: [...validation.warnings, ...fidelity.warnings],
-            }
-          },
-        })
-        const examWithImages = await attachImagesToExam(generated.value, qualityGateEnabled
-          ? { requireResolvedImages: true, maxAttemptsPerImage: 2 }
-          : undefined)
-        aiQuestions = examWithImages.questions
-        warnings.push(...generated.warnings)
-        if (generated.repaired) warnings.push(`Resposta da IA validada após reparo (${generated.attempts} tentativa(s)).`)
-        alternativesCount = examWithImages.metadata.alternativesCount
-      }
+      const examWithImages = await attachImagesToExam({
+        metadata: {
+          segment: exam.segment,
+          gradeYear: exam.gradeYear,
+          subject: exam.subject,
+          bimester: exam.bimester ?? null,
+          questionCount: generatedQuestions.length,
+          objectiveCount: generatedQuestions.filter((question) => question.type === 'objetiva').length,
+          discursiveCount: generatedQuestions.filter((question) => question.type === 'descritiva').length,
+          alternativesCount,
+        },
+        questions: generatedQuestions,
+      }, qualityGateEnabled ? { requireResolvedImages: true, maxAttemptsPerImage: 2, subject: exam.subject } : { subject: exam.subject })
+      aiQuestions = examWithImages.questions
+      alternativesCount = examWithImages.metadata.alternativesCount
 
       unmappedWarnings = activeCurriculum.unmappedWarnings
+    }
+
+    for (const issue of coherenceIssues(aiQuestions)) {
+      warnings.push(`Coerência da prova: ${issue.reason}`)
     }
 
     const bankQuestions = await buildBankExamQuestions(bankIds, aiQuestions.length + 1)

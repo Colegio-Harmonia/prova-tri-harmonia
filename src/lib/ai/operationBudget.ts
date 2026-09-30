@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, isNull, lt, ne, or, sql } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { aiBudgetResets, aiOperations } from '@/db/schema'
+import { aiBudgetControls, aiBudgetResets, aiOperations } from '@/db/schema'
 
 export const AI_BUDGET_EXHAUSTED_CODE = 'daily_operation_budget_exhausted'
 export const DEFAULT_AI_DAILY_OPERATION_BUDGET = 50
@@ -70,6 +70,14 @@ export function aiBudgetLimit(purpose: AiBudgetPurpose) {
   return parseAiDailyOperationBudget(process.env[PURPOSE_ENV[purpose]] ?? process.env.AI_DAILY_OPERATION_BUDGET)
 }
 
+async function isAiBudgetDisabled(purpose: AiBudgetPurpose) {
+  const control = await db.query.aiBudgetControls.findFirst({
+    where: eq(aiBudgetControls.purpose, purpose),
+    columns: { disabled: true },
+  })
+  return control?.disabled ?? false
+}
+
 async function budgetResetStart(purpose: AiBudgetPurpose, start: Date) {
   const reset = await db.query.aiBudgetResets.findFirst({
     where: and(gte(aiBudgetResets.createdAt, start), or(isNull(aiBudgetResets.purpose), eq(aiBudgetResets.purpose, purpose))),
@@ -82,6 +90,7 @@ export async function getAiBudgetSnapshot(now = new Date()) {
   const { start, end } = saoPauloWindow(now)
   return Promise.all(AI_BUDGET_PURPOSES.map(async (purpose) => {
     const usedSince = await budgetResetStart(purpose, start)
+    const disabled = await isAiBudgetDisabled(purpose)
     const operationScope = purpose === 'text_generation'
       ? sql`${aiOperations.operation} NOT LIKE 'images/%' AND ${aiOperations.operation} NOT LIKE 'scans/%'`
       : purpose === 'image_generation'
@@ -93,7 +102,7 @@ export async function getAiBudgetSnapshot(now = new Date()) {
       gte(aiOperations.createdAt, usedSince), lt(aiOperations.createdAt, end),
       or(isNull(aiOperations.errorCode), ne(aiOperations.errorCode, AI_BUDGET_EXHAUSTED_CODE)), operationScope,
     ))
-    return { purpose, limit: aiBudgetLimit(purpose), used: Number(row?.count ?? 0), resetAt: usedSince, nextResetAt: end }
+    return { purpose, limit: disabled ? 0 : aiBudgetLimit(purpose), disabled, used: Number(row?.count ?? 0), resetAt: usedSince, nextResetAt: end }
   }))
 }
 
@@ -105,6 +114,7 @@ export async function getAiBudgetSnapshot(now = new Date()) {
  */
 export async function reserveAiOperation(operation = 'text_generation', now = new Date()): Promise<AiOperationReservation> {
   const purpose = budgetPurposeForOperation(operation)
+  if (await isAiBudgetDisabled(purpose)) return { release: () => undefined }
   const limit = aiBudgetLimit(purpose)
   if (limit === 0) return { release: () => undefined }
 

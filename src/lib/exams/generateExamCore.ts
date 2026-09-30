@@ -5,22 +5,45 @@ import { scoringMethodForQuestions } from '@/lib/scoring/scoringPolicy'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
 import { TabResolutionError } from '@/lib/sheets/tabResolver'
 import { SheetNotConfiguredError } from '@/config/gradeSheets'
-import { buildExamPrompt, buildSingleQuestionPrompt, computeQuestionSplit } from '@/lib/gemini/promptBuilder'
-import { examGenerationResultSchema, GEMINI_RESPONSE_SCHEMA, singleQuestionResultSchema, SINGLE_QUESTION_RESPONSE_SCHEMA, type ExamGenerationResult, type ExamQuestion, type SingleQuestionResult } from '@/lib/gemini/examSchema'
-import { correctSingleQuestion, validateExamResult } from '@/lib/gemini/examValidator'
+import { computeQuestionSplit } from '@/lib/gemini/promptBuilder'
+import { type ExamQuestion } from '@/lib/gemini/examSchema'
+import { correctSingleQuestion } from '@/lib/gemini/examValidator'
 import { attachImagesToExam } from '@/lib/images/questionImageService'
+import { planAutomaticVisuals } from '@/lib/illustrations/automaticVisualPlan'
 import { buildBankExamQuestions } from '@/lib/gemini/enemBankMerge'
 import { persistGeneratedQuestionClassifications } from '@/lib/pedagogical/generatedQuestionClassificationService'
-import { generateValidatedStructuredContent } from '@/lib/gemini/structuredRepair'
-import { isPedagogicalQualityGateEnabled } from '@/lib/pedagogical/generationQualityGate'
-import { validateGeneratedExamPedagogicalFidelity } from '@/lib/pedagogical/generationQualityGateService'
 import { buildPlannedQuestionSlots, shouldRequireVisualAid, validateCurriculumPlan, type PlannedQuestionSlot } from '@/lib/exams/contentPlan'
 import { assembleBestExamCandidates, compactQuestionContext, validateExamAssembly, type QuestionCandidate } from '@/lib/exams/examQualityAssembly'
-import { auditFinalExamQuality } from '@/lib/exams/examQualityAudit'
 import { runQuestionQualityTest } from '@/lib/exams/questionQualityTest'
+import { buildActivityBnccSlots, type ActivityBnccPlanItem, type ActivityBnccSlot } from '@/lib/exams/activityBnccPlan'
 import { QUALITY_REPORT_VERSION } from '@/lib/exams/qualityReport'
-import { generateStagedQuestion, isStagedGenerationEnabled } from '@/lib/generation'
+import { repairQuestionFromDiagnostics } from '@/lib/exams/repairQuestion'
+import { diagnosticFromIssue } from '@/lib/exams/qualityDiagnostics'
+import { coherenceIssues, EXAM_OVERLAP_ALERT, EXAM_OVERLAP_BLOCK, generateExamBlueprint, generateStagedQuestion, generateUnifiedQuestion, isUnifiedGenerationEnabled, questionCoherenceText, textSimilarity } from '@/lib/generation'
+import { AiBudgetExceededError } from '@/lib/ai/operationBudget'
+import { StructuredGenerationError } from '@/lib/gemini/structuredRepair'
+import { getCompletedItems, getPendingSlotNumbers, initializeJobItems, saveItemProgress } from '@/lib/queue/jobProgress'
 import type { CurriculumPlanItem } from '@/types/exam'
+
+/** Falhas transitórias não devem gastar candidatas nem tentativas da fila. */
+function isTransientProviderFailure(error: unknown): boolean {
+  return error instanceof StructuredGenerationError && [
+    'rate_limited',
+    'timeout',
+    'provider_unavailable',
+    'provider_request_failed',
+  ].includes(error.failureCode)
+}
+
+/** Mantém o diagnóstico estruturado da IA visível na fila, sem expor JSON bruto. */
+function generationFailureMessage(error: unknown): string {
+  if (error instanceof StructuredGenerationError) {
+    const details = [...new Set(error.issues.map((issue) => issue.trim()).filter(Boolean))].slice(0, 3)
+    const suffix = details.length ? ` Detalhe: ${details.join(' | ')}` : ''
+    return `[ia:${error.failureCode}] ${error.message}${suffix}`
+  }
+  return error instanceof Error ? error.message : 'erro'
+}
 
 // Core da geração de prova, compartilhado entre a rota síncrona
 // (/api/exams/generate) e o worker da fila (job 'gerar_prova') — Subtarefa
@@ -39,6 +62,7 @@ export type GenerateExamCoreParams = {
   subject: string
   bimester?: number
   questionCount: number
+  objectivePercentage?: number
   enemBankQuestionIds: number[]
   // Rótulo pedagógico exibido na prova. A TRI INEP é definida pelos itens
   // reais do banco, não por este campo. Default 'padrao'.
@@ -47,9 +71,12 @@ export type GenerateExamCoreParams = {
   // uma coleção própria e trazem o recorte BNCC explícito no payload.
   examKind?: Extract<ExamKind, 'prova' | 'atividade'>
   bnccCodes?: string[]
+  bnccPlan?: ActivityBnccPlanItem[]
   classroomCourseId?: string | null
   contentPlan?: CurriculumPlanItem[]
   assignedTo?: number
+  /** Presente somente quando a geração vem da fila; habilita retomada por item. */
+  generationJobId?: number
 }
 
 // Erros de entrada/recorte curricular (viram 422 na rota, mensagem legível
@@ -131,6 +158,7 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
 
   const selectedBnccCodes = [...new Set((params.bnccCodes ?? []).map((code) => code.trim().toUpperCase()).filter(Boolean))]
   const selectedBnccDescriptions = new Map<string, string>()
+  let activityBnccSlots: ActivityBnccSlot[] = []
   if (examKind === 'atividade') {
     if (!selectedBnccCodes.length) throw new ExamGenerationInputError('Selecione pelo menos uma habilidade BNCC para a atividade.')
     const selected = new Set(selectedBnccCodes)
@@ -147,6 +175,11 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
       }
     }
     curriculum = { ...curriculum, units: focusedUnits }
+    try {
+      activityBnccSlots = buildActivityBnccSlots(curriculum, params.bnccPlan, params.questionCount)
+    } catch (error) {
+      throw new ExamGenerationInputError(error instanceof Error ? error.message : 'Matriz BNCC inválida.')
+    }
   }
 
   let aiQuestions: ExamQuestion[] = []
@@ -154,25 +187,211 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
   let qualityTestWarnings: string[] = []
   let qualityTestRepairedNumbers: number[] = []
   let qualityTestReports: Array<{ phase: string; results: Awaited<ReturnType<typeof runQuestionQualityTest>>['report'] }> = []
+  let finalQualityResult: Awaited<ReturnType<typeof runQuestionQualityTest>> | null = null
+  let regenerateQuestion: ((questionNumber: number, current: ExamQuestion, forceNoVisual?: boolean) => Promise<ExamQuestion>) | null = null
+  const visualAidByQuestion = new Map<number, CurriculumPlanItem['visualAid']>()
   const issues: string[] = []
+  const autoQualityGateEnabled = process.env.EXAM_AUTO_QUALITY_GATE_ENABLED !== 'false'
   let alternativesCount = params.segment === 'anos-iniciais' ? 4 : 5
+  // Itens do banco ENEM são sempre objetivos. A proporção escolhida vale
+  // para a prova inteira, portanto calculamos quanto dela ainda precisa ser
+  // preenchido pelas questões da IA (limitado ao que é matematicamente
+  // possível quando o banco já ultrapassa a meta).
+  const objectiveTarget = Math.round((params.questionCount + params.enemBankQuestionIds.length) * (params.objectivePercentage ?? 70) / 100)
+  const aiObjectiveCount = Math.max(0, Math.min(params.questionCount, objectiveTarget - params.enemBankQuestionIds.length))
+  const aiObjectivePercentage = params.questionCount > 0 ? (aiObjectiveCount * 100) / params.questionCount : 0
 
   if (params.questionCount > 0) {
-    const qualityGateEnabled = isPedagogicalQualityGateEnabled()
-    if (params.contentPlan?.length) {
-      const slots = buildPlannedQuestionSlots(params.contentPlan, params.questionCount)
+    if (isUnifiedGenerationEnabled()) {
+      // O professor já definiu os slots curriculares. A IA só equilibra
+      // estratégia/dificuldade dentro deles e cada questão nasce em uma
+      // chamada unificada, com gates locais antes de qualquer auditoria IA.
+      const split = computeQuestionSplit(params.questionCount, aiObjectivePercentage)
+      const slots: PlannedQuestionSlot[] = params.contentPlan?.length
+        ? buildPlannedQuestionSlots(params.contentPlan, params.questionCount, aiObjectivePercentage)
+        : activityBnccSlots.length
+          ? activityBnccSlots.map((activitySlot, index) => ({
+            number: activitySlot.questionNumber,
+            unitRowIndex: activitySlot.units[0]!.rowIndex,
+            type: index < split.objectiveCount ? 'objetiva' : 'descritiva',
+            visualAid: 'auto',
+          }))
+          : Array.from({ length: params.questionCount }, (_, index) => {
+              const unit = curriculum.units[index % curriculum.units.length]
+              return {
+                number: index + 1,
+                unitRowIndex: unit!.rowIndex,
+                type: index < split.objectiveCount ? 'objetiva' : 'descritiva',
+                visualAid: 'auto' as const,
+              }
+            })
       const byRowIndex = new Map(curriculum.units.map((unit) => [unit.rowIndex, unit]))
-      const generateCandidate = async (slot: PlannedQuestionSlot, candidateNumber: number, avoidStatement: string, avoidContext?: string): Promise<QuestionCandidate> => {
+      const blueprint = await generateExamBlueprint({
+        subject: params.subject,
+        gradeYear: params.gradeYear,
+        segment: params.segment,
+        slots: slots.map((slot) => {
+          const unit = byRowIndex.get(slot.unitRowIndex)
+          if (!unit) throw new ExamGenerationInputError(`Capítulo ${slot.unitRowIndex} não foi encontrado no planejamento.`)
+          return {
+            number: slot.number,
+            unitRowIndex: slot.unitRowIndex,
+            type: slot.type,
+            visualAid: slot.visualAid,
+            curriculumContent: [unit.tituloCapitulo, unit.conteudo, unit.enrichedContent].filter(Boolean).join('\n'),
+            unitTitle: unit.tituloCapitulo,
+          }
+        }),
+      })
+      warnings.push(...blueprint.issues.map((issue) => `Blueprint: ${issue}`))
+      if (blueprint.slots.length !== slots.length) {
+        throw new ExamGenerationInputError('O blueprint não cobriu todos os slots escolhidos pelo professor.')
+      }
+      if (params.generationJobId) await initializeJobItems(params.generationJobId, slots.map((slot) => slot.number))
+
+      const generateUnifiedCandidate = async (slot: PlannedQuestionSlot, candidateNumber: number, previousStatement = '', feedback = '', forceNoVisual = false): Promise<QuestionCandidate> => {
+        const unit = byRowIndex.get(slot.unitRowIndex)
+        const blueprintSlot = blueprint.slots.find((candidate) => candidate.slotNumber === slot.number)
+        if (!unit || !blueprintSlot) throw new ExamGenerationInputError(`Não foi possível preparar a questão ${slot.number} no pipeline unificado.`)
+        const unitCurriculum = { ...curriculum, units: [unit] }
+        let lastError = 'falha desconhecida'
+        // Sem isto, cada uma das 3 tentativas locais mandava essencialmente
+        // o mesmo prompt de novo — o motivo específico da rejeição (ex:
+        // "texto de apoio ausente" de correctSingleQuestion) ficava só em
+        // lastError pro log, nunca voltava pro modelo. Resultado: retries
+        // caros que não corrigiam o problema real, só tentavam a sorte de
+        // novo (bug real de Português, 21/09/2026 — Questão 9 rejeitada 3x
+        // seguidas pelo mesmo motivo, nunca informado à IA).
+        let retryReason: string | null = null
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            if (params.generationJobId) await saveItemProgress(params.generationJobId, slot.number, 'gerando')
+            const unified = await generateUnifiedQuestion({
+              questionNumber: slot.number,
+              subject: params.subject,
+              gradeYear: params.gradeYear,
+              segment: params.segment,
+              curriculumContent: blueprintSlot.curriculumContent,
+              contentPlanInstruction: [
+                `capítulo "${unit.tituloCapitulo}"; tipo ${slot.type}; candidata ${candidateNumber}.${attempt}`,
+                previousStatement ? `Não repita este enunciado rejeitado: ${previousStatement.slice(0, 500)}.` : '',
+                feedback ? `Corrija especificamente: ${feedback.slice(0, 900)}.` : '',
+                retryReason ? `A tentativa anterior desta mesma questão foi rejeitada por: ${retryReason.slice(0, 500)}. Corrija exatamente isso, sem repetir o mesmo erro.` : '',
+              ].filter(Boolean).join(' '),
+              forceNoVisual,
+              questionType: slot.type,
+            }, blueprintSlot)
+            const corrected = correctSingleQuestion({ ...unified.question, number: slot.number, curriculumUnitRowIndex: slot.unitRowIndex }, unitCurriculum, { allowMathReviewFallback: true })
+            if (corrected.issues.length) throw new Error(corrected.issues.join(' '))
+            let question = { ...corrected.question, number: slot.number, curriculumUnitRowIndex: slot.unitRowIndex }
+            const activitySlot = activityBnccSlots[slot.number - 1]
+            if (activitySlot) {
+              question = {
+                ...question,
+                bnccCodes: [activitySlot.code],
+                bnccStatus: 'mapeado',
+                bnccSummary: selectedBnccDescriptions.get(activitySlot.code) ?? question.bnccSummary ?? null,
+              }
+            }
+            if (slot.visualAid === 'obrigatorio' && (!question.needsImage || !question.imageQuery?.trim())) {
+              question = {
+                ...question,
+                needsImage: true,
+                imageQuery: `${unit.tituloCapitulo} ${unit.conteudo ?? ''}`.replace(/\s+/g, ' ').trim().slice(0, 180),
+              }
+            }
+            warnings.push(`Questão ${slot.number}: gerada pelo pipeline unificado${unified.needsAudit ? ' com auditoria seletiva' : ''}.`)
+            warnings.push(...unified.issues.map((issue) => `Questão ${slot.number} [${issue.severity}]: ${issue.reason}`))
+            warnings.push(...corrected.warnings)
+            if (params.generationJobId) await saveItemProgress(params.generationJobId, slot.number, 'concluido', question)
+            return { slotNumber: slot.number, candidateNumber, question }
+          } catch (error) {
+            if (error instanceof AiBudgetExceededError || isTransientProviderFailure(error)) throw error
+            lastError = generationFailureMessage(error)
+            retryReason = lastError
+          }
+        }
+        if (params.generationJobId) {
+          const diagnostic = diagnosticFromIssue({ severity: 'bloqueante', reason: lastError })
+          await saveItemProgress(params.generationJobId, slot.number, 'erro', undefined, [{
+            severity: diagnostic.severity,
+            code: diagnostic.code,
+            message: diagnostic.message,
+            reason: diagnostic.evidence ?? diagnostic.message,
+          }], lastError)
+        }
+        throw new ExamGenerationInputError(`Questão ${slot.number} não atingiu os requisitos locais após 3 tentativas: ${lastError}`)
+      }
+
+      const completed = params.generationJobId ? await getCompletedItems(params.generationJobId) : new Map<number, ExamQuestion>()
+      const pendingNumbers = params.generationJobId ? new Set(await getPendingSlotNumbers(params.generationJobId)) : new Set(slots.map((slot) => slot.number))
+      const candidates: QuestionCandidate[] = slots.flatMap((slot) => {
+        const question = completed.get(slot.number)
+        return question && !pendingNumbers.has(slot.number) ? [{ slotNumber: slot.number, candidateNumber: 0, question }] : []
+      })
+      const slotsToGenerate = slots.filter((slot) => !completed.has(slot.number) || pendingNumbers.has(slot.number))
+      const concurrency = Math.min(3, slots.length)
+      for (let offset = 0; offset < slotsToGenerate.length; offset += concurrency) {
+        const group = await Promise.all(slotsToGenerate.slice(offset, offset + concurrency).map((slot) =>
+          generateUnifiedCandidate(slot, slot.number),
+        ))
+        candidates.push(...group)
+      }
+      aiQuestions = assembleBestExamCandidates(slots, candidates)
+      let blockingIssues = validateExamAssembly(aiQuestions, slots).filter((issue) => issue.severity === 'bloqueante')
+      // Conflitos entre itens (repetição, cobertura e similares) só são
+      // conhecidos depois da montagem. Refazemos exclusivamente os slots
+      // afetados, no máximo duas vezes, com o motivo no próximo prompt.
+      for (let round = 1; round <= 2 && blockingIssues.length; round++) {
+        const numbers = [...new Set(blockingIssues.flatMap((issue) => issue.questionNumbers))]
+        warnings.push(`Montagem unificada: refazendo as questões ${numbers.join(', ')} (rodada ${round}/2).`)
+        const replacements = await Promise.all(numbers.map(async (number) => {
+          const slot = slots.find((candidate) => candidate.number === number)
+          const current = aiQuestions.find((question) => question.number === number)
+          if (!slot || !current) throw new ExamGenerationInputError(`Não foi possível reparar a posição ${number} da montagem unificada.`)
+          const feedback = blockingIssues
+            .filter((issue) => issue.questionNumbers.includes(number))
+            .map((issue) => issue.reason)
+            .join(' ')
+          return { number, question: (await generateUnifiedCandidate(slot, round * 1000 + number, current.statement, feedback)).question }
+        }))
+        const byNumber = new Map(replacements.map((item) => [item.number, item.question]))
+        aiQuestions = aiQuestions.map((question) => byNumber.get(question.number) ?? question)
+        blockingIssues = validateExamAssembly(aiQuestions, slots).filter((issue) => issue.severity === 'bloqueante')
+      }
+      if (blockingIssues.length) {
+        const numbers = [...new Set(blockingIssues.flatMap((issue) => issue.questionNumbers))]
+        throw new ExamGenerationInputError(`A montagem unificada não conseguiu resolver os conflitos nas questões ${numbers.join(', ')} após duas substituições locais.`)
+      }
+      regenerateQuestion = async (questionNumber, current, forceNoVisual = false) => {
+        const slot = slots.find((candidate) => candidate.number === questionNumber)
+        if (!slot) throw new ExamGenerationInputError(`Não foi possível localizar a posição ${questionNumber} para substituição automática.`)
+        return (await generateUnifiedCandidate(slot, 100 + questionNumber, current.statement, 'A auditoria automática reprovou a versão anterior; entregue uma única resposta correta.', forceNoVisual)).question
+      }
+      alternativesCount = params.segment === 'anos-iniciais' ? 4 : 5
+    } else if (params.contentPlan?.length) {
+      const slots = buildPlannedQuestionSlots(params.contentPlan, params.questionCount, aiObjectivePercentage)
+      const byRowIndex = new Map(curriculum.units.map((unit) => [unit.rowIndex, unit]))
+      const generateCandidate = async (slot: PlannedQuestionSlot, candidateNumber: number, avoidStatement: string, avoidContext?: string, forceNoVisual = false): Promise<QuestionCandidate> => {
         const unit = byRowIndex.get(slot.unitRowIndex)
         if (!unit) throw new ExamGenerationInputError(`Capítulo ${slot.unitRowIndex} não foi encontrado no planejamento.`)
         const unitCurriculum = { ...curriculum, units: [unit] }
-        const visualAid = slot.visualAid === 'auto' && shouldRequireVisualAid(unit) ? 'obrigatorio' : slot.visualAid
+        const visualAid = forceNoVisual ? 'sem_imagem' : slot.visualAid === 'auto' && shouldRequireVisualAid(unit) ? 'obrigatorio' : slot.visualAid
+        visualAidByQuestion.set(slot.number, slot.visualAid)
 
-        // Pipeline fragmentado (fases 1–2): quando ligado, gera a questão em
-        // estágios com gates determinísticos entre eles. A falha é isolada
-        // por questão — cai no fluxo monolítico logo abaixo, sem derrubar a
-        // prova inteira.
-        if (isStagedGenerationEnabled()) {
+        // Uma questão só nasce pelo pipeline com gates. Não há fallback
+        // monolítico: uma resposta sem garantias não pode entrar na prova.
+        let lastError = 'falha desconhecida'
+        // Mesmo problema do pipeline unificado acima: sem isto, as 4
+        // tentativas repetiam quase o mesmo prompt sem nunca dizer à IA por
+        // que a tentativa anterior foi rejeitada.
+        let retryReason: string | null = null
+        const variation = candidateNumber % 3 === 1
+          ? 'Use um contexto cotidiano diferente e dados inéditos.'
+          : candidateNumber % 3 === 2
+            ? 'Use uma abordagem ou representação diferente, sem repetir situação, valores ou pergunta das demais questões.'
+            : 'Use um cenário de aplicação distinto e avalie a mesma habilidade por outro ângulo pedagógico.'
+        for (let attempt = 1; attempt <= 4; attempt++) {
           try {
             const staged = await generateStagedQuestion({
               questionNumber: slot.number,
@@ -180,7 +399,8 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
               gradeYear: params.gradeYear,
               segment: params.segment,
               curriculumContent: [unit.tituloCapitulo, unit.conteudo, unit.enrichedContent].filter(Boolean).join('\n'),
-              contentPlanInstruction: `capítulo "${unit.tituloCapitulo}"; tipo ${slot.type}; recurso visual ${visualAid}`,
+              contentPlanInstruction: `capítulo "${unit.tituloCapitulo}"; tipo ${slot.type}; recurso visual ${visualAid}; candidata ${candidateNumber}.${attempt}; ${variation} Evite este enunciado anterior: ${avoidStatement.slice(0, 500)}. ${avoidContext ?? ''}${retryReason ? ` A tentativa anterior desta mesma questão foi rejeitada por: ${retryReason.slice(0, 500)}. Corrija exatamente isso, sem repetir o mesmo erro.` : ''}`,
+              forceNoVisual,
               questionType: slot.type,
             })
             let question: ExamQuestion = { ...staged.question, number: slot.number, curriculumUnitRowIndex: slot.unitRowIndex }
@@ -199,51 +419,18 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
             warnings.push(...corrected.warnings)
             return { slotNumber: slot.number, candidateNumber, question }
           } catch (error) {
-            warnings.push(`Questão ${slot.number}: pipeline fragmentado falhou (${error instanceof Error ? error.message : 'erro'}). Usando o fluxo padrão.`)
+            if (error instanceof AiBudgetExceededError) throw error
+            if (isTransientProviderFailure(error)) throw error
+            lastError = error instanceof Error ? error.message : 'erro'
+            retryReason = lastError
           }
         }
-
-        const prompt = await buildSingleQuestionPrompt(unitCurriculum, {
-          type: slot.type,
-          questionNumber: slot.number,
-          avoidStatement,
-          avoidContext,
-          visualAid,
-        })
-        const generated = await generateValidatedStructuredContent<SingleQuestionResult, ExamQuestion>({
-          context: `exams/generate-question-${slot.number}`,
-          prompt,
-          responseSchema: SINGLE_QUESTION_RESPONSE_SCHEMA,
-          zodSchema: singleQuestionResultSchema,
-          validate: async (parsedQuestion) => {
-            const candidate = { ...parsedQuestion.question, number: slot.number, curriculumUnitRowIndex: slot.unitRowIndex }
-            // Um slot da matriz é uma geração independente. Falhas de
-            // metadado matemático/LaTex são expostas na revisão, em vez de
-            // derrubar todo o lote depois de duas tentativas. Regras que
-            // alteram a estrutura da prova (tipo, alternativas, gabarito)
-            // continuam bloqueantes e ainda acionam reparo da IA.
-            let { question, issues, warnings: questionWarnings } = correctSingleQuestion(candidate, unitCurriculum, { allowMathReviewFallback: true })
-            if (question.type !== slot.type) issues.push(`Questão ${slot.number}: esperado tipo "${slot.type}", veio "${question.type}".`)
-            if (visualAid === 'obrigatorio' && (!question.needsImage || !question.imageQuery?.trim())) {
-              // A exigência da matriz é uma regra do sistema. Se o modelo
-              // omitir o campo, corrigimos localmente e evitamos desperdiçar
-              // uma rodada inteira de geração por uma falha de serialização.
-              const fallbackQuery = `${unit.tituloCapitulo} ${unit.conteudo ?? ''}`.replace(/\s+/g, ' ').trim().slice(0, 180)
-              question = { ...question, needsImage: true, imageQuery: question.imageQuery?.trim() || fallbackQuery }
-              questionWarnings.push(`Questão ${slot.number}: recurso visual obrigatório foi normalizado a partir do capítulo.`)
-            }
-            // Difficulty não é requisito de aprovação da prova. O professor
-            // não escolhe essa escala na composição e ela não pode tornar um
-            // item curricularmente válido inviável por mera omissão da IA.
-            // A revisão cega pedagógica é feita uma única vez sobre a prova
-            // montada. Executá-la por item multiplica chamadas e torna uma
-            // divergência local capaz de abortar toda a prova.
-            return { value: question, issues, warnings: questionWarnings }
-          },
-        })
-        warnings.push(...generated.warnings)
-        if (generated.repaired) warnings.push(`Questão ${slot.number}, candidata ${candidateNumber}, validada após reparo (${generated.attempts} tentativa(s)).`)
-        return { slotNumber: slot.number, candidateNumber, question: generated.value }
+        throw new ExamGenerationInputError(`Questão ${slot.number} não atingiu os requisitos após 4 tentativas: ${lastError}`)
+      }
+      regenerateQuestion = async (questionNumber, current, forceNoVisual = false) => {
+        const slot = slots.find((candidate) => candidate.number === questionNumber)
+        if (!slot) throw new ExamGenerationInputError(`Não foi possível localizar a posição ${questionNumber} para substituição automática.`)
+        return (await generateCandidate(slot, 2, current.statement, compactQuestionContext(aiQuestions, questionNumber), forceNoVisual)).question
       }
 
       // Itens são independentes nesta etapa. Limitar a concorrência reduz o
@@ -253,48 +440,53 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
       const candidates: QuestionCandidate[] = []
       for (let offset = 0; offset < slots.length; offset += concurrency) {
         const group = await Promise.all(slots.slice(offset, offset + concurrency).map((slot) =>
-          generateCandidate(slot, 1, 'Não há questão anterior; crie um item original.'),
+          // A identidade da candidata varia por posição. Assim, mesmo
+          // capítulos repetidos recebem orientações e templates diferentes
+          // antes da montagem global, sem multiplicar chamadas à IA.
+          generateCandidate(slot, slot.number, 'Não há questão anterior; crie um item original.'),
         ))
         candidates.push(...group)
       }
 
       aiQuestions = assembleBestExamCandidates(slots, candidates)
-      const firstQualityTest = await runQuestionQualityTest(curriculum, aiQuestions)
-      warnings.push(...firstQualityTest.warnings)
-      qualityTestWarnings.push(...firstQualityTest.warnings)
-      qualityTestReports.push({ phase: 'Análise inicial', results: firstQualityTest.report })
-      const firstAudit = await auditFinalExamQuality(curriculum, slots, aiQuestions)
-      warnings.push(...firstAudit.warnings)
-      const blockingIssues = [...validateExamAssembly(aiQuestions, slots), ...firstQualityTest.issues, ...firstAudit.issues].filter((issue) => issue.severity === 'bloqueante')
+      const blockingIssues = validateExamAssembly(aiQuestions, slots).filter((issue) => issue.severity === 'bloqueante')
 
       if (blockingIssues.length) {
-        const repairNumbers = [...new Set(blockingIssues.flatMap((issue) => issue.questionNumbers))]
-        qualityTestRepairedNumbers = repairNumbers
-        warnings.push(`Revisão editorial global encontrou ${repairNumbers.length} questão(ões) para reparo pontual.`)
-        for (const number of repairNumbers) {
-          const slot = slots.find((candidate) => candidate.number === number)
-          const current = aiQuestions.find((candidate) => candidate.number === number)
-          if (!slot || !current) continue
-          const replacement = await generateCandidate(slot, 3, current.statement, compactQuestionContext(aiQuestions, number))
-          aiQuestions = aiQuestions.map((question) => question.number === number ? replacement.question : question)
+        let unresolved = blockingIssues
+        const repaired = new Set<number>()
+        for (let round = 1; round <= 3 && unresolved.length; round++) {
+          const repairNumbers = [...new Set(unresolved.flatMap((issue) => issue.questionNumbers))]
+          warnings.push(`Revisão editorial global: substituindo ${repairNumbers.length} questão(ões) na rodada ${round}.`)
+          for (const number of repairNumbers) {
+            const slot = slots.find((candidate) => candidate.number === number)
+            const current = aiQuestions.find((candidate) => candidate.number === number)
+            if (!slot || !current) continue
+            // Só a posição realmente conflitante é refeita. Duas opções
+            // bastam para a escolha local e evitam a explosão de chamadas que
+            // ocorria ao substituir praticamente a prova inteira por rodada.
+            const attempts = await Promise.allSettled([1, 2].map((offset) =>
+              generateCandidate(slot, round * 100 + number * 10 + offset, current.statement, compactQuestionContext(aiQuestions, number)),
+            ))
+            const variants = attempts
+              .filter((result): result is PromiseFulfilledResult<QuestionCandidate> => result.status === 'fulfilled')
+              .map((result) => result.value)
+            if (!variants.length) continue
+            const replacement = variants.sort((left, right) => {
+              const leftTrial = aiQuestions.map((question) => question.number === number ? left.question : question)
+              const rightTrial = aiQuestions.map((question) => question.number === number ? right.question : question)
+              const leftBlocks = validateExamAssembly(leftTrial, slots).filter((issue) => issue.severity === 'bloqueante').length
+              const rightBlocks = validateExamAssembly(rightTrial, slots).filter((issue) => issue.severity === 'bloqueante').length
+              return leftBlocks - rightBlocks || left.candidateNumber - right.candidateNumber
+            })[0]
+            aiQuestions = aiQuestions.map((question) => question.number === number ? replacement.question : question)
+            repaired.add(number)
+          }
+          unresolved = validateExamAssembly(aiQuestions, slots).filter((issue) => issue.severity === 'bloqueante')
         }
-        const finalDeterministicIssues = validateExamAssembly(aiQuestions, slots).filter((issue) => issue.severity === 'bloqueante')
-        const finalQualityTest = await runQuestionQualityTest(curriculum, aiQuestions)
-        warnings.push(...finalQualityTest.warnings)
-        qualityTestWarnings.push(...finalQualityTest.warnings)
-        qualityTestReports.push({ phase: 'Após reparo automático', results: finalQualityTest.report })
-        const finalAudit = await auditFinalExamQuality(curriculum, slots, aiQuestions)
-        warnings.push(...finalAudit.warnings)
-        const unresolved = [...finalDeterministicIssues, ...finalQualityTest.issues.filter((issue) => issue.severity === 'bloqueante'), ...finalAudit.issues.filter((issue) => issue.severity === 'bloqueante')]
+        qualityTestRepairedNumbers = [...new Set([...qualityTestRepairedNumbers, ...repaired])]
         if (unresolved.length) {
-          // A geração já tentou reparar cada questão indicada. Se a segunda
-          // versão ainda exigir julgamento pedagógico, preservamos a prova e
-          // levamos a pendência explícita para a Conferência. Encerrar o job
-          // aqui escondia justamente o material que o professor precisa
-          // revisar e fazia uma falha editorial parecer falha técnica.
           const affectedNumbers = [...new Set(unresolved.flatMap((issue) => issue.questionNumbers))]
-          warnings.push(`Revisão de qualidade pendente nas questões ${affectedNumbers.join(', ')}. A prova foi gerada para revisão humana; não a aprove sem conferir os apontamentos no relatório de qualidade.`)
-          qualityTestWarnings.push(...unresolved.map((issue) => `Q${issue.questionNumbers.join('/Q')}: ${issue.reason}`))
+          throw new ExamGenerationInputError(`A montagem automática não conseguiu obter questões distintas e válidas para as posições ${affectedNumbers.join(', ')} após três rodadas de substituição.`)
         }
       }
       alternativesCount = params.segment === 'anos-iniciais' ? 4 : 5
@@ -302,92 +494,233 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
       // Sem matriz: gera cada questão pelo pipeline fragmentado (padrão). Se
       // alguma questão falhar de forma definitiva, cai no fluxo monolítico da
       // prova inteira para não perder a geração.
-      const split = computeQuestionSplit(params.questionCount)
+      const split = computeQuestionSplit(params.questionCount, aiObjectivePercentage)
       const stagedCurriculumContent = curriculum.units
         .map((unit) => [unit.tituloCapitulo, unit.conteudo, unit.enrichedContent].filter(Boolean).join('\n'))
         .join('\n\n')
         .slice(0, 12000)
+      const activityContextForQuestion = (questionNumber: number) => {
+        const slot = activityBnccSlots[questionNumber - 1]
+        if (!slot) return { content: stagedCurriculumContent, instruction: '' }
+        const content = slot.units
+          .map((unit) => [unit.tituloCapitulo, unit.conteudo, unit.enrichedContent].filter(Boolean).join('\n'))
+          .join('\n\n')
+          .slice(0, 12000)
+        const description = selectedBnccDescriptions.get(slot.code)
+        return {
+          content,
+          instruction: `HABILIDADE BNCC OBRIGATÓRIA: ${slot.code}${description ? ` — ${description}` : ''}. A questão deve avaliar exatamente esta habilidade.`,
+        }
+      }
+      const applyPlannedBncc = (question: ExamQuestion, questionNumber: number): ExamQuestion => {
+        const slot = activityBnccSlots[questionNumber - 1]
+        if (!slot) return question
+        return {
+          ...question,
+          bnccCodes: [slot.code],
+          bnccStatus: 'mapeado',
+          bnccSummary: selectedBnccDescriptions.get(slot.code) ?? question.bnccSummary ?? null,
+        }
+      }
       const stagedQuestions: ExamQuestion[] = []
       let stagedFailure: string | null = null
+      regenerateQuestion = async (questionNumber, current, forceNoVisual = false) => {
+        const questionType: ExamQuestion['type'] = questionNumber <= split.objectiveCount ? 'objetiva' : 'descritiva'
+        const activityContext = activityContextForQuestion(questionNumber)
+        let lastError = 'falha desconhecida'
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const staged = await generateStagedQuestion({
+              questionNumber,
+              subject: params.subject,
+              gradeYear: params.gradeYear,
+              segment: params.segment,
+              curriculumContent: activityContext.content,
+              contentPlanInstruction: `${examKind === 'atividade' ? 'atividade' : 'prova'}; tipo ${questionType}; ${activityContext.instruction} substitua o enunciado anterior: ${current.statement.slice(0, 300)}`,
+              forceNoVisual,
+              questionType,
+            })
+            const corrected = correctSingleQuestion({ ...staged.question, number: questionNumber }, curriculum, { allowMathReviewFallback: true })
+            if (corrected.issues.length) throw new Error(corrected.issues.join(' '))
+            return applyPlannedBncc({ ...corrected.question, number: questionNumber }, questionNumber)
+          } catch (error) {
+            if (error instanceof AiBudgetExceededError) throw error
+            if (isTransientProviderFailure(error)) throw error
+            lastError = error instanceof Error ? error.message : 'erro'
+          }
+        }
+        throw new ExamGenerationInputError(`Questão ${questionNumber} não pôde ser substituída automaticamente: ${lastError}`)
+      }
 
       for (let index = 0; index < params.questionCount; index++) {
         const questionType: ExamQuestion['type'] = index < split.objectiveCount ? 'objetiva' : 'descritiva'
+        const activityContext = activityContextForQuestion(index + 1)
+        const priorText = stagedQuestions.slice(-5).map((question) => question.statement.slice(0, 200)).join(' | ')
+        let accepted: ExamQuestion | null = null
+        let lastQuestionError = 'falha desconhecida'
         try {
-          const staged = await generateStagedQuestion({
-            questionNumber: index + 1,
-            subject: params.subject,
-            gradeYear: params.gradeYear,
-            segment: params.segment,
-            curriculumContent: stagedCurriculumContent,
-            contentPlanInstruction: `${examKind === 'atividade' ? 'atividade' : 'prova'}; tipo ${questionType}`,
-            questionType,
-          })
-          const corrected = correctSingleQuestion({ ...staged.question, number: index + 1 }, curriculum, { allowMathReviewFallback: true })
-          if (corrected.issues.length) throw new Error(corrected.issues.join(' '))
-          stagedQuestions.push({ ...corrected.question, number: index + 1 })
-          warnings.push(...staged.issues.map((issue) => `Questão ${index + 1} [${issue.severity}]: ${issue.reason}`))
-          warnings.push(...corrected.warnings)
+          // Uma falha de estágio isola a candidata, não a prova toda. Cada
+          // nova candidata recebe contexto de variação, evitando repetir a
+          // mesma saída inválida (como distratores duplicados).
+          for (let candidateAttempt = 1; candidateAttempt <= 4 && !accepted; candidateAttempt++) {
+            for (let coherenceAttempt = 0; coherenceAttempt < 2 && !accepted; coherenceAttempt++) {
+              try {
+                const avoid = [
+                  priorText ? `não repita estes enunciados: ${priorText}` : null,
+                  candidateAttempt > 1 ? `Esta é a candidata ${candidateAttempt}: use outra abordagem, outro recorte do conteúdo e alternativas inequivocamente distintas.` : null,
+                  coherenceAttempt > 0 ? 'MUDE o cenário/contexto: o enunciado anterior ficou muito parecido com outra questão.' : null,
+                ].filter(Boolean).join(' ')
+                const staged = await generateStagedQuestion({
+                  questionNumber: index + 1,
+                  subject: params.subject,
+                  gradeYear: params.gradeYear,
+                  segment: params.segment,
+                  curriculumContent: activityContext.content,
+                  contentPlanInstruction: `${examKind === 'atividade' ? 'atividade' : 'prova'}; tipo ${questionType}; ${activityContext.instruction}${avoid ? `; ${avoid}` : ''}`,
+                  questionType,
+                })
+                const corrected = correctSingleQuestion({ ...staged.question, number: index + 1 }, curriculum, { allowMathReviewFallback: true })
+                if (corrected.issues.length) throw new Error(corrected.issues.join(' '))
+                const candidate = applyPlannedBncc({ ...corrected.question, number: index + 1 }, index + 1)
+                const worst = stagedQuestions.reduce(
+                  (max, question) => Math.max(max, textSimilarity(questionCoherenceText(candidate), questionCoherenceText(question))),
+                  0,
+                )
+                warnings.push(...staged.issues.map((issue) => `Questão ${index + 1} [${issue.severity}]: ${issue.reason}`))
+                warnings.push(...corrected.warnings)
+                if (worst >= EXAM_OVERLAP_BLOCK && coherenceAttempt === 0) {
+                  warnings.push(`Questão ${index + 1}: enunciado ${Math.round(worst * 100)}% semelhante a outra; regerando para diferenciar.`)
+                  continue
+                }
+                if (worst >= EXAM_OVERLAP_ALERT) {
+                  warnings.push(`Questão ${index + 1}: semelhança de ${Math.round(worst * 100)}% com outra questão; confira na revisão.`)
+                }
+                accepted = candidate
+              } catch (error) {
+                if (error instanceof AiBudgetExceededError) throw error
+                if (isTransientProviderFailure(error)) throw error
+                lastQuestionError = error instanceof Error ? error.message : 'erro'
+                // Não repete a mesma candidata após falha de pipeline; a
+                // próxima iteração altera o contexto de geração.
+                break
+              }
+            }
+          }
+          if (!accepted) throw new Error(lastQuestionError === 'falha desconhecida' ? 'não foi possível diferenciar o enunciado das demais questões.' : lastQuestionError)
+          stagedQuestions.push(accepted)
         } catch (error) {
+          if (error instanceof AiBudgetExceededError) throw error
+          if (isTransientProviderFailure(error)) throw error
           stagedFailure = `Questão ${index + 1}: ${error instanceof Error ? error.message : 'falha no pipeline fragmentado'}.`
           break
         }
       }
 
-      if (!stagedFailure) {
-        aiQuestions = stagedQuestions
-        warnings.push(`${params.questionCount} questão(ões) geradas pelo pipeline fragmentado.`)
-        alternativesCount = params.segment === 'anos-iniciais' ? 4 : 5
-      } else {
-      warnings.push(`${stagedFailure} Regenerando a prova inteira pelo fluxo monolítico.`)
-      const prompt = await buildExamPrompt(curriculum, { questionCount: params.questionCount, mode: examKind === 'atividade' ? 'atividade' : 'prova', selectedBnccCodes })
-      const generated = await generateValidatedStructuredContent<ExamGenerationResult, ExamGenerationResult>({
-      context: 'exams/generate',
-      prompt,
-      responseSchema: GEMINI_RESPONSE_SCHEMA,
-      zodSchema: examGenerationResultSchema,
-      validate: async (parsedExam) => {
-        const validation = validateExamResult(parsedExam, curriculum, { ...params, enforcePedagogicalCompleteness: qualityGateEnabled })
-        if (validation.issues.length) {
-          return { value: validation.corrected, issues: validation.issues, warnings: validation.warnings }
-        }
-        const quality = await runQuestionQualityTest(curriculum, validation.corrected.questions)
-        qualityTestReports = [{ phase: 'Análise da geração', results: quality.report }]
-        if (quality.issues.some((issue) => issue.severity === 'bloqueante')) {
-          const affectedNumbers = [...new Set(quality.issues.filter((issue) => issue.severity === 'bloqueante').flatMap((issue) => issue.questionNumbers))]
-          qualityTestWarnings.push(...quality.issues.filter((issue) => issue.severity === 'bloqueante').map((issue) => `Q${issue.questionNumbers.join('/Q')}: ${issue.reason}`))
-          return {
-            value: validation.corrected,
-            issues: [],
-            warnings: [...validation.warnings, ...quality.warnings, `Teste de qualidade apontou pendências nas questões ${affectedNumbers.join(', ')}. A prova seguirá para revisão humana.`],
-          }
-        }
-        qualityTestWarnings.push(...quality.warnings)
-        if (!qualityGateEnabled) return { value: validation.corrected, issues: [], warnings: [...validation.warnings, ...quality.warnings] }
-        const fidelity = await validateGeneratedExamPedagogicalFidelity(curriculum, validation.corrected)
-        return {
-          value: fidelity.corrected,
-          issues: fidelity.issues,
-          warnings: [...validation.warnings, ...fidelity.warnings],
-        }
-      },
-      })
-      aiQuestions = generated.value.questions
-      warnings.push(...generated.warnings)
-      if (generated.repaired) warnings.push(`Resposta da IA validada após reparo (${generated.attempts} tentativa(s)).`)
-      alternativesCount = generated.value.metadata.alternativesCount
+      if (stagedFailure) {
+        throw new ExamGenerationInputError(`${stagedFailure} A prova não foi criada porque nenhuma questão sem validação pode substituir o item.`)
       }
+      aiQuestions = stagedQuestions
+      warnings.push(`${params.questionCount} questão(ões) geradas pelo pipeline fragmentado.`)
+      alternativesCount = params.segment === 'anos-iniciais' ? 4 : 5
     }
-    // Se uma questão declara imagem (por análise automática ou regra
-    // obrigatória da matriz), ela não pode seguir sem o recurso visual.
-    // Imagem é um recurso de apoio, não deve invalidar uma prova inteira. Se
-    // os provedores não conseguirem produzir um gráfico/mapa confiável, a
-    // questão segue para revisão sem imagem e o professor pode tentar gerá-la
-    // novamente na própria tela.
+
+    if (autoQualityGateEnabled) {
+      // Esta é a única auditoria de qualidade por questão. Qualquer item
+      // bloqueado é descartado e substituído antes de a prova existir.
+      for (let round = 1; round <= 3; round++) {
+        const quality = await runQuestionQualityTest(curriculum, aiQuestions)
+        warnings.push(...quality.warnings)
+        qualityTestWarnings.push(...quality.warnings)
+        const rejected = quality.rejected
+        if (!rejected.length) {
+          finalQualityResult = quality
+          break
+        }
+        if (!regenerateQuestion || round === 3) {
+          throw new ExamGenerationInputError(`A auditoria automática não conseguiu aprovar as questões ${rejected.join(', ')} após substituições automáticas.`)
+        }
+        warnings.push(`Auditoria automática substituindo as questões ${rejected.join(', ')} (rodada ${round}).`)
+        const replacements: Array<{ number: number; question: ExamQuestion }> = []
+        const concurrency = Math.min(3, rejected.length)
+        for (let offset = 0; offset < rejected.length; offset += concurrency) {
+          const group = await Promise.all(rejected.slice(offset, offset + concurrency).map(async (number) => {
+            const current = aiQuestions.find((question) => question.number === number)
+            if (!current) throw new ExamGenerationInputError(`A auditoria indicou a questão inexistente ${number}.`)
+            const diagnostics = quality.report.find((result) => result.questionNumber === number)?.diagnostics ?? []
+            // Problemas locais (principalmente distratores) não precisam
+            // destruir uma questão válida. Reparamos somente o campo
+            // indicado e voltamos pelo mesmo gate na rodada seguinte.
+            try {
+              const repaired = await repairQuestionFromDiagnostics({
+                question: current,
+                curriculum,
+                diagnostics,
+                context: `exams/quality-repair-${number}-round-${round}`,
+              })
+              if (repaired) {
+                warnings.push(`Questão ${number}: reparo local orientado pelo diagnóstico de qualidade.`)
+                warnings.push(...repaired.warnings)
+                return { number, question: repaired.question }
+              }
+            } catch (repairError) {
+              // O reparo é uma otimização. Se ele não obedecer às invariantes,
+              // seguimos para a substituição orientada já existente.
+              warnings.push(`Questão ${number}: reparo local não aprovado (${repairError instanceof Error ? repairError.message : 'erro'}); regenerando a questão.`)
+            }
+            return { number, question: await regenerateQuestion!(number, current) }
+          }))
+          replacements.push(...group)
+        }
+        const replacementByNumber = new Map(replacements.map((item) => [item.number, item.question]))
+        aiQuestions = aiQuestions.map((question) => replacementByNumber.get(question.number) ?? question)
+        qualityTestRepairedNumbers = [...new Set([...qualityTestRepairedNumbers, ...rejected])]
+      }
+      if (!finalQualityResult) throw new ExamGenerationInputError('A auditoria automática não produziu um relatório final aprovado.')
+      qualityTestReports = [{ phase: 'Auditoria automática final', results: finalQualityResult.report }]
+    } else {
+      warnings.push('Auditoria automática temporariamente desativada; revise todas as questões antes de publicar a prova.')
+    }
+
+    // Se uma questão declara visual obrigatório, ela não pode seguir sem o
+    // recurso validado. Uma falha isola a questão: ela é substituída, nunca
+    // "aceita" sem figura para ser consertada depois na revisão.
+    const visualPlanning = await planAutomaticVisuals(params.subject, aiQuestions)
+    if (visualPlanning.blockedQuestionNumbers.length) {
+      throw new ExamGenerationInputError(`As questões ${visualPlanning.blockedQuestionNumbers.join(', ')} dependem de figura, gráfico, mapa ou diagrama que não foi fornecido. Elas precisam ser substituídas antes de concluir a prova.`)
+    }
+    aiQuestions = visualPlanning.questions
     const examWithImages = await attachImagesToExam({ metadata: { segment: params.segment, gradeYear: params.gradeYear, subject: params.subject, bimester: params.bimester ?? null, questionCount: aiQuestions.length, objectiveCount: aiQuestions.filter((q) => q.type === 'objetiva').length, discursiveCount: aiQuestions.filter((q) => q.type === 'descritiva').length, alternativesCount }, questions: aiQuestions }, { requireResolvedImages: false, maxAttemptsPerImage: 2, subject: params.subject })
     aiQuestions = examWithImages.questions
     const unresolvedImages = aiQuestions.filter((question) => question.needsImage && !question.image).map((question) => question.number)
     if (unresolvedImages.length) {
-      warnings.push(`Não foi possível obter imagem para a(s) questão(ões) ${unresolvedImages.join(', ')}. A prova foi gerada e a imagem pode ser tentada novamente na revisão.`)
+      if (!regenerateQuestion) throw new ExamGenerationInputError(`Não foi possível obter imagem válida para a(s) questão(ões) ${unresolvedImages.join(', ')}.`)
+      const regenerateWithVisual = regenerateQuestion
+      const replacements = await Promise.all(unresolvedImages.map(async (questionNumber) => {
+        const current = aiQuestions.find((question) => question.number === questionNumber)
+        if (!current) throw new ExamGenerationInputError(`Não foi possível localizar a questão ${questionNumber} para substituir após falha visual.`)
+        // Visuais automáticos melhoram a questão, mas não podem impedir a
+        // entrega da prova quando o provedor de imagem falha. Uma exigência
+        // explícita da matriz continua bloqueante e pede intervenção humana.
+        if (visualAidByQuestion.get(questionNumber) === 'obrigatorio') {
+          throw new ExamGenerationInputError(`Questão ${questionNumber} exige recurso visual obrigatório, mas não foi possível obter uma imagem válida.`)
+        }
+        let lastError = 'falha desconhecida'
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            const candidate = await regenerateWithVisual(questionNumber, current, true)
+            if (candidate.needsImage || candidate.visualPlan?.required) throw new Error('A substituta ainda depende de ilustração.')
+            return candidate
+          } catch (error) {
+            if (error instanceof AiBudgetExceededError) throw error
+            if (isTransientProviderFailure(error)) throw error
+            lastError = error instanceof Error ? error.message : String(error)
+          }
+        }
+        throw new ExamGenerationInputError(`Questão ${questionNumber} não pôde ser refeita sem imagem após falha visual: ${lastError}`)
+      }))
+      const byNumber = new Map(replacements.map((question) => [question.number, question]))
+      aiQuestions = aiQuestions.map((question) => byNumber.get(question.number) ?? question)
+      warnings.push(`Questão(ões) ${unresolvedImages.join(', ')} foram refeitas sem imagem porque o visual automático não pôde ser validado.`)
     }
   }
 
@@ -397,18 +730,25 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
   }
 
   const allQuestions = [...aiQuestions, ...bankQuestions]
-  // A revisão humana é para adequação didática. Auditamos o conjunto FINAL
-  // (inclusive itens do banco), preservamos o histórico de fases e salvamos a
-  // prova mesmo com pendências, para o professor conferi-las. A barreira
-  // dura fica na aprovação (qualityApprovalBlocks).
-  const finalQualityTest = await runQuestionQualityTest(curriculum, allQuestions)
-  qualityTestReports.push({ phase: 'Auditoria final', results: finalQualityTest.report })
-  qualityTestWarnings = [...qualityTestWarnings, ...finalQualityTest.warnings]
-  warnings.push(...finalQualityTest.warnings)
-  const finalQualityBlocks = finalQualityTest.issues.filter((issue) => issue.severity === 'bloqueante')
-  if (finalQualityBlocks.length) {
-    const affected = [...new Set(finalQualityBlocks.flatMap((issue) => issue.questionNumbers))]
-    warnings.push(`Auditoria final apontou pendências nas questões ${affected.join(', ')}. A prova foi salva para revisão humana; confira o relatório de qualidade antes de aprovar.`)
+  // Relatório final de coerência da prova (repetição/duplicação entre itens).
+  for (const issue of coherenceIssues(aiQuestions)) {
+    warnings.push(`Coerência da prova: ${issue.reason}`)
+  }
+  // Itens do banco não passam pela geração atual; auditamos somente eles e
+  // juntamos seu resultado ao relatório já aprovado das questões geradas.
+  if (bankQuestions.length && autoQualityGateEnabled) {
+    const bankQuality = await runQuestionQualityTest(curriculum, bankQuestions)
+    if (bankQuality.rejected.length) {
+      throw new ExamGenerationInputError(`Questões do banco ENEM reprovadas pela auditoria automática: ${bankQuality.rejected.join(', ')}.`)
+    }
+    qualityTestWarnings.push(...bankQuality.warnings)
+    warnings.push(...bankQuality.warnings)
+    qualityTestReports = [{
+      phase: 'Auditoria automática final',
+      results: [...(finalQualityResult?.report ?? []), ...bankQuality.report].sort((a, b) => a.questionNumber - b.questionNumber),
+    }]
+  } else if (bankQuestions.length) {
+    warnings.push('Auditoria automática do banco ENEM temporariamente desativada; revise as questões antes de publicar a prova.')
   }
   const examWithBank = {
       metadata: {
@@ -429,7 +769,7 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
         ...examWithBank,
         metadata: {
           ...examWithBank.metadata,
-          activity: { bnccCodes: selectedBnccCodes, bnccDescriptions: Object.fromEntries(selectedBnccDescriptions), rubricVersion: 'bncc-v1' },
+          activity: { bnccCodes: selectedBnccCodes, bnccPlan: params.bnccPlan ?? null, bnccDescriptions: Object.fromEntries(selectedBnccDescriptions), rubricVersion: 'bncc-v1' },
         },
       }
     : examWithBank

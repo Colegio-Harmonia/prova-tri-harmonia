@@ -22,7 +22,9 @@ export async function POST(req: NextRequest) {
   if (!currentUser) return NextResponse.json({ error: 'Usuário não encontrado' }, { status: 401 })
 
   try {
-    const jobId = await enqueueAtividadeJob({ ...parsed.data, bnccCodes: [...new Set(parsed.data.bnccCodes.map((code) => code.trim().toUpperCase()))] }, currentUser.id)
+    const bnccPlan = parsed.data.bnccPlan?.map((item) => ({ code: item.code.trim().toUpperCase(), questionCount: item.questionCount }))
+    const bnccCodes = bnccPlan?.map((item) => item.code) ?? parsed.data.bnccCodes.map((code) => code.trim().toUpperCase())
+    const jobId = await enqueueAtividadeJob({ ...parsed.data, bnccCodes: [...new Set(bnccCodes)], ...(bnccPlan ? { bnccPlan } : {}) }, currentUser.id)
     return NextResponse.json({ jobId }, { status: 202 })
   } catch (err) {
     console.error('[activities] erro ao enfileirar:', err)

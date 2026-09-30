@@ -199,7 +199,7 @@ export default function QueueList({ isSuperuser, jobTypes, collectionLabel, sing
                         {JOB_STATUS_LABELS[job.status] ?? job.status}
                       </span>
                       {(job.status === 'erro' || job.attempts > 1) && (
-                        <p className="mt-1 text-[11px] text-content-muted">tentativa {job.attempts}/{job.maxAttempts}</p>
+                        <p className="mt-1 text-[11px] text-content-muted" title="Este contador mostra execuções do job. A geração ou o reparo de cada questão podem realizar tentativas internas adicionais.">execução do job {job.attempts}/{job.maxAttempts}</p>
                       )}
                     </td>
                     {isSuperuser && <td className="px-4 py-3 text-content-secondary">{job.requesterName}</td>}

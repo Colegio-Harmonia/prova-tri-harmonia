@@ -14,14 +14,27 @@ import path from 'node:path'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/client'
 import { GENERATION_JOB_TYPES, users } from '../src/db/schema'
-import { claimNextJob, completeJob, deferJobForAiBudget, failJob, requeueStaleJobs, type ClaimedJob } from '../src/lib/queue/claim'
+import { claimNextJob, completeJob, deferJobForAiBudget, deferJobForProvider, failJob, heartbeatJob, requeueStaleJobs, type ClaimedJob } from '../src/lib/queue/claim'
 import { executeJob, gerarProvaJobLabel } from '../src/lib/queue/handlers'
 import { AiBudgetExceededError, nextAiBudgetWindowStart } from '../src/lib/ai/operationBudget'
+import { StructuredGenerationError } from '../src/lib/gemini/structuredRepair'
 import { sendChatGenerationJobNotification } from '../src/lib/notifications/googleChat'
 
 const POLL_MS = 3_000
 const STALE_CHECK_MS = 5 * 60_000
 const STALE_JOB_MINUTES = 15
+const PROVIDER_RETRY_DELAY_MS = 5 * 60_000
+
+const TEMPORARY_PROVIDER_FAILURES = new Set([
+  'rate_limited',
+  'timeout',
+  'provider_unavailable',
+  'provider_request_failed',
+])
+
+// Leitura de scan e OCR têm workers próprios. Mantê-los fora desta lista
+// impede que uma imagem longa bloqueie geração, adaptação ou pontuação.
+const GENERAL_JOB_TYPES = GENERATION_JOB_TYPES.filter((jobType) => jobType !== 'transcrever_scan' && jobType !== 'processar_scan')
 
 // Scripts tsx fora do Next não carregam .env.local sozinhos (mesmo motivo
 // do seed-pedagogical-taxonomies). O worker precisa do ambiente completo
@@ -73,6 +86,13 @@ async function runOnce(job: ClaimedJob) {
   const label = jobLabelFor(job)
   console.log(`[worker] job #${job.id} (${job.jobType}) iniciado — ${label} [tentativa ${job.attempts}/${job.maxAttempts}]`)
 
+
+  // Heartbeat a cada 20s impede que requeueStaleJobs marque o job como
+  // travado durante uma geração longa porém legítima.
+  const heartbeatInterval = setInterval(async () => {
+    try { await heartbeatJob(job.id) } catch { /* best-effort, nunca derruba o job */ }
+  }, 20_000)
+
   try {
     const result = await executeJob(job)
     await completeJob(job.id, { resultExamId: result.resultExamId, resultRef: result.resultRef })
@@ -88,6 +108,12 @@ async function runOnce(job: ClaimedJob) {
       console.warn(`[worker] job #${job.id} aguardando cota de ${err.purpose}; tentativa preservada.`)
       return
     }
+    if (err instanceof StructuredGenerationError && TEMPORARY_PROVIDER_FAILURES.has(err.failureCode)) {
+      const availableAt = new Date(Date.now() + PROVIDER_RETRY_DELAY_MS)
+      await deferJobForProvider(job, availableAt, `O provedor de IA recusou temporariamente a geração (${err.failureCode}). A atividade será retomada automaticamente após ${availableAt.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}; nenhuma tentativa foi consumida.`)
+      console.warn(`[worker] job #${job.id} aguardando provedor (${err.failureCode}); tentativa preservada.`)
+      return
+    }
     const nextStatus = await failJob(job, message)
     console.error(`[worker] job #${job.id} falhou (${nextStatus === 'pendente' ? 'vai retentar' : 'erro definitivo'}): ${message}`)
     // Falha definitiva só vira DM em job disparado pelo usuário — job
@@ -95,6 +121,8 @@ async function runOnce(job: ClaimedJob) {
     if (nextStatus === 'erro' && job.jobType === 'gerar_prova') {
       await notifyRequester(job, label, 'erro')
     }
+  } finally {
+    clearInterval(heartbeatInterval)
   }
 }
 
@@ -107,8 +135,8 @@ async function main() {
 
   console.log('[worker] prova-tri-worker iniciado (poll a cada %dms, jobs órfãos após %dmin)', POLL_MS, STALE_JOB_MINUTES)
 
-  // Recuperação de crash na subida: devolve pra fila o que ficou preso em
-  // 'gerando' quando o processo anterior morreu no meio.
+  // A heartbeat diferencia geração longa de job órfão; só jobs que pararam
+  // de renovar por 15 minutos são devolvidos à fila.
   const recovered = await requeueStaleJobs(STALE_JOB_MINUTES)
   if (recovered.requeued || recovered.failed) {
     console.warn(`[worker] jobs órfãos na subida: ${recovered.requeued} reenfileirado(s), ${recovered.failed} marcado(s) como erro.`)
@@ -124,10 +152,9 @@ async function main() {
         console.warn('[worker] falha na varredura de jobs órfãos:', err instanceof Error ? err.message : err)
       }
     }
-
     let job: ClaimedJob | null = null
     try {
-      job = await claimNextJob(GENERATION_JOB_TYPES.filter((jobType) => jobType !== 'transcrever_scan'))
+      job = await claimNextJob(GENERAL_JOB_TYPES)
     } catch (err) {
       // Banco fora do ar não pode matar o worker — espera e tenta de novo.
       console.error('[worker] falha no claim (banco indisponível?):', err instanceof Error ? err.message : err)

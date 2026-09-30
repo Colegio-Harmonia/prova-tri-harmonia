@@ -132,18 +132,54 @@ const ORTOGRAFIA_RULES: Record<string, Record<string, string>> = {
   mau_mal: { adjetivo: 'mau', adverbio: 'mal' },
   ha_a: { tempo_passado: 'há', tempo_futuro: 'a', distancia: 'a' },
   porque: { causa: 'porque', pergunta: 'por que', finalidade: 'por que', substantivado: 'porquê' },
-  senão_se_nao: { excecao: 'senão', condicao: 'se não' },
+  senao_se_nao: { excecao: 'senão', condicao: 'se não' },
   onde_aonde: { lugar_estatico: 'onde', movimento: 'aonde' },
+}
+
+// O modelo costuma expressar a mesma função linguística com termos de sala
+// de aula ("oposição", "explicação") em vez do identificador interno do
+// motor ("adversativo", "causa"). Normalizamos somente sinônimos cujo
+// resultado ortográfico é inequívoco; valores fora dessa lista continuam
+// bloqueados pelo motor determinístico.
+const ORTOGRAFIA_SENSE_ALIASES: Record<string, Record<string, string>> = {
+  mas_mais: {
+    adversidade: 'adversativo',
+    oposicao: 'adversativo',
+    contraste: 'adversativo',
+    'oposicao de ideias': 'adversativo',
+    'oposicao de sentidos': 'adversativo',
+  },
+  porque: {
+    explicacao: 'causa',
+    'causa explicacao': 'causa',
+    'causa ou explicacao': 'causa',
+    interrogacao: 'pergunta',
+    interrogativa: 'pergunta',
+  },
 }
 
 function normalizeKey(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
 }
 
+function canonicalOrthographySense(rule: string, sense: string): string {
+  const normalizedSense = normalizeKey(sense)
+  const exactAlias = ORTOGRAFIA_SENSE_ALIASES[rule]?.[normalizedSense]
+  if (exactAlias) return exactAlias
+  // Aceita formulações compostas geradas pelo modelo apenas quando elas
+  // contêm o marcador semântico inequívoco da categoria canônica.
+  if (rule === 'mas_mais' && /\b(advers|oposic|contrast)/.test(normalizedSense)) return 'adversativo'
+  if (rule === 'porque' && /\b(causa|explicacao)/.test(normalizedSense)) return 'causa'
+  if (rule === 'porque' && /\b(pergunta|interrog)/.test(normalizedSense)) return 'pergunta'
+  return normalizedSense
+}
+
 function decideOrtografia(rule: string, sense: string): string {
-  const table = ORTOGRAFIA_RULES[normalizeKey(rule)]
+  const normalizedRule = normalizeKey(rule)
+  const table = ORTOGRAFIA_RULES[normalizedRule]
   if (!table) throw new Error(`Regra de ortografia "${rule}" não implementada.`)
-  const correct = table[normalizeKey(sense)]
+  const canonicalSense = canonicalOrthographySense(normalizedRule, sense)
+  const correct = table[canonicalSense]
   if (!correct) throw new Error(`Intenção "${sense}" não mapeada para a regra "${rule}".`)
   return correct
 }
@@ -231,7 +267,7 @@ registerRuleEngine({
 registerRuleEngine({
   id: 'ortografia',
   title: 'Ortografia (pares confusos)',
-  inputHint: '{ rule: mas_mais|mau_mal|ha_a|porque|senao_se_nao|onde_aonde, sense: intenção declarada }',
+  inputHint: '{ rule: mas_mais|mau_mal|ha_a|porque|senao_se_nao|onde_aonde, sense: mas_mais=adversativo|intensidade|quantidade; mau_mal=adjetivo|adverbio; ha_a=tempo_passado|tempo_futuro|distancia; porque=causa|pergunta|finalidade|substantivado; senao_se_nao=excecao|condicao; onde_aonde=lugar_estatico|movimento }',
   evaluate(input) {
     const parsed = z.object({ rule: z.string().min(2), sense: z.string().min(2) }).parse(input)
     const form = decideOrtografia(parsed.rule, parsed.sense)

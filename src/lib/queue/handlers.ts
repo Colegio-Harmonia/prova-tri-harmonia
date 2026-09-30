@@ -7,7 +7,7 @@ import { generateExamCore } from '@/lib/exams/generateExamCore'
 import { generateReinforcementCore } from '@/lib/reinforcement/generateReinforcementCore'
 import { scoreExamCorrections } from '@/lib/scoring/scoreCorrections'
 import { adaptExam } from '@/lib/adaptation/adaptExam'
-import { executeDiscursiveTranscriptionJob } from '@/lib/scan-ingest/transcriptionQueue'
+import { executeDiscursivePageTranscriptionJob, executeDiscursiveTranscriptionJob } from '@/lib/scan-ingest/transcriptionQueue'
 import { processLocalScan } from '@/lib/scan-ingest/localScanProcessor'
 import type { EquivalenceReport } from '@/lib/adaptation/equivalenceValidator'
 import type { ClaimedJob } from './claim'
@@ -57,7 +57,7 @@ async function executeProcessarScan(job: ClaimedJob): Promise<JobExecutionResult
   return {
     resultExamId: parsed.data.examId,
     resultRef: result,
-    label: `Processamento de scan (upload #${parsed.data.uploadId}, prova #${parsed.data.examId})`,
+    label: `Processamento de scan (upload #${parsed.data.uploadId}${parsed.data.pageId ? `, página #${parsed.data.pageId}` : ''}, prova #${parsed.data.examId})`,
     notifyRequester: false,
   }
 }
@@ -79,7 +79,9 @@ async function executeGerarAtividade(job: ClaimedJob): Promise<JobExecutionResul
     assessmentKind: 'padrao',
     examKind: 'atividade',
     bnccCodes: payload.bnccCodes,
+    bnccPlan: payload.bnccPlan,
     classroomCourseId: payload.classroomCourseId ?? null,
+    generationJobId: job.id,
   }, job.requestedBy)
 
   return {
@@ -200,11 +202,13 @@ async function executeTranscreverScan(job: ClaimedJob): Promise<JobExecutionResu
   if (!parsed.success) {
     throw new Error(`Payload do job inválido: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`)
   }
-  const result = await executeDiscursiveTranscriptionJob({ ...parsed.data, requestedBy: job.requestedBy })
+  const result = parsed.data.questionNumbers
+    ? await executeDiscursivePageTranscriptionJob({ examId: parsed.data.examId, pageId: parsed.data.pageId, questionNumbers: parsed.data.questionNumbers, requestedBy: job.requestedBy })
+    : await executeDiscursiveTranscriptionJob({ examId: parsed.data.examId, pageId: parsed.data.pageId, questionNumber: parsed.data.questionNumber!, requestedBy: job.requestedBy })
   return {
     resultExamId: parsed.data.examId,
-    resultRef: { pageId: parsed.data.pageId, questionNumber: parsed.data.questionNumber, ...result },
-    label: `Transcrição da questão ${parsed.data.questionNumber} (prova #${parsed.data.examId})`,
+    resultRef: { pageId: parsed.data.pageId, questionNumber: parsed.data.questionNumber, questionNumbers: parsed.data.questionNumbers, ...result },
+    label: parsed.data.questionNumbers ? `Transcrição de ${parsed.data.questionNumbers.length} questões da página ${parsed.data.pageId} (prova #${parsed.data.examId})` : `Transcrição da questão ${parsed.data.questionNumber} (prova #${parsed.data.examId})`,
     notifyRequester: false,
   }
 }
@@ -233,10 +237,12 @@ async function executeGerarProva(job: ClaimedJob): Promise<JobExecutionResult> {
       subject: payload.subject,
       bimester: payload.bimester,
       questionCount: payload.questionCount,
+      objectivePercentage: payload.objectivePercentage,
       enemBankQuestionIds: payload.enemBankQuestionIds,
       assessmentKind: payload.assessmentKind,
       contentPlan: payload.contentPlan,
       assignedTo: payload.assignedTo,
+      generationJobId: job.id,
     },
     job.requestedBy,
   )

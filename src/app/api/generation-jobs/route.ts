@@ -12,7 +12,7 @@ import type { GerarProvaJobPayload } from '@/lib/queue/types'
 const curriculumPlanItemSchema = z.object({
   // rowIndex vem da planilha e pode começar em 0.
   unitRowIndex: z.number().int().min(0),
-  questionCount: z.number().int().min(0).max(15),
+  questionCount: z.number().int().min(0).max(30),
   priority: z.enum(['alta', 'media', 'baixa']),
   visualAid: z.enum(['auto', 'obrigatorio', 'sem_imagem']),
 })
@@ -30,8 +30,9 @@ const postSchema = z.object({
   subjects: z.array(z.string().min(1)).min(1).max(12),
   config: z.object({
     bimester: z.number().int().min(1).max(4).optional(),
-    questionCount: z.number().int().min(0).max(15),
-    enemBankQuestionIds: z.array(z.number().int()).max(15).optional(),
+    questionCount: z.number().int().min(0).max(30),
+    objectivePercentage: z.number().int().min(0).max(100).optional().default(70),
+    enemBankQuestionIds: z.array(z.number().int()).max(30).optional(),
     assessmentKind: z.enum(['padrao', 'enem']).optional(),
     contentPlan: z.array(curriculumPlanItemSchema).max(60).optional(),
     assignedTo: z.number().int().positive().optional(),

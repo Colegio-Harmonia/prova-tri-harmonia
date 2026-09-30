@@ -1,4 +1,7 @@
 import axios from 'axios'
+import { and, eq } from 'drizzle-orm'
+import { db } from '@/db/client'
+import { aiModelProfiles } from '@/db/schema'
 import { AI_BUDGET_EXHAUSTED_CODE, AiBudgetExceededError, reserveAiOperation } from '@/lib/ai/operationBudget'
 import { classifyAiFailure, normalizeAiUsage, recordAiOperation } from '@/lib/ai/operationTelemetry'
 import { activeAiModel, estimateAiCostMicrousd } from '@/lib/ai/modelProfiles'
@@ -28,6 +31,29 @@ type ImageValidation = {
   reason: string
 }
 
+type ImageValidationProfile = Awaited<ReturnType<typeof activeAiModel>>
+
+function isProviderRateLimited(error: unknown) {
+  return axios.isAxiosError(error) && error.response?.status === 429
+}
+
+/**
+ * O perfil Anthropic pode ficar desativado no painel porque ele não é o
+ * validador principal. Ainda assim, quando o Gemini devolve 429, ele é um
+ * backup seguro: valida a mesma imagem antes que ela seja apresentada ao
+ * professor, em vez de descartar uma geração já concluída.
+ */
+async function standbyAnthropicValidationProfile(): Promise<ImageValidationProfile | null> {
+  const profile = await db.query.aiModelProfiles.findFirst({
+    where: and(
+      eq(aiModelProfiles.purpose, 'image_validation'),
+      eq(aiModelProfiles.provider, 'anthropic'),
+    ),
+  })
+  if (!profile || !process.env.ANTHROPIC_API_KEY) return null
+  return profile
+}
+
 /**
  * Alguns provedores preservam o JSON solicitado, mas o envolvem em um bloco
  * Markdown. Isso não muda o conteúdo do parecer e não deve transformar uma
@@ -53,6 +79,30 @@ export async function validateGeneratedQuestionImage(params: {
   expectedText?: string | null
 }): Promise<ImageValidation> {
   const profile = await activeAiModel('image_validation')
+  try {
+    return await validateWithProfile(profile, params, 1)
+  } catch (error) {
+    // Rate limit do provedor não significa que a imagem seja inadequada.
+    // Tenta um segundo provedor antes de devolver a falha ao revisor.
+    const fallback = profile.provider === 'gemini' && isProviderRateLimited(error)
+      ? await standbyAnthropicValidationProfile()
+      : null
+    if (!fallback) throw error
+    return validateWithProfile(fallback, params, 2)
+  }
+}
+
+async function validateWithProfile(
+  profile: ImageValidationProfile,
+  params: {
+    buffer: Buffer
+    mimeType: string
+    visualBrief: string
+    questionContext: string
+    expectedText?: string | null
+  },
+  attempt: number,
+): Promise<ImageValidation> {
   if (profile.provider !== 'gemini' && profile.provider !== 'anthropic') throw new Error('O perfil de validação de imagem ativo ainda não possui adaptador habilitado.')
   const apiKey = profile.provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY : process.env.GEMINI_API_KEY
   if (!apiKey) throw new Error(`${profile.provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'GEMINI_API_KEY'} não configurado para validar a imagem.`)
@@ -94,7 +144,7 @@ Rejeite a imagem se houver painel, diagrama ou elemento essencial incompleto; te
       throw new Error('Validador visual retornou formato inválido.')
     }
     const usage = profile.provider === 'anthropic' ? normalizeAiUsage({ prompt_tokens: data?.usage?.input_tokens, completion_tokens: data?.usage?.output_tokens, total_tokens: (data?.usage?.input_tokens ?? 0) + (data?.usage?.output_tokens ?? 0) }) : undefined
-    await recordAiOperation({ operation: 'images/validate-generated-image', provider: profile.provider, model, status: 'succeeded', attempt: 1, durationMs: Date.now() - startedAt, usage, modelProfileId: profile.id, estimatedCostMicrousd: estimateAiCostMicrousd({ model: profile, promptTokens: usage?.promptTokens, completionTokens: usage?.completionTokens }) })
+    await recordAiOperation({ operation: 'images/validate-generated-image', provider: profile.provider, model, status: 'succeeded', attempt, durationMs: Date.now() - startedAt, usage, modelProfileId: profile.id, estimatedCostMicrousd: estimateAiCostMicrousd({ model: profile, promptTokens: usage?.promptTokens, completionTokens: usage?.completionTokens }) })
     return {
       usable: parsed.usable,
       layoutComplete: parsed.layoutComplete,
@@ -109,7 +159,7 @@ Rejeite a imagem se houver painel, diagrama ou elemento essencial incompleto; te
       provider: profile.provider,
       model,
       status: 'failed',
-      attempt: 1,
+      attempt,
       durationMs: Date.now() - startedAt,
       errorCode: error instanceof AiBudgetExceededError ? AI_BUDGET_EXHAUSTED_CODE : classifyAiFailure(error),
     })

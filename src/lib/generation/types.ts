@@ -4,7 +4,7 @@ import type { CanonicalDomainId } from './domains'
 export const TRUTH_STRATEGIES = ['calculavel', 'regra_deterministica', 'fonte_ancorada', 'interpretativa'] as const
 export type TruthStrategy = (typeof TRUTH_STRATEGIES)[number]
 
-export const STAGE_IDS = ['stage0', 'stage1', 'stage2', 'stage3', 'stage4', 'stage5'] as const
+export const STAGE_IDS = ['stage0', 'stage1', 'stage_visual', 'stage2', 'stage3', 'stage4', 'stage5'] as const
 export type StageId = (typeof STAGE_IDS)[number]
 
 /** Falha de um gate determinístico — sempre aponta o estágio que deve ser reexecutado. */
@@ -36,6 +36,8 @@ export type PipelineContext = {
   curriculumContent: string
   /** Instrução da matriz (capítulo/tipo/recurso visual), quando houver. */
   contentPlanInstruction?: string
+  /** Recuperação: a questão substituta não pode depender de imagem. */
+  forceNoVisual?: boolean
   questionType: 'objetiva' | 'descritiva'
 }
 
@@ -72,6 +74,19 @@ export type StatementDraft = {
   supportText: string | null
 }
 
+/** Decisão visual feita antes de o enunciado nascer. Os dados concretos são
+ * completados pelo roteador de ilustrações depois que a questão é montada. */
+export type VisualPlan = {
+  required: boolean
+  purpose: 'nenhum' | 'interpretar_dados' | 'representar_relacao' | 'localizar_elemento' | 'comparar_elementos' | 'identificar_estrutura' | 'analisar_documento' | 'apoiar_contexto'
+  visualType: 'none' | 'blank_coordinate_plane' | 'coordinate_plane' | 'function_graph' | 'statistical_chart' | 'geometric_diagram' | 'chemical_structure' | 'map' | 'timeline' | 'flowchart' | 'phylogeny' | 'historical_document' | 'illustration'
+  /** Dados estritamente extraídos da fonte de verdade; o roteador os valida novamente. */
+  data?: Record<string, unknown>
+  /** Briefing de ilustração seguro, sem resposta ou dados resolvidos. */
+  whatIfImage?: string | null
+  rationale: string
+}
+
 export type MetadataDraft = {
   bloomLevel: 'lembrar' | 'compreender' | 'aplicar' | 'analisar' | 'avaliar' | 'criar'
   bnccCodes: string[]
@@ -83,7 +98,7 @@ export type MetadataDraft = {
     difficulty?: 'facil' | 'media' | 'dificil' | null
     estimatedTimeMinutes?: number | null
   }
-  /** Decisão de recurso visual (Estágio 4). Resolvida depois por attachImagesToExam. */
+  /** Legado de recurso visual; a decisão oficial é feita em `visualPlan`. */
   needsImage?: boolean
   imageQuery?: string | null
 }
@@ -93,6 +108,7 @@ export type AssembledQuestion = {
   truth: TruthObject
   alternatives: Array<{ letter: string; text: string }> | null
   correctLetter: string | null
+  visualPlan: VisualPlan
   statement: string
   supportText: string | null
   metadata: MetadataDraft
@@ -102,8 +118,9 @@ export type AssembledQuestion = {
 export type StageRunners = {
   classifyStrategy: (ctx: PipelineContext, attempt: number) => Promise<QuestionPlan>
   generateTruth: (ctx: PipelineContext, plan: QuestionPlan, attempt: number) => Promise<TruthObject>
+  planVisual: (ctx: PipelineContext, plan: QuestionPlan, truth: TruthObject, attempt: number) => Promise<VisualPlan>
   generateDistractors: (ctx: PipelineContext, plan: QuestionPlan, truth: TruthObject, attempt: number) => Promise<string[]>
-  writeStatement: (ctx: PipelineContext, plan: QuestionPlan, truth: TruthObject, alternatives: Array<{ letter: string; text: string }>, attempt: number) => Promise<StatementDraft>
+  writeStatement: (ctx: PipelineContext, plan: QuestionPlan, truth: TruthObject, visualPlan: VisualPlan, alternatives: Array<{ letter: string; text: string }>, attempt: number) => Promise<StatementDraft>
   generateMetadata: (ctx: PipelineContext, truth: TruthObject, statement: StatementDraft, alternatives: Array<{ letter: string; text: string }>, correctLetter: string | null, attempt: number) => Promise<MetadataDraft>
   /** Auditoria final (Estágio 5). Retorna problemas bloqueantes/alerta. */
   audit: (ctx: PipelineContext, question: AssembledQuestion, attempt: number) => Promise<Array<{ severity: 'bloqueante' | 'alerta'; reason: string }>>

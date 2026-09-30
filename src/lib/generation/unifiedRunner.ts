@@ -4,7 +4,7 @@ import type { ExamQuestion } from '@/lib/gemini/examSchema'
 import { canonicalDomainsForSubject, getCanonicalDomain, computeCanonicalDomain, comparableNumber } from './domains'
 import { buildDeterministicMathStatement } from './deterministicMathStatement'
 import { getRuleEngine, registeredRuleEngineIds } from './rules'
-import { defaultShuffle, assembleAlternatives, gateAlternativePresentation, gateDistractors, gateInterpretiveSupport, gateMetadata, gateStatement, gateStrategy, gateTruth, gateVisualPlan, gateVisualReference } from './gates'
+import { defaultShuffle, assembleAlternatives, gateAlternativePresentation, gateAlternativeShape, gateDistractors, gateInterpretiveSupport, gateMetadata, gateStatement, gateStrategy, gateTruth, gateVisualPlan, gateVisualReference } from './gates'
 import { detectAlternativeAmbiguities } from './alternatives'
 import { assembleExamQuestion } from './finalize'
 import { runLocalQualityGate } from './localQualityGate'
@@ -287,7 +287,9 @@ Não o parafraseie, não o complete e não cite outro trecho. Reescreva enunciad
 
 ${ctx.contentPlanInstruction ? `Instrução adicional: ${ctx.contentPlanInstruction}` : ''}
 
-${ctx.questionType === 'objetiva' ? `Gere exatamente ${distCount} distratores em "distractors". Cada distrator deve representar um erro típico plausível, NUNCA a resposta correta. Use o MESMO formato/tamanho da resposta. NÃO repita distratores.` : 'Questão descritiva: não gere distratores.'}
+${ctx.questionType === 'objetiva' ? `Gere exatamente ${distCount} distratores em "distractors". Cada distrator deve representar um erro típico plausível, NUNCA a resposta correta. Use o MESMO formato/tamanho da resposta: se a resposta correta for uma palavra ou expressão curta, todos devem ser formas curtas; se for uma frase, todos devem ser frases completas. NÃO repita distratores.` : 'Questão descritiva: não gere distratores.'}
+
+O nome supportText é interno ao sistema e NUNCA pode aparecer no enunciado. Se houver texto de apoio, escreva "Leia o texto a seguir" ou "Considere o trecho abaixo"; nunca escreva nomes de campos, payload ou JSON para o estudante.
 
 ${visualInstructions}
 
@@ -390,9 +392,17 @@ function isUnavailableDeterministicRule(error: StructuredGenerationError): boole
     && error.issues.some((issue) => /regra de ortografia .*n[aã]o implementada|sem motor de regras|n[aã]o h[aá] motor de regras/i.test(issue))
 }
 
-function isEvidenceValidationFailure(error: StructuredGenerationError): boolean {
+export function isEvidenceValidationFailure(error: StructuredGenerationError): boolean {
+  // Os gates produzem diagnósticos em português ("evidência", "não").
+  // Normalizar antes da comparação evita que a recuperação local deixe de
+  // ser acionada apenas pela presença de acentos no texto do diagnóstico.
+  const normalize = (value: string) => value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+
   return error.failureCode === 'validation_rejected'
-    && error.issues.some((issue) => /evidencia .*nao existe|evidencia .*vazia|evidence_(not_found|missing)/i.test(issue))
+    && error.issues.some((issue) => /evidencia .*nao existe|evidencia .*vazia|evidence_(not_found|missing)/.test(normalize(issue)))
 }
 
 function literalEvidenceFallback(curriculumContent: string): string | null {
@@ -583,6 +593,7 @@ export async function generateUnifiedQuestion(
   if (ctx.questionType === 'objetiva' && parsed.distractors) {
     try {
       gateAlternativePresentation(correctAnswerText)
+      gateAlternativeShape(correctAnswerText, parsed.distractors)
     } catch (error) {
       if (error instanceof StageGateError) {
         issues.push({ severity: 'bloqueante', reason: `[alternativas] ${error.message}` })

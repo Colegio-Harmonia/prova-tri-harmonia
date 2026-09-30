@@ -118,6 +118,9 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
   const [previews, setPreviews] = useState<SubjectPreview[]>([])
   const [error, setError] = useState<string | null>(null)
   const [questionCount, setQuestionCount] = useState(12)
+  // 100% fica à esquerda (alternativas) e 0% à direita (dissertativas),
+  // acompanhando a metáfora visual escolhida para este controle.
+  const [objectivePercentage, setObjectivePercentage] = useState(70)
   const [academicYear, setAcademicYear] = useState(new Date().getFullYear())
   const [enqueueing, setEnqueueing] = useState(false)
   const [enqueueError, setEnqueueError] = useState<string | null>(null)
@@ -142,7 +145,10 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
   // Banco ENEM só em disciplina única (a API rejeita batch multi + banco).
   const enemArea = singleSubject && segment === 'ensino-medio' ? getEnemAreaForSubject(singleSubject) : null
   const totalCount = questionCount + bankSelected.size
-  const totalValid = totalCount >= 12 && totalCount <= 15
+  const totalValid = totalCount >= 10 && totalCount <= 30
+  const objectiveTarget = Math.round(totalCount * objectivePercentage / 100)
+  const aiObjectiveCount = Math.max(0, Math.min(questionCount, objectiveTarget - bankSelected.size))
+  const effectiveObjectiveCount = bankSelected.size + aiObjectiveCount
   const contentPlanTotal = contentPlan.reduce((sum, item) => sum + item.questionCount, 0)
   const contentPlanValid = !singleSubject || contentPlan.length === 0 || contentPlanTotal === questionCount
   // Sem permitir avançar com campo em branco: segmento, responsável (só a
@@ -367,6 +373,7 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
           ...(classLabel.trim() ? { classLabel: classLabel.trim() } : {}),
           config: {
             questionCount,
+            objectivePercentage,
             enemBankQuestionIds: Array.from(bankSelected),
             assessmentKind,
             ...(bimester !== '' ? { bimester } : {}),
@@ -671,6 +678,35 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
       {step === 2 && singleSubject && previews[0]?.data && (
         <fieldset className="rounded border border-border bg-surface p-4">
           <legend className="px-1 text-sm font-medium">Matriz da avaliação</legend>
+          <section aria-labelledby="tipo-questoes-title" className="mb-4 rounded-xl border border-harmonia-green/20 bg-harmonia-green/[0.035] p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div>
+                <h2 id="tipo-questoes-title" className="text-sm font-semibold text-content-primary">Formato das questões</h2>
+                <p className="mt-0.5 text-xs text-content-muted">Deslize para definir a proporção da prova. À esquerda, mais alternativas; à direita, mais dissertativas.</p>
+              </div>
+              <span className="rounded-full bg-harmonia-green px-3 py-1 text-xs font-semibold text-white">{objectivePercentage}% alternativas</span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={100 - objectivePercentage}
+              onChange={(event) => setObjectivePercentage(100 - Number(event.target.value))}
+              aria-label="Percentual de questões alternativas"
+              aria-valuetext={`${objectivePercentage}% alternativas e ${100 - objectivePercentage}% dissertativas`}
+              className="mt-5 h-2 w-full cursor-pointer appearance-none rounded-full bg-gradient-to-r from-harmonia-green via-harmonia-green/55 to-surface-muted accent-harmonia-green"
+              style={{ direction: 'ltr' }}
+            />
+            <div className="mt-2 flex justify-between text-[11px] font-medium text-content-muted">
+              <span>← 100% alternativas</span>
+              <span>50% / 50%</span>
+              <span>100% dissertativas →</span>
+            </div>
+            <p className="mt-3 text-xs text-content-secondary">
+              Nesta prova: <span className="font-semibold text-harmonia-green">{effectiveObjectiveCount} alternativa(s)</span> e <span className="font-semibold text-content-primary">{totalCount - effectiveObjectiveCount} dissertativa(s)</span> no total. A IA gerará {aiObjectiveCount} alternativa(s) e {questionCount - aiObjectiveCount} dissertativa(s){bankSelected.size ? `, considerando as ${bankSelected.size} objetiva(s) do banco ENEM` : ''}.{effectiveObjectiveCount !== objectiveTarget && ' A proporção foi limitada porque as questões do banco são sempre objetivas.'}
+            </p>
+          </section>
           <section aria-labelledby="grafico-planejamento-title" className="rounded border border-border bg-surface-subtle/50 p-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <div>
@@ -754,11 +790,11 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
 
       {step === 2 && (
         <div className="flex flex-col gap-4 rounded border border-border bg-surface p-4 sm:flex-row sm:items-end">
-          {enemArea && <div><label className="text-sm font-medium">Questões do banco ENEM</label><input type="number" min={0} max={15} value={bankSelected.size} onChange={(e) => handleBankCountChange(Number(e.target.value))} disabled={bankLoading} className="mt-1 w-24 rounded border border-border bg-surface px-2 py-1.5 text-sm disabled:opacity-60" /><p className="mt-0.5 text-[11px] text-content-muted">{bankLoading ? 'buscando…' : bankQuestions.length ? `de ${bankQuestions.length} encontradas` : 'usa os filtros acima'}</p></div>}
-          <div><label className="text-sm font-medium">Questões geradas por IA</label><input type="number" min={0} max={15} value={questionCount} onChange={(e) => { const next = Number(e.target.value); setQuestionCount(next); const units = previews[0]?.data?.units ?? []; const counts: Record<number, number> = {}; for (const unit of units) counts[unit.rowIndex] = Math.min(chapterCounts[unit.rowIndex] ?? 0, next); setChapterCounts(counts); setContentPlan(contentPlanFromCounts(units, counts)) }} className="mt-1 w-24 rounded border border-border bg-surface px-2 py-1.5 text-sm" /></div>
+          {enemArea && <div><label className="text-sm font-medium">Questões do banco ENEM</label><input type="number" min={0} max={30} value={bankSelected.size} onChange={(e) => handleBankCountChange(Number(e.target.value))} disabled={bankLoading} className="mt-1 w-24 rounded border border-border bg-surface px-2 py-1.5 text-sm disabled:opacity-60" /><p className="mt-0.5 text-[11px] text-content-muted">{bankLoading ? 'buscando…' : bankQuestions.length ? `de ${bankQuestions.length} encontradas` : 'usa os filtros acima'}</p></div>}
+          <div><label className="text-sm font-medium">Questões geradas por IA</label><input type="number" min={0} max={30} value={questionCount} onChange={(e) => { const next = Math.max(0, Math.min(30, Number(e.target.value))); setQuestionCount(next); const units = previews[0]?.data?.units ?? []; const counts: Record<number, number> = {}; for (const unit of units) counts[unit.rowIndex] = Math.min(chapterCounts[unit.rowIndex] ?? 0, next); setChapterCounts(counts); setContentPlan(contentPlanFromCounts(units, counts)) }} className="mt-1 w-24 rounded border border-border bg-surface px-2 py-1.5 text-sm" /></div>
           <div><label className="text-sm font-medium">Ano letivo</label><input type="number" min={2020} max={2100} value={academicYear} onChange={(e) => setAcademicYear(Number(e.target.value))} className="mt-1 w-24 rounded border border-border bg-surface px-2 py-1.5 text-sm" /></div>
           <p className="text-xs text-content-secondary">
-            Total por prova: <span className={totalValid ? 'font-semibold text-content-primary' : 'font-semibold text-status-danger'}>{totalCount}</span> ({questionCount} IA + {bankSelected.size} banco), entre 12 e 15.
+            Total por prova: <span className={totalValid ? 'font-semibold text-content-primary' : 'font-semibold text-status-danger'}>{totalCount}</span> ({questionCount} IA + {bankSelected.size} banco), entre 10 e 30.
             {selectedSubjects.length > 1 && ` A mesma composição vale pras ${selectedSubjects.length} disciplinas.`}
           </p>
           <div className="flex gap-2"><button onClick={() => setStep(1)} className="min-h-10 rounded border border-border px-4 text-sm font-medium">Voltar</button><button onClick={() => setStep(3)} disabled={!totalValid || !contentPlanValid} className="min-h-10 rounded bg-harmonia-green px-4 text-sm font-medium text-white disabled:opacity-60">Conferir</button></div>
