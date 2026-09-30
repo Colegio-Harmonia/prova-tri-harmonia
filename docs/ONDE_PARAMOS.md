@@ -110,6 +110,17 @@ não causal). Carregamento de evidências compartilhado em
 seção "Evolução ao longo do ano" no relatório do aluno e página
 `/desempenho/trajetoria`, com botão "Trajetória da turma" em `/turmas/[id]`.
 
+### PR #7 — `feature/relatorio-individual-abas`
+Relatório individual (`/desempenho/relatorio`) dividido em abas: **Resumo**
+(indicadores, pontos fortes/para acompanhar, próximos passos, limitações),
+**Habilidades** (gráficos do Bloco 5, domínio e destaques BNCC), **Evolução**
+(trajetória do Bloco 6) e **Avaliações** (contexto, evidência, tabela por
+avaliação). Aba ativa na URL (`?aba=`), navegação por setas/Home/End, barra
+fixa no topo ao rolar. Na impressão/PDF saem todas as abas, cada uma com seu
+título. Componente: `src/app/(app)/desempenho/relatorio/ReportTabs.tsx`.
+Bundle da página: 124,9/125 KiB (sem folga — próximo acréscimo precisa de
+code-splitting, ver TD-018).
+
 ### Validação com dados reais (só leitura, agregados, 30/09/2026)
 - 1.786 correções revisadas, 322 alunos, 83 turmas, 14.563 respostas com
   BNCC, 0 linhas inválidas.
