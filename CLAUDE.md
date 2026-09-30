@@ -11,14 +11,14 @@ referência, nº de alternativas, disciplinas) em:
 
 ---
 
-## ⚠️ Trabalho em andamento agora: Motor de Classificações Pedagógicas
+## ⚠️ Onde paramos — leia antes de qualquer coisa
 
-Se você é uma sessão de IA nova retomando este projeto, leia primeiro
-**[`docs/HANDOFF_MOTOR_CLASSIFICACAO.md`](docs/HANDOFF_MOTOR_CLASSIFICACAO.md)**
-— tem o estado exato de onde parou (Subtarefas 00-03 concluídas, próxima é a
-04) e o que fazer a seguir. O pedido original completo (26 subtarefas, todas
-as regras) está salvo em
-[`docs/MOTOR_CLASSIFICACAO_PEDAGOGICA_SPEC.md`](docs/MOTOR_CLASSIFICACAO_PEDAGOGICA_SPEC.md).
+**[`docs/ONDE_PARAMOS.md`](docs/ONDE_PARAMOS.md)** é o painel único de estado:
+repositório oficial (`Colegio-Harmonia/prova-tri-harmonia`), frentes em
+andamento, próximos passos e regras para não deixar trabalho sem commit.
+Atualize esse arquivo ao terminar cada sessão. (O Motor de Classificações
+Pedagógicas, citado em versões antigas deste cabeçalho, foi concluído em
+17/07/2026 — Subtarefas 00-26.)
 
 ---
 
@@ -439,6 +439,9 @@ funcionou antes de seguir em frente). Pra isso não se repetir:
    primeiro migrar todos os call sites pra `await getDb()`, não só trocar
    o client.
 7. **Remoto Git configurado em 18/07/2026**:
+   ⚠️ **Substituído em 30/09/2026**: o repositório oficial agora é
+   `https://github.com/Colegio-Harmonia/prova-tri-harmonia` (ver
+   `docs/ONDE_PARAMOS.md`). Histórico abaixo mantido como registro.
    `https://github.com/Colegio-Harmonia/prova-tri.git` (privado — criado
    originalmente em `eduarsani/prova-tri` e transferido no mesmo dia para a
    organização `Colegio-Harmonia`, habilitando proteção de branch via plano

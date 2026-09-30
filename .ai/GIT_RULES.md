@@ -17,4 +17,4 @@
 
 ## Push e revisão
 
-O remoto oficial e `https://github.com/Colegio-Harmonia/prova-tri.git`. Todo push de `feature/*` ou `fix/*` deve resultar em Pull Request para `develop`; somente `develop` pode seguir para DEV. Nunca incluir token na URL do remoto. A aprovacao humana e obrigatoria entre subtarefas, mesmo apos deploy bem-sucedido. Ver `docs/git-workflow.md` para o fluxo completo.
+O remoto oficial e `https://github.com/Colegio-Harmonia/prova-tri-harmonia` (desde 30/09/2026; o antigo `prova-tri` e somente arquivo). Todo push de `feature/*` ou `fix/*` deve resultar em Pull Request para `main` (enquanto `develop` nao existir nesse repositorio). Nada pode ficar rodando em producao sem commit: ver `docs/ONDE_PARAMOS.md`. Nunca incluir token na URL do remoto. A aprovacao humana e obrigatoria entre subtarefas, mesmo apos deploy bem-sucedido. Ver `docs/git-workflow.md` para o fluxo completo.
