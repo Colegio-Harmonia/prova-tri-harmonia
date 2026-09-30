@@ -649,6 +649,7 @@ export default function ScanCorrectionReview({
                       )}
                       {questionTranscribing && <p className="rounded border border-sky-200 bg-sky-50 p-2 text-xs text-sky-900">Esta resposta está sendo transcrita automaticamente. O resultado aparecerá aqui assim que a leitura terminar.</p>}
                       <textarea
+                        aria-label={`Resposta transcrita da questão ${question.number}`}
                         disabled={locked}
                         value={answer.transcribedAnswer}
                         onChange={(event) =>

@@ -33,7 +33,9 @@ mustInclude('src/app/(app)/status/StatusTabs.tsx', "'Reforços ENEM'")
 mustInclude('src/app/(app)/reforco/ReforcoForm.tsx', 'href="/reforco?modo=acompanhar&aba=fila"')
 mustInclude('src/components/queue/GenerationJobsProvider.tsx', "'/reforco?modo=acompanhar&aba=fila'")
 mustInclude('src/components/layout/AppNavigation.tsx', "href: '/atividades'")
-mustInclude('src/app/(app)/turmas/[courseId]/TurmaDetail.tsx', "fetch('/api/exams?examKind=prova')")
+// A turma busca suas provas em /api/turmas/[courseId], que filtra examKind no servidor.
+mustInclude('src/app/(app)/turmas/[courseId]/TurmaDetail.tsx', 'fetch(`/api/turmas/${courseId}`)')
+mustInclude('src/app/api/turmas/[courseId]/route.ts', "eq(generatedExams.examKind, 'prova')")
 mustInclude('src/middleware.ts', "'/atividades/:path*'")
 mustInclude('src/auth/auth.config.ts', "'/atividades'")
 
