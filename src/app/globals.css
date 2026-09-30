@@ -166,8 +166,22 @@ body {
   }
 
   .sae-student-report,
-  .sae-student-report * {
+  .sae-student-report *,
+  .print-report,
+  .print-report * {
     visibility: visible !important;
+  }
+
+  /* Relatório individual (/desempenho/relatorio): sai sozinho na página,
+     como o relatório SAE, sem menu lateral nem cabeçalho do app. */
+  .print-report {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+  }
+
+  .print-avoid-break {
+    break-inside: avoid;
   }
 
   .sae-student-report {
