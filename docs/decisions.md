@@ -1,5 +1,31 @@
 # Decisões Arquiteturais
 
+## ADR-014 - Jev como decisão tipada, auditável e reutilizável
+
+**Data:** 30/09/2026
+**Problema:** a primeira integração com o Jev chamava o endpoint diretamente
+para conferir descrições BNCC. Novos usos em provas, atividades, Reforço ENEM
+e organização de resultados repetiriam timeout, parsing, cache, telemetria e
+tratamento de incerteza.
+**Decisão:** toda nova decisão do Jev usa `evaluateWithJev` em
+`src/lib/ai/jevClient.ts`. O chamador fornece estado, perguntas tipadas, versão
+das perguntas, política de roteamento e fallback. O código continua responsável
+por cálculo, permissões e execução; o Jev fornece julgamentos estruturados.
+**Privacidade:** o texto do estado não é persistido. A auditoria guarda SHA-256
+do estado, contexto sanitizado, respostas estruturadas, modelo, rota, resultado,
+duração e categoria de falha. Nunca incluir nome ou resposta de aluno no
+`context` sanitizado.
+**Cache:** a chave inclui operação, versão, modelo, estado e perguntas. Há cache
+limitado em memória e cache persistente com validade explícita em
+`jev_decisions`; mudar o significado de uma pergunta exige mudar sua versão.
+**Incerteza:** cada caso define seus próprios limiares calibrados. Falha, chave
+ausente ou resposta inválida usa o fallback declarado; baixa confiança pode
+seguir para revisão humana. Não existe um limiar universal para o produto.
+**Consequência:** migration `0047_jev_decision_infrastructure.sql` deve ser
+aplicada antes do deploy. Operações `jev/*` aparecem na telemetria e, até
+existir uma cota administrativa própria, usam o teto diário de geração de
+texto. Cache não cria nova operação de provedor nem consome outra chamada.
+
 ## ADR-001 - Reconstrução incremental sobre contratos existentes
 
 **Data:** 18/07/2026

@@ -103,6 +103,32 @@ export const aiOperations = pgTable('ai_operations', {
   statusCreatedAtIndex: index('ai_operations_status_created_at_idx').on(table.status, table.createdAt),
 }))
 
+// Decisões estruturadas do Jev. O estado textual não é persistido: somente
+// seu hash e um contexto explicitamente sanitizado pelo chamador. Isso
+// permite auditoria/cache sem criar uma cópia de respostas ou dados de aluno.
+export const jevDecisions = pgTable('jev_decisions', {
+  id: serial('id').primaryKey(),
+  operation: text('operation').notNull(),
+  questionVersion: text('question_version').notNull(),
+  model: text('model').notNull(),
+  stateHash: text('state_hash').notNull(),
+  cacheKey: text('cache_key').notNull(),
+  source: text('source', { enum: ['provider', 'cache', 'fallback'] }).notNull(),
+  status: text('status', { enum: ['succeeded', 'failed'] }).notNull(),
+  route: text('route', { enum: ['automatic', 'review', 'fallback'] }).notNull(),
+  outcome: text('outcome').notNull(),
+  context: jsonb('context'),
+  answers: jsonb('answers'),
+  durationMs: integer('duration_ms'),
+  errorCode: text('error_code'),
+  cacheExpiresAt: timestamp('cache_expires_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (table) => ({
+  cacheIdx: index('jev_decisions_cache_idx').on(table.cacheKey, table.status, table.cacheExpiresAt),
+  operationCreatedAtIdx: index('jev_decisions_operation_created_at_idx').on(table.operation, table.createdAt),
+  routeCreatedAtIdx: index('jev_decisions_route_created_at_idx').on(table.route, table.createdAt),
+}))
+
 // Reset administrativo do contador diário. Não apaga telemetria: apenas
 // define de quando em diante uma finalidade volta a consumir a cota.
 export const aiBudgetResets = pgTable('ai_budget_resets', {

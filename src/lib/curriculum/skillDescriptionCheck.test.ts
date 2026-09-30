@@ -24,7 +24,7 @@ describe('classifyDescriptionProbability', () => {
 describe('checkSkillDescriptions', () => {
   it('não chama o Jev quando a planilha não traz descrição', async () => {
     const fetchImpl = vi.fn()
-    const result = await checkSkillDescriptions([{ code: 'EF05LP06', description: null }], { apiKey: 'k', fetchImpl, resolveOfficial })
+    const result = await checkSkillDescriptions([{ code: 'EF05LP06', description: null }], { apiKey: 'k', fetchImpl, resolveOfficial, persistDecisions: false })
     expect(result).toEqual([])
     expect(fetchImpl).not.toHaveBeenCalled()
   })
@@ -34,7 +34,7 @@ describe('checkSkillDescriptions', () => {
     const result = await checkSkillDescriptions([
       { code: 'ef05ci08', description: 'Organizar um cardápio equilibrado...' },
       { code: 'EF05LP06', description: 'Organizar um cardápio equilibrado com base nos grupos alimentares.' },
-    ], { apiKey: 'k', fetchImpl, resolveOfficial })
+    ], { apiKey: 'k', fetchImpl, resolveOfficial, persistDecisions: false })
     expect(result.map((item) => [item.code, item.status])).toEqual([['EF05CI08', 'confere'], ['EF05LP06', 'diverge']])
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     const body = JSON.parse((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)
@@ -45,24 +45,24 @@ describe('checkSkillDescriptions', () => {
   it('verifica uma vez só linhas repetidas com o mesmo texto', async () => {
     const fetchImpl = vi.fn(async () => jevResponse({ q0: 0.97 }))
     const row = { code: 'EF05CI08', description: 'Organizar um cardápio equilibrado.' }
-    const result = await checkSkillDescriptions([row, { ...row }], { apiKey: 'k', fetchImpl, resolveOfficial })
+    const result = await checkSkillDescriptions([row, { ...row }], { apiKey: 'k', fetchImpl, resolveOfficial, persistDecisions: false })
     expect(result).toHaveLength(1)
     expect(descriptionCheckKey(row.code, row.description)).toBe('EF05CI08::Organizar um cardápio equilibrado.')
   })
 
   it('falha aberta sem chave ou com erro do provedor', async () => {
-    const semChave = await checkSkillDescriptions([{ code: 'EF05CI08', description: 'Texto' }], { apiKey: '', resolveOfficial })
+    const semChave = await checkSkillDescriptions([{ code: 'EF05CI08', description: 'Texto' }], { apiKey: '', resolveOfficial, persistDecisions: false })
     expect(semChave[0].status).toBe('nao_verificado')
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const comErro = await checkSkillDescriptions([{ code: 'EF05CI08', description: 'Texto' }], { apiKey: 'k', fetchImpl: vi.fn(async () => new Response('x', { status: 503 })), resolveOfficial })
+    const comErro = await checkSkillDescriptions([{ code: 'EF05CI08', description: 'Texto' }], { apiKey: 'k', fetchImpl: vi.fn(async () => new Response('x', { status: 503 })), resolveOfficial, persistDecisions: false })
     expect(comErro[0]).toMatchObject({ status: 'nao_verificado', probability: null, officialDescription: official.get('EF05CI08') })
     warn.mockRestore()
   })
 
   it('não verifica código sem texto oficial disponível', async () => {
     const fetchImpl = vi.fn()
-    const result = await checkSkillDescriptions([{ code: 'EF99XX99', description: 'Texto' }], { apiKey: 'k', fetchImpl, resolveOfficial })
+    const result = await checkSkillDescriptions([{ code: 'EF99XX99', description: 'Texto' }], { apiKey: 'k', fetchImpl, resolveOfficial, persistDecisions: false })
     expect(result[0]).toMatchObject({ status: 'nao_verificado', officialDescription: null })
     expect(fetchImpl).not.toHaveBeenCalled()
   })
