@@ -21,6 +21,7 @@ import { repairQuestionFromDiagnostics } from '@/lib/exams/repairQuestion'
 import { diagnosticFromIssue } from '@/lib/exams/qualityDiagnostics'
 import { coherenceIssues, EXAM_OVERLAP_ALERT, EXAM_OVERLAP_BLOCK, generateExamBlueprint, generateStagedQuestion, generateUnifiedQuestion, isUnifiedGenerationEnabled, questionCoherenceText, textSimilarity } from '@/lib/generation'
 import { AiBudgetExceededError } from '@/lib/ai/operationBudget'
+import { decideExamGenerationStrategy, examGenerationStrategyInstruction } from '@/lib/ai/examGenerationDecision'
 import { StructuredGenerationError } from '@/lib/gemini/structuredRepair'
 import { getCompletedItems, getPendingSlotNumbers, initializeJobItems, saveItemProgress } from '@/lib/queue/jobProgress'
 import type { CurriculumPlanItem } from '@/types/exam'
@@ -226,10 +227,36 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
               }
             })
       const byRowIndex = new Map(curriculum.units.map((unit) => [unit.rowIndex, unit]))
+      const planByRowIndex = new Map((params.contentPlan ?? []).map((item) => [item.unitRowIndex, item]))
+      const generationDecision = examKind === 'prova' ? await decideExamGenerationStrategy({
+        segment: params.segment,
+        gradeYear: params.gradeYear,
+        subject: params.subject,
+        assessmentKind,
+        objectiveCount: split.objectiveCount + params.enemBankQuestionIds.length,
+        discursiveCount: split.discursiveCount,
+        units: [...new Set(slots.map((slot) => slot.unitRowIndex))].map((unitRowIndex) => {
+          const unit = byRowIndex.get(unitRowIndex)
+          if (!unit) throw new ExamGenerationInputError(`Capítulo ${unitRowIndex} não foi encontrado no planejamento.`)
+          const plan = planByRowIndex.get(unitRowIndex)
+          return {
+            title: unit.tituloCapitulo,
+            content: unit.conteudo,
+            objectives: unit.objetivos.map((objective) => objective.text),
+            bnccCodes: unit.habilidades.status === 'mapeado' ? unit.habilidades.skills.map((skill) => skill.code) : [],
+            plannedQuestions: slots.filter((slot) => slot.unitRowIndex === unitRowIndex).length,
+            priority: plan?.priority ?? 'media',
+            visualAid: plan?.visualAid ?? 'auto',
+          }
+        }),
+      }) : null
+      if (generationDecision?.source === 'fallback') warnings.push('Jev indisponível para decidir a estratégia; foi aplicada a estratégia pedagógica equilibrada.')
+      else if (generationDecision?.needsReview) warnings.push('Jev indicou baixa segurança no recorte; a estratégia sugerida deve ser conferida na revisão docente.')
       const blueprint = await generateExamBlueprint({
         subject: params.subject,
         gradeYear: params.gradeYear,
         segment: params.segment,
+        ...(generationDecision ? { strategyInstruction: examGenerationStrategyInstruction(generationDecision.strategy) } : {}),
         slots: slots.map((slot) => {
           const unit = byRowIndex.get(slot.unitRowIndex)
           if (!unit) throw new ExamGenerationInputError(`Capítulo ${slot.unitRowIndex} não foi encontrado no planejamento.`)

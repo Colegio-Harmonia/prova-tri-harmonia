@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 30/09/2026, noite (infraestrutura central do Jev).
+> Última atualização: 30/09/2026, noite (Etapa 3: Jev na geração de provas).
 
 ## 1. Fonte da verdade
 
@@ -57,6 +57,12 @@ commitado que existia no Mac foi preservado no branch
   persistente, telemetria e auditoria sem armazenar o estado textual. A
   conferência BNCC do planejamento já usa essa infraestrutura. Migration
   `0047_jev_decision_infrastructure.sql`.
+- Etapa 3 do Jev: antes do blueprint de uma prova, o Jev escolhe ênfase
+  cognitiva, contextualização, perfil de dificuldade e intensidade de apoio
+  visual a partir do recorte curricular e da matriz definida pelo professor.
+  Quantidades, capítulos, tipos de questão, exigências visuais, permissões e
+  validações continuam determinísticos. Falha ou baixa segurança não interrompe
+  a fila: aplica estratégia equilibrada ou sinaliza conferência na revisão.
 - Suíte: 78 arquivos / 377 testes, incluindo 3 de integração com Postgres
   real em memória (PGlite).
 - Dívida aberta relevante: **TD-018** (bundle de `/desempenho` 133,6 KiB,
@@ -201,6 +207,14 @@ antes de subir o código: sem ela, intervenções e trajetória quebram.
   as migrations e completa as colunas que `schema.ts` declara e a cadeia de
   migrations não cria.
 
+### Etapa 3 — Jev na estratégia de geração de provas
+`src/lib/ai/examGenerationDecision.ts` usa Choice para decidir ênfase
+cognitiva, contextualização, dificuldade e apoio visual, e Noul para medir se
+o recorte sustenta a decisão. A orientação entra no blueprint sem alterar a
+matriz do professor. A decisão usa `evaluateWithJev`, cache de 7 dias,
+telemetria, auditoria e fallback equilibrado. Atividades e Reforço ENEM
+permanecem nas próximas etapas para que cada adoção seja calibrada separadamente.
+
 ### Decisão 30/09/2026 — regra de domínio individual
 Mantida a regra rigorosa (≥ 80% em ≥ 4 questões de ≥ 2 avaliações), com o
 nome explícito **"Domínio no bimestre"** (e **"Domínio no ano"** na visão
@@ -219,10 +233,10 @@ pedagógica.
 
 ## 5. Pendências (em ordem)
 
-0. Próximas adoções do Jev, em PRs separados e calibrados: decisão na geração
-   de provas, decisão em atividades, seleção do Reforço ENEM e organização
-   semântica dos resultados. Cálculos de nota, TRI, percentuais e permissões
-   permanecem determinísticos.
+0. Próximas adoções do Jev, em PRs separados e calibrados: decisão em
+   atividades, seleção do Reforço ENEM e organização semântica dos resultados.
+   A decisão na geração de provas foi implementada na Etapa 3. Cálculos de
+   nota, TRI, percentuais e permissões permanecem determinísticos.
 
 1. Painel `/desempenho` (visão BNCC) usa **outra regra** também chamada
    "Domínio": ≥ 80% com ≥ 3 respostas somando todos os alunos
