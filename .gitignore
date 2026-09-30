@@ -1,7 +1,7 @@
 node_modules/
 .venv-omr/
 .next/
-coverage/
+/coverage/
 .env
 .env.local
 *.tsbuildinfo
