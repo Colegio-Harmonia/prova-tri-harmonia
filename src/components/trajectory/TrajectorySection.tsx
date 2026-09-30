@@ -106,7 +106,7 @@ export function SubjectCard({ trajectory, mode, rules }: { trajectory: SubjectTr
         <caption className="sr-only">Resultados antes e depois das intervenções</caption>
         <thead><tr className="text-left text-xs text-content-secondary"><th scope="col" className="py-1 pr-2">Intervenção</th><th scope="col" className="py-1 pr-2">Registrada</th><th scope="col" className="py-1 pr-2 text-right">Antes</th><th scope="col" className="py-1 pr-2 text-right">Depois</th><th scope="col" className="py-1">Leitura</th></tr></thead>
         <tbody>{trajectory.interventions.map((item) => <tr key={item.id} className="border-t border-border">
-          <td className="py-1 pr-2"><p className="font-medium text-content-primary">{item.action}</p><p className="text-xs text-content-secondary">{item.ownerName} · {item.status.replace('_', ' ')}</p></td>
+          <td className="py-1 pr-2"><p className="font-medium text-content-primary">{item.action}</p><p className="text-xs text-content-secondary">{item.ownerName} · {item.status.replace('_', ' ')}{item.skillCodes?.length ? ` · ${item.skillCodes.join(', ')}` : ' · disciplina inteira'}</p></td>
           <td className="py-1 pr-2 tabular-nums">{formatDate(item.createdAt)}</td>
           <td className="py-1 pr-2 text-right tabular-nums">{fmt(item.before.percent)}<span className="block text-xs text-content-muted">{item.before.itemCount} itens</span></td>
           <td className="py-1 pr-2 text-right tabular-nums">{fmt(item.after.percent)}<span className="block text-xs text-content-muted">{item.after.itemCount} itens</span></td>

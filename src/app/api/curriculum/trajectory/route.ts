@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
 
   const trajectories = buildTrajectory(evidence, planned, interventions.map((row) => ({
     id: row.id, segment: row.segment, gradeYear: row.gradeYear, subject: row.subject, academicYear: row.academicYear,
-    action: row.action, ownerName: row.ownerName, status: row.status, dueDate: row.dueDate, createdAt: row.createdAt.toISOString(),
+    action: row.action, ownerName: row.ownerName, status: row.status, dueDate: row.dueDate, createdAt: row.createdAt.toISOString(), skillCodes: row.skillCodes,
   })))
 
   return NextResponse.json({

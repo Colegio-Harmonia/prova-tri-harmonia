@@ -34,6 +34,9 @@ export const pedagogicalInterventions = pgTable('pedagogical_interventions', {
   ownerName: text('owner_name').notNull(),
   dueDate: text('due_date'),
   status: text('status', { enum: ['planejada', 'em_andamento', 'concluida'] }).notNull().default('planejada'),
+  /** Habilidades BNCC que a intervenção retoma (Bloco 8). Vazio = disciplina inteira. */
+  skillCodes: text('skill_codes').array().notNull().default(sql`'{}'::text[]`),
+  bimester: smallint('bimester'),
   createdBy: integer('created_by').references(() => users.id).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -639,6 +642,23 @@ export const curriculumPlanStatusHistory = pgTable('curriculum_plan_status_histo
   createdAt: timestamp('created_at').defaultNow().notNull(),
 }, (table) => ({
   versionIdx: index('curriculum_plan_status_history_version_idx').on(table.versionId, table.createdAt),
+}))
+
+/** Histórico de decisões pedagógicas (Bloco 8): planejamento e intervenções. */
+export const pedagogicalDecisionLog = pgTable('pedagogical_decision_log', {
+  id: serial('id').primaryKey(),
+  entityType: text('entity_type', { enum: ['plano', 'versao', 'intervencao'] }).notNull(),
+  entityId: integer('entity_id').notNull(),
+  planId: integer('plan_id').references(() => curriculumPlans.id, { onDelete: 'set null' }),
+  action: text('action').notNull(),
+  summary: text('summary').notNull(),
+  details: jsonb('details'),
+  actorId: integer('actor_id').references(() => users.id).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (table) => ({
+  entityIdx: index('pedagogical_decision_log_entity_idx').on(table.entityType, table.entityId, table.createdAt),
+  planIdx: index('pedagogical_decision_log_plan_idx').on(table.planId, table.createdAt),
+  createdIdx: index('pedagogical_decision_log_created_idx').on(table.createdAt),
 }))
 
 // ═══════════════════════════════════════════════════════════════════

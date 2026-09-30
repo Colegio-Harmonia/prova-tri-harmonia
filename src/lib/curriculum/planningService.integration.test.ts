@@ -2,12 +2,10 @@
 // em memória). Aplica as migrations do projeto que criam `users` e as tabelas
 // `curriculum_*`. PGlite é devDependency (roda no CI); se faltar, o teste é pulado.
 
-import fs from 'node:fs'
-import path from 'node:path'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { createTestDb, pgliteInstalled } from '@/test/pgliteDb'
 
-let pgliteAvailable = true
-try { require.resolve('@electric-sql/pglite') } catch { pgliteAvailable = false }
+const pgliteAvailable = pgliteInstalled()
 
 const state: { db?: unknown } = {}
 vi.mock('@/db/client', () => ({ get db() { return state.db } }))
@@ -22,17 +20,10 @@ describe.skipIf(!pgliteAvailable)('planningService (Postgres real)', () => {
   const other = { id: 3, role: 'professor' as const }
 
   beforeAll(async () => {
-    const { PGlite } = await import('@electric-sql/pglite')
-    const { drizzle } = await import('drizzle-orm/pglite')
-    const schema = await import('@/db/schema')
-    const pg = new PGlite()
-    const dir = path.join(process.cwd(), 'drizzle')
-    for (const file of fs.readdirSync(dir).filter((name) => name.endsWith('.sql')).sort()) {
-      // Algumas migrations antigas dependem de tabelas criadas fora da cadeia; não afetam as tabelas usadas aqui.
-      await pg.exec(fs.readFileSync(path.join(dir, file), 'utf8').replace(/-->\s*statement-breakpoint/g, '')).catch(() => undefined)
-    }
+    const created = await createTestDb()
+    const pg = created.pg
     await pg.exec(`insert into users (id, name, email, role) values (1, 'Coord', 'c@x', 'coordenacao'), (2, 'Prof A', 'a@x', 'professor'), (3, 'Prof B', 'b@x', 'professor')`)
-    state.db = drizzle(pg, { schema })
+    state.db = created.db
     service = await import('./planningService')
   }, 60_000)
 

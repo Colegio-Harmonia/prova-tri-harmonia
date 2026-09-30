@@ -9,6 +9,7 @@ import {
 } from '@/db/schema'
 import { isStaffSuperuser, type UserRole } from '@/lib/auth/roles'
 import { enrichBnccDescriptions } from './bnccDescriptions'
+import { recordDecision, skillDiff } from './decisionLog'
 import {
   canEditPlan, canReceiveNewDraft, canStartNewVersion, canTransitionPlan, canViewPlan, normalizePlanUnits,
   officialVersion, openVersion, validatePlanScope, type PlanningStatus, type PlanUnitInput,
@@ -149,6 +150,7 @@ export async function createPlan(viewer: Viewer, scope: PlanScope) {
     const [plan] = await tx.insert(curriculumPlans).values({ ...scope, createdBy: viewer.id }).returning()
     const [version] = await tx.insert(curriculumPlanVersions).values({ planId: plan.id, versionNumber: 1, status: 'rascunho', source: 'interno', createdBy: viewer.id }).returning()
     await tx.insert(curriculumPlanStatusHistory).values({ versionId: version.id, fromStatus: null, toStatus: 'rascunho', changedBy: viewer.id, note: 'Criado do zero na Prova TRI' })
+    await recordDecision(tx, { entityType: 'plano', entityId: plan.id, planId: plan.id, action: 'criado', summary: 'Planejamento criado do zero', actorId: viewer.id })
     return { planId: plan.id, versionId: version.id }
   })
 }
@@ -164,6 +166,7 @@ export async function startNewVersion(viewer: Viewer, planId: number, note?: str
     const [version] = await tx.insert(curriculumPlanVersions).values({ planId, versionNumber: await nextVersionNumber(planId, tx), status: 'rascunho', source: 'interno', copiedFromVersionId: base?.id ?? null, createdBy: viewer.id }).returning()
     if (base) await writeContent(tx, version.id, await versionContent(base.id, tx))
     await tx.insert(curriculumPlanStatusHistory).values({ versionId: version.id, fromStatus: null, toStatus: 'rascunho', changedBy: viewer.id, note: note?.trim() || (base ? `Nova versão a partir da versão ${base.versionNumber}` : 'Nova versão') })
+    await recordDecision(tx, { entityType: 'versao', entityId: version.id, planId, action: 'nova_versao', summary: `Versão ${version.versionNumber} aberta${base ? ` a partir da versão ${base.versionNumber}` : ''}`, details: { note: note?.trim() || null, baseVersionId: base?.id ?? null, baseStatus: base?.status ?? null }, actorId: viewer.id })
     return { versionId: version.id, versionNumber: version.versionNumber }
   })
 }
@@ -176,7 +179,15 @@ export async function saveDraft(viewer: Viewer, versionId: number, units: PlanUn
     if (!canEditPlan(context, version.status)) {
       throw new PlanningError(version.status === 'rascunho' ? 'Sem permissão para editar este planejamento.' : 'Esta versão não pode ser editada diretamente. Abra uma nova versão para propor alterações.', 403)
     }
-    return writeContent(tx, versionId, units)
+    const before = (await versionContent(versionId, tx)).flatMap((unit) => unit.skills.map((skill) => skill.code))
+    const result = await writeContent(tx, versionId, units)
+    const after = (await versionContent(versionId, tx)).flatMap((unit) => unit.skills.map((skill) => skill.code))
+    const diff = skillDiff(before, after)
+    const parts = [`${result.unitCount} unidade(s), ${result.skillCount} habilidade(s)`]
+    if (diff.added.length) parts.push(`+${diff.added.join(', ')}`)
+    if (diff.removed.length) parts.push(`−${diff.removed.join(', ')}`)
+    await recordDecision(tx, { entityType: 'versao', entityId: versionId, planId: version.planId, action: 'conteudo_salvo', summary: `Versão ${version.versionNumber} editada: ${parts.join(' · ')}`, details: diff, actorId: viewer.id })
+    return result
   })
 }
 
@@ -199,6 +210,7 @@ export async function transitionVersion(viewer: Viewer, versionId: number, to: P
     if (to === 'encerrado') patch.closedAt = now
     await tx.update(curriculumPlanVersions).set(patch).where(eq(curriculumPlanVersions.id, versionId))
     await tx.insert(curriculumPlanStatusHistory).values({ versionId, fromStatus: version.status, toStatus: to, changedBy: viewer.id, note: note?.trim() || null })
+    await recordDecision(tx, { entityType: 'versao', entityId: versionId, planId: version.planId, action: `status_${to}`, summary: `Versão ${version.versionNumber}: ${version.status} → ${to}${note?.trim() ? ` (${note.trim()})` : ''}`, details: { from: version.status, to, note: note?.trim() || null }, actorId: viewer.id })
     // Ao aprovar uma nova versão, a anterior ainda "aprovada" deixa de valer:
     // o encerramento do bimestre passa a considerar só a versão oficial.
     return { versionId, status: to }
@@ -209,12 +221,15 @@ export async function setAssignment(viewer: Viewer, planId: number, userId: numb
   requireManager(viewer)
   if (responsibility === null) {
     await db.delete(curriculumPlanAssignments).where(and(eq(curriculumPlanAssignments.planId, planId), eq(curriculumPlanAssignments.userId, userId)))
+    const [removedUser] = await db.select({ name: users.name }).from(users).where(eq(users.id, userId))
+    await recordDecision(db, { entityType: 'plano', entityId: planId, planId, action: 'responsavel_removido', summary: `${removedUser?.name ?? `Usuário ${userId}`} deixou de ser responsável`, details: { userId }, actorId: viewer.id })
     return { removed: true }
   }
-  const [user] = await db.select({ id: users.id, active: users.active }).from(users).where(eq(users.id, userId))
+  const [user] = await db.select({ id: users.id, active: users.active, name: users.name }).from(users).where(eq(users.id, userId))
   if (!user?.active) throw new PlanningError('Usuário inexistente ou inativo.', 404)
   await db.insert(curriculumPlanAssignments).values({ planId, userId, responsibility, assignedBy: viewer.id })
     .onConflictDoUpdate({ target: [curriculumPlanAssignments.planId, curriculumPlanAssignments.userId], set: { responsibility, assignedBy: viewer.id, assignedAt: new Date() } })
+  await recordDecision(db, { entityType: 'plano', entityId: planId, planId, action: 'responsavel_atribuido', summary: `${user.name} atribuído(a) como ${responsibility}`, details: { userId, responsibility }, actorId: viewer.id })
   return { removed: false }
 }
 
@@ -243,6 +258,7 @@ export async function copyYear(viewer: Viewer, fromYear: number, toYear: number,
       const people = await tx.select().from(curriculumPlanAssignments).where(eq(curriculumPlanAssignments.planId, source.id))
       if (people.length) await tx.insert(curriculumPlanAssignments).values(people.map((person) => ({ planId: target.id, userId: person.userId, responsibility: person.responsibility, assignedBy: viewer.id }))).onConflictDoNothing()
       await tx.insert(curriculumPlanStatusHistory).values({ versionId: version.id, fromStatus: null, toStatus: 'rascunho', changedBy: viewer.id, note: `Copiado de ${fromYear} (versão ${official.versionNumber})` })
+      await recordDecision(tx, { entityType: 'plano', entityId: target.id, planId: target.id, action: 'copiado_de_ano', summary: `Copiado de ${fromYear} (versão ${official.versionNumber})`, details: { sourcePlanId: source.id, sourceVersionId: official.id }, actorId: viewer.id })
       created.push(label)
     })
   }
