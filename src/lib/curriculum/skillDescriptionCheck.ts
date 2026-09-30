@@ -15,35 +15,18 @@
 //   apaga a parte distintiva ficou em ~0,82, por isso a faixa de revisão.
 
 import { resolveBnccDescriptions } from './bnccDescriptions'
+import { evaluateWithJev, type JevAnswers } from '@/lib/ai/jevClient'
+import { descriptionCheckKey, normalizeSkillCode, type DescriptionCheck, type DescriptionCheckStatus } from './skillDescriptionTypes'
+
+export { descriptionCheckKey, normalizeSkillCode, type DescriptionCheck, type DescriptionCheckStatus } from './skillDescriptionTypes'
 
 export const DESCRIPTION_MATCH_THRESHOLD = 0.8
 export const DESCRIPTION_MISMATCH_THRESHOLD = 0.2
-const TYPESAFE_ENDPOINT = 'https://api.typesafe.ai/v1/systemone'
 const QUESTIONS_PER_REQUEST = 20
-const REQUEST_TIMEOUT_MS = 8000
-
-export type DescriptionCheckStatus = 'confere' | 'revisar' | 'diverge' | 'nao_verificado'
-
-export type DescriptionCheck = {
-  code: string
-  spreadsheetDescription: string
-  officialDescription: string | null
-  status: DescriptionCheckStatus
-  /** Probabilidade (0–1) de a planilha descrever a mesma habilidade; null quando não verificado. */
-  probability: number | null
-}
+const DESCRIPTION_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 type SkillInput = { code: string; description: string | null }
 type FetchLike = typeof fetch
-
-export function normalizeSkillCode(code: string) {
-  return code.trim().toUpperCase()
-}
-
-/** Chave estável de uma linha verificada: o mesmo código pode vir com textos diferentes. */
-export function descriptionCheckKey(code: string, description: string) {
-  return `${normalizeSkillCode(code)}::${description.trim()}`
-}
 
 export function classifyDescriptionProbability(probability: number): DescriptionCheckStatus {
   if (probability >= DESCRIPTION_MATCH_THRESHOLD) return 'confere'
@@ -69,24 +52,33 @@ export function buildDescriptionQuestion(code: string, officialDescription: stri
 
 type PendingCheck = { key: string; code: string; spreadsheetDescription: string; officialDescription: string }
 
-async function askJev(batch: PendingCheck[], apiKey: string, fetchImpl: FetchLike): Promise<Map<string, number>> {
+function routeDescriptionBatch(answers: JevAnswers) {
+  const values = Object.values(answers).filter((answer) => answer.type === 'noul').map((answer) => answer.noul)
+  const needsReview = values.length === 0 || values.some((value) => value > DESCRIPTION_MISMATCH_THRESHOLD && value < DESCRIPTION_MATCH_THRESHOLD)
+  return { route: needsReview ? 'review' as const : 'automatic' as const, outcome: needsReview ? 'description_review_required' : 'description_checks_completed' }
+}
+
+async function askJev(batch: PendingCheck[], apiKey: string, fetchImpl: FetchLike, persistDecisions: boolean): Promise<Map<string, number>> {
   const questions = Object.fromEntries(batch.map((item, index) => [`q${index}`, buildDescriptionQuestion(item.code, item.officialDescription, item.spreadsheetDescription)]))
-  const response = await fetchImpl(TYPESAFE_ENDPOINT, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'jev-latest',
-      state: { contexto: 'Conferência de planejamento pedagógico: a coordenação quer saber se a descrição digitada na planilha corresponde ao código BNCC informado.' },
-      questions,
-    }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  const result = await evaluateWithJev({
+    operation: 'jev/curriculum/description-match',
+    questionVersion: '2026-09-30.v1',
+    state: { contexto: 'Conferência de planejamento pedagógico: a coordenação quer saber se a descrição digitada na planilha corresponde ao código BNCC informado.' },
+    questions,
+    route: routeDescriptionBatch,
+    fallback: { answers: {}, routing: { route: 'fallback', outcome: 'description_check_unavailable' } },
+    context: { feature: 'planning', skillCount: batch.length },
+    cacheTtlMs: DESCRIPTION_CACHE_TTL_MS,
+    apiKey,
+    fetchImpl,
+    store: persistDecisions ? undefined : null,
+    telemetry: persistDecisions ? undefined : null,
+    reserveOperation: persistDecisions ? undefined : null,
   })
-  if (!response.ok) throw new Error(`TypeSafe ${response.status}`)
-  const body = await response.json() as { answers?: Record<string, { noul?: unknown }> }
   const probabilities = new Map<string, number>()
   batch.forEach((item, index) => {
-    const value = body.answers?.[`q${index}`]?.noul
-    if (typeof value === 'number' && Number.isFinite(value)) probabilities.set(item.key, value)
+    const answer = result.answers[`q${index}`]
+    if (answer?.type === 'noul') probabilities.set(item.key, answer.noul)
   })
   return probabilities
 }
@@ -97,11 +89,14 @@ export async function checkSkillDescriptions(
     apiKey?: string
     fetchImpl?: FetchLike
     resolveOfficial?: (codes: string[]) => Promise<ReadonlyMap<string, string>>
+    /** Testes unitários podem desativar banco e telemetria; produção mantém ambos. */
+    persistDecisions?: boolean
   } = {},
 ): Promise<DescriptionCheck[]> {
   const apiKey = options.apiKey ?? process.env.TYPESAFE_API_KEY
   const fetchImpl = options.fetchImpl ?? fetch
   const resolveOfficial = options.resolveOfficial ?? resolveBnccDescriptions
+  const persistDecisions = options.persistDecisions ?? true
 
   const unique = new Map<string, { code: string; spreadsheetDescription: string }>()
   for (const skill of skills) {
@@ -123,7 +118,7 @@ export async function checkSkillDescriptions(
     for (let index = 0; index < pending.length; index += QUESTIONS_PER_REQUEST) {
       const batch = pending.slice(index, index + QUESTIONS_PER_REQUEST)
       try {
-        for (const [key, value] of await askJev(batch, apiKey, fetchImpl)) probabilities.set(key, value)
+        for (const [key, value] of await askJev(batch, apiKey, fetchImpl, persistDecisions)) probabilities.set(key, value)
       } catch (error) {
         console.warn('[curriculum/description-check] verificação indisponível:', error instanceof Error ? error.message : error)
       }

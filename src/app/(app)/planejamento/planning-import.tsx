@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { SEGMENT_GRADES, SEGMENT_LABELS, SEGMENT_SUBJECTS } from '@/config/subjects'
 import type { CurriculumSelection, ParsedHabilidade, Segment } from '@/types/exam'
-import { descriptionCheckKey, type DescriptionCheck, type DescriptionCheckStatus } from '@/lib/curriculum/skillDescriptionCheck'
+import { descriptionCheckKey, type DescriptionCheck, type DescriptionCheckStatus } from '@/lib/curriculum/skillDescriptionTypes'
 import CoveragePanel from './coverage-panel'
 
 type PlanningPreview = CurriculumSelection & { descriptionChecks: DescriptionCheck[] }

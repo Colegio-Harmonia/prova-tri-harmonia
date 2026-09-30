@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 30/09/2026, noite (ambiente oficial normalizado).
+> Última atualização: 30/09/2026, noite (infraestrutura central do Jev).
 
 ## 1. Fonte da verdade
 
@@ -52,7 +52,12 @@ commitado que existia no Mac foi preservado no branch
 - Checkout local oficial: `prova-tri-harmonia`, com remoto
   `Colegio-Harmonia/prova-tri-harmonia`. O checkout antigo e a antiga cópia
   `.prod-reporting-candidate` não são usados para desenvolvimento ou deploy.
-- Suíte: 77 arquivos / 373 testes, incluindo 3 de integração com Postgres
+- Infraestrutura central do Jev: cliente tipado comum para Noul, Choice e
+  Score; timeout, parsing estrito, fallback explícito, cache em memória e
+  persistente, telemetria e auditoria sem armazenar o estado textual. A
+  conferência BNCC do planejamento já usa essa infraestrutura. Migration
+  `0047_jev_decision_infrastructure.sql`.
+- Suíte: 78 arquivos / 377 testes, incluindo 3 de integração com Postgres
   real em memória (PGlite).
 - Dívida aberta relevante: **TD-018** (bundle de `/desempenho` 133,6 KiB,
   meta 125; `/desempenho/relatorio` 124,9, meta 120; `/gerar/[id]/revisar`
@@ -213,6 +218,11 @@ pedagógica.
   bimestre corrigido; até lá a tela explica isso.
 
 ## 5. Pendências (em ordem)
+
+0. Próximas adoções do Jev, em PRs separados e calibrados: decisão na geração
+   de provas, decisão em atividades, seleção do Reforço ENEM e organização
+   semântica dos resultados. Cálculos de nota, TRI, percentuais e permissões
+   permanecem determinísticos.
 
 1. Painel `/desempenho` (visão BNCC) usa **outra regra** também chamada
    "Domínio": ≥ 80% com ≥ 3 respostas somando todos os alunos
