@@ -143,7 +143,7 @@ export default function StudentReport() {
       </ReportPanel>
 
       <ReportPanel id="habilidades" active={activeTab}>
-        <MasterySection mastery={mastery} error={masteryError} />
+        <MasterySection mastery={mastery} error={masteryError} studentName={profile.studentName} studentId={studentId || undefined} classroomCourseId={searchParams.get('classroomCourseId') ?? undefined} />
         <section className="rounded border border-border bg-surface p-5">
           <h2 className="font-semibold text-content-primary">Habilidades BNCC</h2>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
