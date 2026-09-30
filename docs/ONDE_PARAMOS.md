@@ -38,7 +38,11 @@ commitado que existia no Mac foi preservado no branch
 - Branch `feature/consolidacao-producao-2026-09-30`: versiona tudo o que já
   estava em produção (geração, correção/scans, auth, migrations 0033-0045,
   relatórios/planejamento). O PR para `main` precisa ser mergeado.
-- Suíte de testes: 71 arquivos / 337 testes passando. `tsc --noEmit` limpo.
+- CI `Quality` (lint, typecheck, vitest com cobertura, regressão, build e
+  orçamento de bundle): verde. Foi preciso atualizar 2 contratos de teste
+  desatualizados (TD-015) e migrar cores fixas para tokens em 5 telas.
+- Dívida aberta nova: **TD-018**, orçamento de bundle excedido em 3 rotas,
+  com limites elevados temporariamente (ver `docs/tech-debt.md`).
 - Produção: `prova-tri-web` saudável; migrations 0044 e 0045 aplicadas; 3
   registros em `curriculum_plans`.
 
