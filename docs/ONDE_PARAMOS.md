@@ -121,6 +121,23 @@ Especificação: [`docs/AUDITORIA_RELATORIOS_2026-09-29.md`](AUDITORIA_RELATORIO
   em PDF" do relatório individual gerava página em branco (regra global de
   impressão só liberava o relatório SAE; agora `.print-report` também).
 
+- **Bloco 6 — comparação e evolução** (branch `feature/bloco-6-evolucao`):
+  `GET /api/curriculum/trajectory` (aluno: `studentId`/`student`; turma:
+  `classroomCourseId`), motor puro em `src/lib/curriculum/trajectory.ts`
+  (`TRAJECTORY_RULES`: ≥ 10 p.p. e ≥ 2 itens por lado — por aluno, na
+  turma), carregamento compartilhado em `src/lib/curriculum/masteryData.ts`
+  (a rota do Bloco 4 também passou a usá-lo). Entrega: seção "Evolução ao
+  longo do ano" no relatório do aluno e página `/desempenho/trajetoria`
+  (link "Trajetória da turma" em `/turmas/[id]`). Mostra: comparação por
+  bimestre, habilidades que avançaram/estáveis/regrediram/sem base,
+  decomposição "variação total = mesmas habilidades + efeito da troca de
+  conteúdo", cobertura acumulada do planejamento e intervenções com
+  resultado antes/depois (descritivo, não causal).
+  **Validação com dados reais (30/09/2026):** rodou sem erro em 83 turmas e
+  322 alunos, mas **nenhum ainda tem correção em mais de um bimestre** — a
+  comparação só aparece com dados reais a partir do próximo bimestre
+  corrigido; até lá a tela explica isso.
+
 **Próximos passos (em ordem):**
 1. `/planejamento`: tela de revisão/aprovação das versões e atribuição de
    responsáveis. As tabelas e a política já existem; falta a UI e a API de

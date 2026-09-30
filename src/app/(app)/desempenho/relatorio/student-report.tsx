@@ -10,6 +10,7 @@ import dynamic from 'next/dynamic'
 
 // Domínio por habilidade (Bloco 4) e gráficos (Bloco 5) carregam sob demanda
 // para não pesar no bundle inicial do relatório.
+const TrajectorySection = dynamic(() => import('@/components/trajectory/TrajectorySection'), { ssr: false, loading: () => <p className="text-sm text-content-secondary">Carregando trajetória…</p> })
 const MasterySection = dynamic(() => import('./MasterySection'), { ssr: false, loading: () => <p className="text-sm text-content-secondary">Carregando domínio por habilidade…</p> })
 
 type AssessmentRow = { examId: number; subject: string; period: string; grade: number; evaluatedItems: number; pendingItems: number }
@@ -62,6 +63,13 @@ export default function StudentReport() {
     }
     return preserved.toString()
   }, [rawQuery])
+  const trajectoryQuery = useMemo(() => {
+    const params = new URLSearchParams(preservedQuery)
+    params.delete('bimester')
+    if (studentId) params.set('studentId', studentId)
+    else params.set('student', student)
+    return params.toString()
+  }, [preservedQuery, student, studentId])
   const [profile, setProfile] = useState<Profile | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [mastery, setMastery] = useState<MasteryResponse | null>(null)
@@ -146,6 +154,8 @@ export default function StudentReport() {
       </section>
 
       <MasterySection mastery={mastery} error={masteryError} />
+
+      <TrajectorySection query={trajectoryQuery} title="Evolução ao longo do ano" />
 
       <section className="rounded border border-border bg-surface p-5">
         <h2 className="font-semibold text-content-primary">Próximos passos</h2>
