@@ -101,6 +101,26 @@ Especificação: [`docs/AUDITORIA_RELATORIOS_2026-09-29.md`](AUDITORIA_RELATORIO
   - **Falta validar com dados reais** em DEV/produção (pesos distintos,
     questão com dois códigos, correção parcial).
 
+- **Validação do Bloco 4 com dados reais (30/09/2026, só leitura):** 1.786
+  correções, 322 alunos, 14.563 respostas com BNCC, 0 linhas inválidas.
+  ⚠️ **Decisão pendente:** só 9 de 8.795 habilidades por bimestre chegam a
+  "domínio", porque a regra exige 2 avaliações *no mesmo bimestre* e em
+  geral há uma prova por disciplina/bimestre (780 ficam "próximo do
+  domínio — limitado pela amostra"). Na visão anual do Bloco 5 a regra fica
+  alcançável. Opções: manter; exigir 2 avaliações só na visão anual; ou
+  aceitar 1 avaliação com ≥ 6 itens no bimestre.
+- **Bloco 5 — gráficos no relatório individual** (branch
+  `feature/bloco-5-graficos-relatorio`): teia geral por disciplina, meta de
+  100% tracejada, teia por habilidade, marcadores por formato (círculo
+  cheio = dominada, triângulo = em desenvolvimento, círculo vazado = não
+  avaliada, tracejado = preliminar), evidências (itens/avaliações) ao lado,
+  filtro ano/bimestre, mapa de calor habilidade × bimestre para teias com
+  mais de 12 eixos ou visão anual, interpretação textual e impressão com
+  todas as disciplinas. SVG próprio, sem biblioteca, carregado sob demanda
+  (`MasterySection`/`MasteryCharts`). Corrigido: o botão "Imprimir / Salvar
+  em PDF" do relatório individual gerava página em branco (regra global de
+  impressão só liberava o relatório SAE; agora `.print-report` também).
+
 **Próximos passos (em ordem):**
 1. `/planejamento`: tela de revisão/aprovação das versões e atribuição de
    responsáveis. As tabelas e a política já existem; falta a UI e a API de
