@@ -8,6 +8,7 @@ import { curriculumPlans, curriculumPlanSkills, curriculumPlanStatusHistory, cur
 import { isStaffSuperuser } from '@/lib/auth/roles'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
 import { resolveBnccDescriptions } from '@/lib/curriculum/bnccDescriptions'
+import { canReceiveNewDraft } from '@/lib/curriculum/planningPolicy'
 
 const schema = z.object({
   academicYear: z.number().int().min(2020).max(2100),
@@ -61,6 +62,9 @@ export async function POST(req: NextRequest) {
       .returning()
     const previous = await tx.query.curriculumPlanVersions.findFirst({ where: eq(curriculumPlanVersions.planId, plan.id), orderBy: [desc(curriculumPlanVersions.versionNumber)] })
     if (previous?.sourceHash === sourceHash) return { planId: plan.id, versionId: previous.id, versionNumber: previous.versionNumber, unchanged: true }
+    const allVersions = await tx.select({ id: curriculumPlanVersions.id, versionNumber: curriculumPlanVersions.versionNumber, status: curriculumPlanVersions.status }).from(curriculumPlanVersions).where(eq(curriculumPlanVersions.planId, plan.id))
+    // Uma versão em trabalho por vez: importar não pode atropelar rascunho ou revisão em andamento.
+    if (!canReceiveNewDraft(allVersions)) return { planId: plan.id, versionId: previous!.id, versionNumber: previous!.versionNumber, unchanged: true, blocked: true }
     const [version] = await tx.insert(curriculumPlanVersions).values({ planId: plan.id, versionNumber: (previous?.versionNumber ?? 0) + 1, status: 'rascunho', source: 'planilha', sourceReference: selection.tabName, sourceHash, createdBy: manager.id }).returning()
     for (const [position, unit] of selection.units.entries()) {
       const [savedUnit] = await tx.insert(curriculumPlanUnits).values({ versionId: version.id, position, title: unit.tituloCapitulo || `Unidade ${position + 1}`, content: unit.conteudo, objectives: unit.objetivos.map((objective) => objective.text).join('\n') || null }).returning()
@@ -72,6 +76,7 @@ export async function POST(req: NextRequest) {
     return { planId: plan.id, versionId: version.id, versionNumber: version.versionNumber, unchanged: false }
   })
 
+  if ('blocked' in result) return NextResponse.json({ error: `Já existe a versão ${result.versionNumber} em rascunho ou revisão para este recorte. Conclua ou edite essa versão em Planejamento pedagógico antes de importar de novo.`, planId: result.planId }, { status: 409 })
   const skillCount = selection.units.reduce((sum, unit) => sum + unit.habilidades.skills.length, 0)
   return NextResponse.json({ ...result, unitCount: selection.units.length, skillCount, warningCount: selection.unmappedWarnings.length, sourceHash })
 }

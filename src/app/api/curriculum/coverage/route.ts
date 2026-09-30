@@ -13,6 +13,7 @@ import {
 import { isStaffSuperuser } from '@/lib/auth/roles'
 import { calculateCurriculumCoverage, type CoverageQuestion } from '@/lib/curriculum/coverage'
 import { enrichBnccDescriptions } from '@/lib/curriculum/bnccDescriptions'
+import { officialVersion } from '@/lib/curriculum/planningPolicy'
 import { answerGradeOnTen } from '@/lib/corrections/totalGrade'
 import type { CorrectionAnswer } from '@/types/correction'
 import type { Segment } from '@/types/exam'
@@ -46,10 +47,11 @@ export async function GET(request: NextRequest) {
 
   if (!plan) return NextResponse.json({ planFound: false, error: 'Ainda não há fotografia do planejamento para este recorte.' }, { status: 404 })
 
-  const [version] = await db.select().from(curriculumPlanVersions)
+  // Versão oficial (aprovada/encerrada) quando existe; senão a mais recente.
+  const versions = await db.select().from(curriculumPlanVersions)
     .where(eq(curriculumPlanVersions.planId, plan.id))
     .orderBy(desc(curriculumPlanVersions.versionNumber))
-    .limit(1)
+  const version = officialVersion(versions) ?? versions[0]
 
   if (!version) return NextResponse.json({ planFound: false, error: 'O planejamento existe, mas ainda não possui versão.' }, { status: 404 })
 
