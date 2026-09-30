@@ -33,6 +33,8 @@ export type BlueprintParams = {
   subject: string
   gradeYear: number
   segment: 'anos-iniciais' | 'anos-finais' | 'ensino-medio'
+  /** Orientação pedagógica tipada decidida antes do blueprint. */
+  strategyInstruction?: string
   slots: Array<{
     number: number
     unitRowIndex: number
@@ -180,6 +182,8 @@ export async function generateExamBlueprint(
   const prompt = `Você é um planejador pedagógico. Distribua estratégias, dificuldade e ângulos temáticos para uma avaliação.
 
 Disciplina: ${params.subject}. Série: ${params.gradeYear}º ano (${params.segment}).
+
+${params.strategyInstruction ? `${params.strategyInstruction}\n` : ''}
 
 Slots da matriz definida pelo professor (NÃO altere a quantidade nem os capítulos):
 ${slotDescriptions}
