@@ -112,7 +112,7 @@ export default function AtividadeForm() {
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setSubmitting(true); setError(null)
     try {
-      const response = await fetch('/api/activities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ segment, gradeYear, subject, academicYear, ...(bimester ? { bimester } : {}), questionCount, bnccCodes: selectedPlan.map((item) => item.code), bnccPlan: selectedPlan, ...(classLabel.trim() ? { classLabel: classLabel.trim() } : {}), ...(classroomCourseId ? { classroomCourseId } : {}) }) })
+      const response = await fetch('/api/activities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ segment, gradeYear, subject, academicYear, ...(bimester ? { bimester } : {}), questionCount, pedagogicalIntent: recoverySkill ? 'recuperacao' : 'formativa', bnccCodes: selectedPlan.map((item) => item.code), bnccPlan: selectedPlan, ...(classLabel.trim() ? { classLabel: classLabel.trim() } : {}), ...(classroomCourseId ? { classroomCourseId } : {}) }) })
       const data = await response.json()
       if (!response.ok) {
         const detail = Array.isArray(data.issues) && data.issues.length ? data.issues.map((item: { path?: Array<string | number>; message?: string }) => `${item.path?.join('.') || 'campo'}: ${item.message ?? 'inválido'}`).join('; ') : null

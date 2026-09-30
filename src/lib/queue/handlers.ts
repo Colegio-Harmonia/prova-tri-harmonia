@@ -81,6 +81,7 @@ async function executeGerarAtividade(job: ClaimedJob): Promise<JobExecutionResul
     bnccCodes: payload.bnccCodes,
     bnccPlan: payload.bnccPlan,
     classroomCourseId: payload.classroomCourseId ?? null,
+    pedagogicalIntent: payload.pedagogicalIntent,
     generationJobId: job.id,
   }, job.requestedBy)
 
