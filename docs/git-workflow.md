@@ -1,7 +1,41 @@
-> ⚠️ **Atualização 30/09/2026**: o repositório oficial passou a ser
-> `https://github.com/Colegio-Harmonia/prova-tri-harmonia` (branch `main`).
-> Referências a `Colegio-Harmonia/prova-tri` e `develop` abaixo são históricas.
-> Estado atual e próximos passos: `docs/ONDE_PARAMOS.md`.
+> **Fluxo vigente desde 30/09/2026:** o repositório oficial é
+> `git@github.com:Colegio-Harmonia/prova-tri-harmonia.git` e `main` é a única
+> branch permanente. O repositório `Colegio-Harmonia/prova-tri` é somente
+> arquivo histórico. As seções posteriores que citam `develop`, PM2 ou rsync
+> registram o processo anterior e não devem orientar trabalho novo.
+>
+> Para trabalhar: atualize `main`, crie uma branch curta `feature/*`, `fix/*`,
+> `docs/*`, `perf/*` ou `refactor/*`, abra PR para `main`, aguarde o workflow
+> `Quality`, apague a branch após o merge e publique seguindo
+> [`deployment.md`](deployment.md). Nunca desenvolver ou fazer deploy a partir
+> de cópias da produção. Estado atual e próximos passos:
+> [`ONDE_PARAMOS.md`](ONDE_PARAMOS.md).
+
+## Fluxo atual
+
+```bash
+git switch main
+git pull --ff-only origin main
+git switch -c feature/nome-curto
+```
+
+1. Faça commits atômicos com Conventional Commits.
+2. Atualize `ONDE_PARAMOS.md` no mesmo PR quando mudar o estado do produto,
+   decisões ou próximos passos.
+3. Execute os testes aplicáveis e `git diff --check`.
+4. Envie a branch e abra PR diretamente para `main`.
+5. Faça merge somente com lint, TypeScript, Vitest, regressão, build e
+   orçamento de bundle verdes no workflow `Quality`.
+6. Publique somente o commit mergeado, com a árvore de produção limpa e
+   sincronizada com `origin/main`.
+
+Segredos e arquivos `.env*` nunca entram no Git nem viajam entre ambientes.
+Migration entra no mesmo PR do código dependente. Testes que escrevem dados
+usam o ambiente DEV e o banco `prova_tri_dev`, nunca produção.
+
+---
+
+## Histórico do fluxo anterior — não usar para trabalho novo
 
 # Fluxo de Git e Governança de Branches
 
