@@ -73,6 +73,17 @@ services:
     mem_limit: 768m
     cpus: 1.5
 
+  # OMR/QR é CPU-bound e não pode disputar o único worker de geração.
+  # Duas instâncias leem provas diferentes em paralelo; a fila limita uma
+  # instância por prova enquanto houver outras provas aguardando.
+  scan-worker:
+    <<: *app-common
+    command: npm run worker:scan-processing
+    deploy:
+      replicas: 2
+    mem_limit: 768m
+    cpus: 1.5
+
   ocr-worker:
     <<: *app-common
     command: npm run worker:scan-transcription
