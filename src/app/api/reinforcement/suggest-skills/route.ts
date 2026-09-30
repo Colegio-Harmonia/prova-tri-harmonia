@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
   if (!area) {
     return NextResponse.json({ error: 'Informe uma disciplina do Ensino Médio com área ENEM correspondente.' }, { status: 400 })
   }
-  const allowedCompetencies = getEnemCompetenciesForSubject(subject ?? '')
+  const allowedCompetencies = getEnemCompetenciesForSubject(String(subject))
 
   // Professor só enxerga o desempenho das próprias provas — mesma regra
   // do /api/analytics/performance.
@@ -54,7 +54,11 @@ export async function GET(req: NextRequest) {
   if (!exams.length) return NextResponse.json({ suggestions: [], sampleNote: 'Sem provas do EM no recorte — selecione as habilidades manualmente.' })
 
   const corrections = await db.query.examCorrections.findMany({
-    where: and(inArray(examCorrections.examId, exams.map((e) => e.id)), eq(examCorrections.status, 'revisado')),
+    where: and(
+      inArray(examCorrections.examId, exams.map((e) => e.id)),
+      eq(examCorrections.status, 'revisado'),
+      eq(examCorrections.attendanceStatus, 'presente'),
+    ),
     columns: { examId: true, answers: true },
   })
 

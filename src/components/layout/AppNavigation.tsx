@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   Sparkles,
   ShieldCheck,
+  BookOpenCheck,
   Target,
   UsersRound,
 } from 'lucide-react'
@@ -26,13 +27,18 @@ type NavigationItem = {
 
 const performanceViews = [
   { href: '/desempenho', label: 'Visão geral' },
+  { href: '/desempenho?visao=turma', label: 'Visão da turma' },
+  { href: '/desempenho?visao=perfis', label: 'Relatórios dos alunos' },
   { href: '/desempenho?visao=bloom', label: 'Análise Bloom' },
   { href: '/desempenho?visao=dok', label: 'Análise DOK' },
   { href: '/desempenho?visao=bncc', label: 'Análise BNCC' },
-  { href: '/desempenho?visao=perfis', label: 'Perfis cognitivos' },
   { href: '/desempenho/simulado-enem', label: 'Simulado ENEM' },
   { href: '/desempenho/simulado-enem/sae', label: 'SAE', nested: true },
 ]
+
+const teacherPerformanceViews = performanceViews.filter((view) =>
+  view.href === '/desempenho?visao=turma' || view.href === '/desempenho?visao=perfis',
+)
 
 const primaryItems: NavigationItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -51,6 +57,8 @@ const managementItem: NavigationItem = {
   icon: ShieldCheck,
 }
 
+const planningItem: NavigationItem = { href: '/planejamento', label: 'Planejamento', icon: BookOpenCheck }
+
 const aiManagementItem: NavigationItem = { href: '/ia', label: 'Operações de IA', icon: Sparkles }
 
 function isCurrentRoute(pathname: string, href: string) {
@@ -67,7 +75,7 @@ export function AppNavigation({ isSuperuser, mobile = false, onNavigate }: AppNa
   const pathname = usePathname()
   // Badges separam a fila de provas da fila de atividades formativas.
   const { activeProofCount, activeActivityCount, activeReinforcementCount } = useGenerationJobs()
-  const items = isSuperuser ? [...primaryItems, managementItem, aiManagementItem] : primaryItems
+  const items = isSuperuser ? [...primaryItems, planningItem, managementItem, aiManagementItem] : primaryItems
 
   return (
     <nav aria-label="Navegação principal" className={cn('flex flex-col gap-1', mobile && 'p-3')}>
@@ -110,9 +118,9 @@ export function AppNavigation({ isSuperuser, mobile = false, onNavigate }: AppNa
                 <span aria-label={`${activeActivityCount} geração(ões) de atividade em andamento`} className="ml-auto rounded-full bg-harmonia-green px-2 py-0.5 text-xs font-semibold text-white">{activeActivityCount}</span>
               )}
             </Link>
-            {item.href === '/desempenho' && isSuperuser && (
+            {item.href === '/desempenho' && (
               <div className="ml-8 mt-1 flex flex-col gap-1 border-l border-border pl-3">
-                {performanceViews.map((view) => (
+                {(isSuperuser ? performanceViews : teacherPerformanceViews).map((view) => (
                   <Link key={view.href} href={view.href} onClick={onNavigate} className={cn('min-h-8 py-1 text-xs text-content-secondary hover:text-harmonia-green', view.nested && 'pl-3')}>
                     {view.label}
                   </Link>

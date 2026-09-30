@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { and, eq, inArray } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { generatedExams, examCorrections, pedagogicalClassifications, pedagogicalTaxonomies, users, importedQuestionClassifications, enemCognitiveAxes } from '@/db/schema'
+import { generatedExams, examCorrections, pedagogicalClassifications, pedagogicalTaxonomies, users, importedQuestionClassifications, enemAreas, enemCompetencies, enemSkills, enemCognitiveAxes } from '@/db/schema'
 import { auth } from '@/auth/auth'
 import { isStaffSuperuser } from '@/lib/auth/roles'
-import { totalGrade } from '@/lib/corrections/totalGrade'
+import { answerGradeOnTen, totalGrade } from '@/lib/corrections/totalGrade'
 import type { CorrectionAnswer } from '@/types/correction'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import type { Segment } from '@/types/exam'
@@ -56,6 +56,7 @@ type InepAxisAccumulator = {
 
 type ProfileBnccAccumulator = ScoreCount & { summary: string | null }
 type StudentProfileAccumulator = {
+  studentId: string | null
   studentName: string
   grades: number[]
   subjects: Record<string, number>
@@ -66,6 +67,26 @@ type StudentProfileAccumulator = {
   dok: Record<string, ScoreCount>
   bncc: Record<string, ProfileBnccAccumulator>
   inep: Record<string, ScoreCount>
+  assessments: Array<{
+    examId: number
+    subject: string
+    period: string
+    grade: number
+    evaluatedItems: number
+    pendingItems: number
+  }>
+}
+
+type ManagementGroupAccumulator = {
+  key: string
+  segment: Segment
+  gradeYear: number | null
+  subject: string | null
+  grades: number[]
+  students: Set<string>
+  exams: Set<number>
+  reviewedCorrections: number
+  incompleteCorrections: number
 }
 
 function avg(nums: number[]): number | null {
@@ -81,6 +102,31 @@ function confidenceLevel(sampleSize: number): 'baixa' | 'media' | 'alta' {
 
 function periodLabel(row: { academicYear: number; bimester: number | null }) {
   return row.bimester ? `${row.academicYear}.${row.bimester}` : `${row.academicYear}`
+}
+
+function gradeYearLabel(segment: Segment, gradeYear: number) {
+  const segmentLabel = segment === 'ensino-medio' ? 'Ensino Médio' : segment === 'anos-finais' ? 'Anos Finais' : 'Anos Iniciais'
+  return `${segmentLabel} · ${gradeYear}º ano`
+}
+
+function studentKey(classroomStudentId: string | null, studentName: string) {
+  if (classroomStudentId) return `classroom:${classroomStudentId}`
+  return `manual:${studentName.trim().toLocaleLowerCase('pt-BR')}`
+}
+
+function managementGroupRow(group: ManagementGroupAccumulator) {
+  return {
+    key: group.key,
+    segment: group.segment,
+    gradeYear: group.gradeYear,
+    subject: group.subject,
+    average: avg(group.grades),
+    uniqueStudents: group.students.size,
+    uniqueExams: group.exams.size,
+    reviewedCorrections: group.reviewedCorrections,
+    evaluatedCorrections: group.grades.length,
+    incompleteCorrections: group.incompleteCorrections,
+  }
 }
 
 function percentFromScoreSum(scoreSum: number, itemCount: number) {
@@ -163,30 +209,41 @@ export async function GET(req: NextRequest) {
   // Subtarefa 9: "TEACHER só recebe dado das turmas vinculadas a ele").
   // Reforço ENEM é formativo: sua correção pode apoiar o professor, mas não
   // compõe a média institucional de desempenho das provas avaliativas.
-  const conditions = [eq(examCorrections.status, 'revisado'), eq(generatedExams.examKind, 'prova')]
+  const conditions = [eq(examCorrections.status, 'revisado'), eq(examCorrections.attendanceStatus, 'presente'), eq(generatedExams.examKind, 'prova')]
+  const managementExamConditions = [eq(generatedExams.examKind, 'prova')]
   if (!isSuperuser) {
     conditions.push(eq(generatedExams.assignedTo, currentUser.id))
-  } else {
-    const assignedTo = params.get('assignedTo')
-    const subject = params.get('subject')
-    const gradeYear = params.get('gradeYear')
-    const segment = params.get('segment')
-    const classroomCourseId = params.get('classroomCourseId')
-    if (assignedTo) conditions.push(eq(generatedExams.assignedTo, Number(assignedTo)))
-    if (subject) conditions.push(eq(generatedExams.subject, subject))
-    if (gradeYear) conditions.push(eq(generatedExams.gradeYear, Number(gradeYear)))
-    if (segment) conditions.push(eq(generatedExams.segment, segment as Segment))
-    if (classroomCourseId) conditions.push(eq(generatedExams.classroomCourseId, classroomCourseId))
+    managementExamConditions.push(eq(generatedExams.assignedTo, currentUser.id))
   }
+
+  // Todo papel pode restringir o próprio recorte; os filtros nunca ampliam o
+  // escopo de autorização aplicado acima. Apenas assignedTo é exclusivo da gestão.
+  const assignedTo = params.get('assignedTo')
+  const subject = params.get('subject')
+  const gradeYear = params.get('gradeYear')
+  const segment = params.get('segment')
+  const classroomCourseId = params.get('classroomCourseId')
+  const examIdParam = params.get('examId')
+  if (isSuperuser && assignedTo) {
+    conditions.push(eq(generatedExams.assignedTo, Number(assignedTo)))
+    managementExamConditions.push(eq(generatedExams.assignedTo, Number(assignedTo)))
+  }
+  if (subject) { conditions.push(eq(generatedExams.subject, subject)); managementExamConditions.push(eq(generatedExams.subject, subject)) }
+  if (gradeYear) { conditions.push(eq(generatedExams.gradeYear, Number(gradeYear))); managementExamConditions.push(eq(generatedExams.gradeYear, Number(gradeYear))) }
+  if (segment) { conditions.push(eq(generatedExams.segment, segment as Segment)); managementExamConditions.push(eq(generatedExams.segment, segment as Segment)) }
+  if (classroomCourseId) { conditions.push(eq(generatedExams.classroomCourseId, classroomCourseId)); managementExamConditions.push(eq(generatedExams.classroomCourseId, classroomCourseId)) }
+  if (examIdParam) { conditions.push(eq(generatedExams.id, Number(examIdParam))); managementExamConditions.push(eq(generatedExams.id, Number(examIdParam))) }
   const academicYearParam = params.get('academicYear')
   const bimesterParam = params.get('bimester')
   const studentName = params.get('student')?.trim()
+  const classroomStudentId = params.get('studentId')?.trim()
   if (academicYearParam) {
     const academicYear = Number(academicYearParam)
     if (!Number.isInteger(academicYear) || academicYear < 2000 || academicYear > 2100) {
       return performanceJson({ error: 'Ano letivo inválido.' }, startedAt, { status: 400 })
     }
     conditions.push(eq(generatedExams.academicYear, academicYear))
+    managementExamConditions.push(eq(generatedExams.academicYear, academicYear))
   }
   if (bimesterParam) {
     const bimester = Number(bimesterParam)
@@ -194,10 +251,12 @@ export async function GET(req: NextRequest) {
       return performanceJson({ error: 'Bimestre inválido.' }, startedAt, { status: 400 })
     }
     conditions.push(eq(generatedExams.bimester, bimester))
+    managementExamConditions.push(eq(generatedExams.bimester, bimester))
   }
   // O aluno não possui conta no sistema. O filtro ainda passa pelo escopo de
   // prova já aplicado acima, portanto não amplia a visão de um professor.
-  if (studentName) conditions.push(eq(examCorrections.studentName, studentName))
+  if (classroomStudentId) conditions.push(eq(examCorrections.classroomStudentId, classroomStudentId))
+  else if (studentName) conditions.push(eq(examCorrections.studentName, studentName))
 
   const rows = await db
     .select({
@@ -209,13 +268,37 @@ export async function GET(req: NextRequest) {
       bimester: generatedExams.bimester,
       segment: generatedExams.segment,
       assignedTo: generatedExams.assignedTo,
+      classroomCourseId: generatedExams.classroomCourseId,
       generationPayload: generatedExams.generationPayload,
+      classroomStudentId: examCorrections.classroomStudentId,
       studentName: examCorrections.studentName,
       answers: examCorrections.answers,
     })
     .from(examCorrections)
     .innerJoin(generatedExams, eq(examCorrections.examId, generatedExams.id))
     .where(and(...conditions))
+
+  const managementExamRows = isSuperuser ? await db
+    .select({ id: generatedExams.id, segment: generatedExams.segment, gradeYear: generatedExams.gradeYear, subject: generatedExams.subject })
+    .from(generatedExams)
+    .where(and(...managementExamConditions)) : []
+  const coordinationGroups = new Map<string, ManagementGroupAccumulator>()
+  const schoolSegments = new Map<string, ManagementGroupAccumulator>()
+  for (const exam of managementExamRows) {
+    const groupKey = `${exam.segment}:${exam.gradeYear}:${exam.subject}`
+    const coordinationGroup = coordinationGroups.get(groupKey) ?? {
+      key: groupKey, segment: exam.segment, gradeYear: exam.gradeYear, subject: exam.subject,
+      grades: [], students: new Set<string>(), exams: new Set<number>(), reviewedCorrections: 0, incompleteCorrections: 0,
+    }
+    coordinationGroup.exams.add(exam.id)
+    coordinationGroups.set(groupKey, coordinationGroup)
+    const schoolSegment = schoolSegments.get(exam.segment) ?? {
+      key: exam.segment, segment: exam.segment, gradeYear: null, subject: null,
+      grades: [], students: new Set<string>(), exams: new Set<number>(), reviewedCorrections: 0, incompleteCorrections: 0,
+    }
+    schoolSegment.exams.add(exam.id)
+    schoolSegments.set(exam.segment, schoolSegment)
+  }
 
   if (rows.length === 0) {
     return performanceJson({
@@ -232,7 +315,7 @@ export async function GET(req: NextRequest) {
         skills: [],
       },
       inepAxisDashboard: {
-        summary: { classifiedItemCount: 0, unclassifiedEnemItemCount: 0 },
+        summary: { classifiedItemCount: 0, unclassifiedEnemItemCount: 0, officialQuestionCount: 0, officialClassifiedQuestionCount: 0, alignedGeneratedQuestionCount: 0, evaluatedAnswerCount: 0 },
         axes: [],
       },
       bloomDokMatrix: {
@@ -244,6 +327,11 @@ export async function GET(req: NextRequest) {
         observed: { summary: { classifiedAnswerCount: 0, unclassifiedDiscursiveAnswerCount: 0 }, levels: [] },
       },
       cognitiveProfiles: [],
+      management: isSuperuser ? {
+        coordinationGroups: [...coordinationGroups.values()].map(managementGroupRow),
+        schoolSegments: [...schoolSegments.values()].map(managementGroupRow),
+      } : { coordinationGroups: [], schoolSegments: [] },
+      coverage: { reviewedCorrections: 0, evaluatedCorrections: 0, incompleteCorrections: 0, uniqueStudents: 0, uniqueExams: 0 },
       byProfessor: {},
       topMissedQuestions: [],
     }, startedAt)
@@ -269,9 +357,18 @@ export async function GET(req: NextRequest) {
             name: enemCognitiveAxes.name,
             description: enemCognitiveAxes.description,
             source: importedQuestionClassifications.enemClassificationSource,
+            areaCode: enemAreas.code,
+            areaName: enemAreas.name,
+            competencyNumber: enemCompetencies.number,
+            competencyDescription: enemCompetencies.description,
+            skillCode: enemSkills.code,
+            skillDescription: enemSkills.description,
           })
           .from(importedQuestionClassifications)
-          .innerJoin(enemCognitiveAxes, eq(importedQuestionClassifications.enemCognitiveAxisId, enemCognitiveAxes.id))
+          .leftJoin(enemAreas, eq(importedQuestionClassifications.enemAreaId, enemAreas.id))
+          .leftJoin(enemCompetencies, eq(importedQuestionClassifications.enemCompetencyId, enemCompetencies.id))
+          .leftJoin(enemSkills, eq(importedQuestionClassifications.enemSkillId, enemSkills.id))
+          .leftJoin(enemCognitiveAxes, eq(importedQuestionClassifications.enemCognitiveAxisId, enemCognitiveAxes.id))
           .where(and(eq(importedQuestionClassifications.source, 'enem'), inArray(importedQuestionClassifications.questionId, enemBankQuestionIds)))
       : Promise.resolve([]),
     db.query.pedagogicalTaxonomies.findMany({
@@ -280,7 +377,7 @@ export async function GET(req: NextRequest) {
     }),
   ])
   const inepAxisByQuestion = new Map(inepAxisRows.map((row) => [row.questionId, row]))
-  const inepAxisInfo = new Map(inepAxisRows.map((row) => [row.code, { name: row.name, description: row.description }]))
+  const inepAxisInfo = new Map(inepAxisRows.filter((row) => row.code).map((row) => [row.code!, { name: row.name!, description: row.description }]))
   const taxonomyIdByCode = new Map(taxonomyRows.map((taxonomy) => [taxonomy.code, taxonomy.id]))
   const dokTaxonomyId = taxonomyIdByCode.get('DOK')
   const soloExpectedTaxonomyId = taxonomyIdByCode.get('SOLO_EXPECTED')
@@ -383,22 +480,59 @@ export async function GET(req: NextRequest) {
   const inepAxisStats: Partial<Record<InepAxisCode, InepAxisAccumulator>> = {}
   let inepClassifiedItemCount = 0
   let inepUnclassifiedEnemItemCount = 0
+  const officialEnemQuestionKeys = new Set<string>()
+  const alignedGeneratedQuestionKeys = new Set<string>()
+  let officialEnemEvaluatedAnswers = 0
   const studentProfiles = new Map<string, StudentProfileAccumulator>()
   const byProfessor: Record<string, number[]> = {}
   // questionKey (examId:questionNumber) -> { subject, wrong, total }
   const questionStats = new Map<string, { subject: string; gradeYear: number; wrong: number; total: number }>()
+  let incompleteCorrections = 0
+  let evaluatedCorrections = 0
 
   for (const row of rows) {
     const payload = row.generationPayload as ExamGenerationResult
     const answers = row.answers as CorrectionAnswer[]
     const questionsByNumber = new Map(payload.questions.map((question) => [question.number, question]))
+    for (const question of payload.questions) {
+      if (question.source === 'enem_bank') officialEnemQuestionKeys.add(`${row.examId}:${question.number}`)
+      else if (question.saeb?.source === 'enem') alignedGeneratedQuestionKeys.add(`${row.examId}:${question.number}`)
+    }
+    const evaluatedItems = answers.filter((answer) => answerGradeOnTen(answer) !== null).length
+    const pendingItems = answers.length - evaluatedItems
     const grade = totalGrade(answers)
-    if (grade === null) continue
+    const identity = studentKey(row.classroomStudentId, row.studentName)
+    const groupKey = `${row.segment}:${row.gradeYear}:${row.subject}`
+    const coordinationGroup = coordinationGroups.get(groupKey) ?? {
+      key: groupKey, segment: row.segment, gradeYear: row.gradeYear, subject: row.subject,
+      grades: [], students: new Set<string>(), exams: new Set<number>(), reviewedCorrections: 0, incompleteCorrections: 0,
+    }
+    const schoolSegment = schoolSegments.get(row.segment) ?? {
+      key: row.segment, segment: row.segment, gradeYear: null, subject: null,
+      grades: [], students: new Set<string>(), exams: new Set<number>(), reviewedCorrections: 0, incompleteCorrections: 0,
+    }
+    for (const group of [coordinationGroup, schoolSegment]) {
+      group.reviewedCorrections++
+      group.students.add(identity)
+      group.exams.add(row.examId)
+      if (grade === null || pendingItems > 0) group.incompleteCorrections++
+      if (grade !== null) group.grades.push(grade)
+    }
+    coordinationGroups.set(groupKey, coordinationGroup)
+    schoolSegments.set(row.segment, schoolSegment)
+    if (grade === null) {
+      incompleteCorrections++
+      continue
+    }
+    evaluatedCorrections++
+    if (pendingItems > 0) incompleteCorrections++
 
     grades.push(grade)
     pushScore(bySubject, row.subject, grade)
-    pushScore(byGradeYear, `${row.gradeYear}º ano`, grade)
-    const studentProfile = studentProfiles.get(row.studentName) ?? {
+    pushScore(byGradeYear, gradeYearLabel(row.segment, row.gradeYear), grade)
+    const profileKey = identity
+    const studentProfile = studentProfiles.get(profileKey) ?? {
+      studentId: row.classroomStudentId,
       studentName: row.studentName,
       grades: [],
       subjects: {},
@@ -409,11 +543,20 @@ export async function GET(req: NextRequest) {
       dok: {},
       bncc: {},
       inep: {},
+      assessments: [],
     }
     studentProfile.grades.push(grade)
     bumpCount(studentProfile.subjects, row.subject)
     bumpCount(studentProfile.periods, periodLabel(row))
-    studentProfiles.set(row.studentName, studentProfile)
+    studentProfile.assessments.push({
+      examId: row.examId,
+      subject: row.subject,
+      period: periodLabel(row),
+      grade,
+      evaluatedItems,
+      pendingItems,
+    })
+    studentProfiles.set(profileKey, studentProfile)
 
     if (row.assignedTo) {
       const name = professorNameById.get(row.assignedTo) ?? `#${row.assignedTo}`
@@ -424,11 +567,9 @@ export async function GET(req: NextRequest) {
       const question = questionsByNumber.get(answer.questionNumber)
       if (!question) continue
 
-      // Nota por nível de Bloom: usa isCorrect (objetiva, binário 0/10)
-      // ou finalGrade (descritiva, 0-10) — sempre convertido pra escala
-      // 0-10 antes de entrar na média, senão os dois tipos não são
-      // comparáveis na mesma agregação.
-      const questionScore = answer.type === 'objetiva' ? (answer.isCorrect ? 10 : 0) : answer.finalGrade
+      // Nota por nível de Bloom: normaliza ambos os tipos para 0-10,
+      // respeitando o peso da questão (inclusive o padrão 1 ponto).
+      const questionScore = answerGradeOnTen(answer)
       if (questionScore !== null && questionScore !== undefined) {
         studentProfile.itemScoreSum += questionScore
         studentProfile.itemCount++
@@ -480,9 +621,9 @@ export async function GET(req: NextRequest) {
 
         const bnccCodes = Array.isArray(question.bnccCodes) ? question.bnccCodes.filter(Boolean) : []
         if (question.bnccStatus === 'mapeado' && bnccCodes.length > 0) {
-          const gradeYearLabel = `${row.gradeYear}º ano`
+          const yearLabel = gradeYearLabel(row.segment, row.gradeYear)
           bumpScoreCount(bnccBySubject, row.subject, questionScore)
-          bumpScoreCount(bnccByGradeYear, gradeYearLabel, questionScore)
+          bumpScoreCount(bnccByGradeYear, yearLabel, questionScore)
 
           for (const code of bnccCodes) {
             const profileBncc = (studentProfile.bncc[code] ??= { scoreSum: 0, count: 0, summary: question.bnccSummary ?? null })
@@ -504,7 +645,7 @@ export async function GET(req: NextRequest) {
             skill.scoreSum += questionScore
             skill.itemCount++
             bumpCount(skill.subjects, row.subject)
-            bumpCount(skill.gradeYears, gradeYearLabel)
+            bumpCount(skill.gradeYears, yearLabel)
             bumpScoreCount(skill.periods, period, questionScore)
             bnccSkills.set(code, skill)
             bnccMappedItemLinks++
@@ -515,8 +656,9 @@ export async function GET(req: NextRequest) {
 
         const enemQuestionId = question.enemBankRef?.questionId
         if (question.source === 'enem_bank' && enemQuestionId) {
+          officialEnemEvaluatedAnswers++
           const axis = inepAxisByQuestion.get(enemQuestionId)
-          if (axis && INEP_COGNITIVE_AXES.includes(axis.code as InepAxisCode)) {
+          if (axis?.code && INEP_COGNITIVE_AXES.includes(axis.code as InepAxisCode)) {
             const axisCode = axis.code as InepAxisCode
             bumpScoreCount(studentProfile.inep, axisCode, questionScore)
             const stat = (inepAxisStats[axisCode] ??= {
@@ -677,6 +819,10 @@ export async function GET(req: NextRequest) {
     summary: {
       classifiedItemCount: inepClassifiedItemCount,
       unclassifiedEnemItemCount: inepUnclassifiedEnemItemCount,
+      officialQuestionCount: officialEnemQuestionKeys.size,
+      officialClassifiedQuestionCount: inepAxisRows.filter((row) => row.areaCode && row.competencyNumber && row.skillCode && row.code).length,
+      alignedGeneratedQuestionCount: alignedGeneratedQuestionKeys.size,
+      evaluatedAnswerCount: officialEnemEvaluatedAnswers,
     },
     axes: INEP_COGNITIVE_AXES.map((code) => {
       const stat = inepAxisStats[code] ?? { scoreSum: 0, itemCount: 0, subjects: {}, periods: {} }
@@ -807,10 +953,21 @@ export async function GET(req: NextRequest) {
         Object.keys(profile.subjects).length < 2 ? 'Perfil baseado em apenas uma disciplina.' : null,
         bnccEntries.every((entry) => entry.itemCount < 3) ? 'BNCC sem amostra mínima por habilidade.' : null,
         dokEntries.length === 0 ? 'Sem DOK disponível para esta amostra.' : null,
-        inepEntries.length === 0 ? 'Sem questões ENEM com eixo INEP nesta amostra.' : null,
+        inepEntries.length === 0 && profile.assessments.some((assessment) => assessment.subject === 'Química')
+          ? 'Há questões oficiais ENEM no recorte, mas sem resposta avaliada para este aluno.'
+          : null,
       ].filter((item): item is string => Boolean(item))
 
+      const priorities = bnccInterventions.slice(0, 3).map((entry) => ({
+        code: entry.code,
+        summary: entry.summary,
+        accuracyPercent: entry.accuracyPercent,
+        itemCount: entry.itemCount,
+        action: `Retomar ${entry.code} e verificar novamente com itens equivalentes.`,
+      }))
+
       return {
+        studentId: profile.studentId,
         studentName: profile.studentName,
         overallAverage: avg(profile.grades),
         itemAccuracyPercent: percentFromScoreSum(profile.itemScoreSum, profile.itemCount),
@@ -826,13 +983,29 @@ export async function GET(req: NextRequest) {
           ? { level: sustainedDok.key, accuracyPercent: sustainedDok.accuracyPercent, itemCount: sustainedDok.itemCount }
           : null,
         inepHighlights: inepEntries.filter((entry) => entry.itemCount >= 2).slice(0, 2),
+        priorities,
+        assessments: profile.assessments.sort((a, b) => a.period.localeCompare(b.period) || a.subject.localeCompare(b.subject)),
+        evidence: {
+          assessmentCount: profile.assessments.length,
+          subjectCount: Object.keys(profile.subjects).length,
+          periodCount: Object.keys(profile.periods).length,
+          evaluatedItemCount: profile.itemCount,
+          pendingItemCount: profile.assessments.reduce((sum, assessment) => sum + assessment.pendingItems, 0),
+        },
         limitations,
       }
     })
     .sort((a, b) => a.studentName.localeCompare(b.studentName))
 
   return performanceJson({
-    overall: { avg: avg(grades), max: Math.max(...grades), min: Math.min(...grades), count: grades.length },
+    overall: grades.length ? { avg: avg(grades), max: Math.max(...grades), min: Math.min(...grades), count: grades.length } : null,
+    coverage: {
+      reviewedCorrections: rows.length,
+      evaluatedCorrections,
+      incompleteCorrections,
+      uniqueStudents: new Set(rows.map((row) => studentKey(row.classroomStudentId, row.studentName))).size,
+      uniqueExams: examIds.length,
+    },
     bySubject: mapAvg(bySubject),
     byGradeYear: mapAvg(byGradeYear),
     byBloomLevel: mapAvg(byBloomLevel),
@@ -843,6 +1016,10 @@ export async function GET(req: NextRequest) {
     bloomDokMatrix,
     soloDashboard,
     cognitiveProfiles,
+    management: isSuperuser ? {
+      coordinationGroups: [...coordinationGroups.values()].map(managementGroupRow).sort((a, b) => a.segment.localeCompare(b.segment) || (a.gradeYear ?? 0) - (b.gradeYear ?? 0) || (a.subject ?? '').localeCompare(b.subject ?? '', 'pt-BR')),
+      schoolSegments: [...schoolSegments.values()].map(managementGroupRow).sort((a, b) => a.segment.localeCompare(b.segment)),
+    } : { coordinationGroups: [], schoolSegments: [] },
     byProfessor: isSuperuser ? mapAvg(byProfessor) : {},
     topMissedQuestions,
   }, startedAt)

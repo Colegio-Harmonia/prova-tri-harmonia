@@ -36,7 +36,7 @@ export const dataTableFeatures = tableFeatures({
 })
 
 export type DataTableFeatures = typeof dataTableFeatures
-export type DataTableColumnDef<TData extends RowData> = ColumnDef<DataTableFeatures, TData>
+export type DataTableColumnDef<TData extends RowData> = ColumnDef<DataTableFeatures, TData, any>
 
 type DataTableProps<TData extends RowData> = {
   columns: DataTableColumnDef<TData>[]
