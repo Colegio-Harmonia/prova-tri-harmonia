@@ -23,3 +23,8 @@ scripts/*.xlsx
 # fica versionado, mesma lógica do package-lock.json).
 .agents/
 agent/
+
+# Cópias de segurança manuais e scripts descartáveis de debug (não versionar)
+backups/
+scripts/_tmp-*
+test_ocr_run.ts
