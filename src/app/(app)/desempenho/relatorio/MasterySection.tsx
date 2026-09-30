@@ -3,6 +3,7 @@
 import { createColumnHelper } from '@tanstack/react-table'
 import { DataTable, type DataTableFeatures } from '@/components/ui/data-table'
 import type { MasteryConsolidation, MasteryLevel, StudentMasteryRow } from '@/lib/curriculum/studentMastery'
+import MasteryRuleReminder from '@/components/pedagogy/MasteryRuleReminder'
 import MasteryCharts from './MasteryCharts'
 
 export type MasteryResponse = {
@@ -13,7 +14,7 @@ export type MasteryResponse = {
 }
 
 const MASTERY_LEVEL_LABELS: Record<MasteryLevel, string> = {
-  dominio: 'Domínio',
+  dominio: 'Domínio no bimestre',
   proximo_do_dominio: 'Próximo do domínio',
   em_desenvolvimento: 'Em desenvolvimento',
   evidencia_insuficiente: 'Evidência insuficiente',
@@ -44,20 +45,21 @@ const masteryColumns = [
 
 export default function MasterySection({ mastery, error: masteryError }: { mastery: MasteryResponse | null; error: string | null }) {
   return <>
+      <MasteryRuleReminder />
       {mastery && <MasteryCharts rows={mastery.rows} consolidated={mastery.consolidated} />}
 
       <section className="rounded border border-border bg-surface p-5">
         <h2 className="font-semibold text-content-primary">Domínio das habilidades planejadas</h2>
-        <p className="mt-2 text-sm text-content-secondary">Aproveitamento = pontos obtidos ÷ pontos possíveis nas questões revisadas da habilidade, respeitando o peso de cada questão e a nota parcial das discursivas.{mastery && ` Com menos de ${mastery.rules.minItemsForReading} itens a leitura fica como evidência insuficiente; domínio exige ao menos ${mastery.rules.minItemsForMastery} itens em ${mastery.rules.minAssessmentsForMastery} avaliações e ${mastery.rules.masteryPercent}% de aproveitamento.`}</p>
+        <p className="mt-2 text-sm text-content-secondary">Aproveitamento = pontos obtidos ÷ pontos possíveis nas questões revisadas da habilidade, respeitando o peso de cada questão e a nota parcial das discursivas.{mastery && ` Com menos de ${mastery.rules.minItemsForReading} itens a leitura fica como evidência insuficiente; domínio no bimestre exige ao menos ${mastery.rules.minItemsForMastery} itens em ${mastery.rules.minAssessmentsForMastery} avaliações do mesmo bimestre e ${mastery.rules.masteryPercent}% de aproveitamento.`}</p>
         {masteryError ? <p className="mt-3 rounded bg-status-warning-surface p-3 text-sm text-status-warning-content">{masteryError}</p> : mastery ? <div className="mt-4 space-y-4">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
             <div><p className="text-xs text-content-secondary">Planejadas</p><p className="text-xl font-semibold">{mastery.summary.plannedSkillCount}</p></div>
-            <div><p className="text-xs text-content-secondary">Domínio</p><p className="text-xl font-semibold">{mastery.summary.levelCounts.dominio}</p></div>
+            <div><p className="text-xs text-content-secondary">Domínio no bimestre</p><p className="text-xl font-semibold">{mastery.summary.levelCounts.dominio}</p></div>
             <div><p className="text-xs text-content-secondary">Próximo do domínio</p><p className="text-xl font-semibold">{mastery.summary.levelCounts.proximo_do_dominio}</p></div>
             <div><p className="text-xs text-content-secondary">Em desenvolvimento</p><p className="text-xl font-semibold">{mastery.summary.levelCounts.em_desenvolvimento}</p></div>
             <div><p className="text-xs text-content-secondary">Sem evidência suficiente</p><p className="text-xl font-semibold">{mastery.summary.levelCounts.sem_evidencia + mastery.summary.levelCounts.evidencia_insuficiente}</p></div>
           </div>
-          {mastery.summary.limitedBySampleCount > 0 && <p className="rounded bg-status-warning-surface p-3 text-sm text-status-warning-content">{mastery.summary.limitedBySampleCount} {mastery.summary.limitedBySampleCount === 1 ? 'habilidade tem' : 'habilidades têm'} aproveitamento alto, mas ainda sem itens ou avaliações suficientes para afirmar domínio.</p>}
+          {mastery.summary.limitedBySampleCount > 0 && <p className="rounded bg-status-warning-surface p-3 text-sm text-status-warning-content">{mastery.summary.limitedBySampleCount} {mastery.summary.limitedBySampleCount === 1 ? 'habilidade tem' : 'habilidades têm'} aproveitamento alto, mas ainda sem itens ou avaliações suficientes para afirmar domínio no bimestre.</p>}
           {mastery.consolidated.bySubjectBimester.length > 0 && <div className="overflow-x-auto"><table className="w-full text-sm"><caption className="sr-only">Domínio consolidado por disciplina e bimestre</caption><thead><tr className="text-left text-xs text-content-secondary"><th scope="col" className="py-1 pr-3">Disciplina</th><th scope="col" className="py-1 pr-3">Período</th><th scope="col" className="py-1 pr-3">Aproveitamento</th><th scope="col" className="py-1 pr-3">Itens / avaliações</th><th scope="col" className="py-1">Habilidades (domínio · próximo · em desenv. · sem evidência suficiente)</th></tr></thead><tbody>{[...mastery.consolidated.bySubjectBimester, ...mastery.consolidated.bySubject].map((group) => <tr key={`${group.academicYear}-${group.segment}-${group.gradeYear}-${group.subject}-${group.bimester ?? 'ano'}`} className={`border-t border-border ${group.bimester === null ? 'font-semibold' : ''}`}><td className="py-1 pr-3">{group.subject}</td><td className="py-1 pr-3">{group.bimester === null ? `Ano ${group.academicYear}` : `${group.bimester}º bim. / ${group.academicYear}`}</td><td className="py-1 pr-3">{formatMastery(group.masteryPercent)}</td><td className="py-1 pr-3">{group.itemCount} / {group.assessmentCount}</td><td className="py-1">{group.levelCounts.dominio} · {group.levelCounts.proximo_do_dominio} · {group.levelCounts.em_desenvolvimento} · {group.levelCounts.sem_evidencia + group.levelCounts.evidencia_insuficiente}</td></tr>)}</tbody></table></div>}
           {mastery.summary.outsidePlanCount > 0 && <p className="rounded bg-status-info-surface p-3 text-sm text-status-info-content">Há {mastery.summary.outsidePlanCount} {mastery.summary.outsidePlanCount === 1 ? 'habilidade avaliada' : 'habilidades avaliadas'} fora da fotografia do planejamento. Elas aparecem na tabela para conferência.</p>}
           <DataTable columns={masteryColumns} data={mastery.rows} searchableColumnId="habilidade" searchPlaceholder="Filtrar por habilidade, disciplina ou situação..." emptyMessage="Ainda não há planejamento ou evidência BNCC para este recorte." />

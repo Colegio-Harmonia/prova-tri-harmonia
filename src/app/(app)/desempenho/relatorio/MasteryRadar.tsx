@@ -15,8 +15,14 @@ const CATEGORY_CLASS: Record<SkillChartCategory, string> = {
   nao_avaliada: 'fill-surface stroke-content-muted',
 }
 
+/** Rótulo de "dominada" depende do recorte: no ano as avaliações dos bimestres se somam. */
+export type DominanceScope = 'bimestre' | 'ano'
+export function categoryLabel(category: SkillChartCategory, scope: DominanceScope) {
+  return category === 'dominada' ? (scope === 'ano' ? 'Domínio no ano' : 'Domínio no bimestre') : CATEGORY_LABEL[category]
+}
+
 export const CATEGORY_LABEL: Record<SkillChartCategory, string> = {
-  dominada: 'Dominada',
+  dominada: 'Domínio no bimestre',
   em_desenvolvimento: 'Em desenvolvimento',
   nao_avaliada: 'Ainda não avaliada',
 }
@@ -36,9 +42,9 @@ export function CategoryMarker({ category, preliminary, x = 8, y = 8, size = 6 }
   return <circle cx={x} cy={y} r={size * 0.85} className={cls} strokeDasharray={dash} fillOpacity={preliminary ? 0.35 : 1} />
 }
 
-export function MarkerLegend() {
+export function MarkerLegend({ scope = 'bimestre' }: { scope?: DominanceScope }) {
   return <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-content-secondary" aria-label="Legenda">
-    {(['dominada', 'em_desenvolvimento', 'nao_avaliada'] as const).map((category) => <li key={category} className="flex items-center gap-1.5"><svg width="16" height="16" aria-hidden="true"><CategoryMarker category={category} /></svg>{CATEGORY_LABEL[category]}</li>)}
+    {(['dominada', 'em_desenvolvimento', 'nao_avaliada'] as const).map((category) => <li key={category} className="flex items-center gap-1.5"><svg width="16" height="16" aria-hidden="true"><CategoryMarker category={category} /></svg>{categoryLabel(category, scope)}</li>)}
     <li className="flex items-center gap-1.5"><svg width="16" height="16" aria-hidden="true"><CategoryMarker category="em_desenvolvimento" preliminary /></svg>Contorno tracejado: leitura preliminar</li>
     <li className="flex items-center gap-1.5"><svg width="22" height="16" aria-hidden="true"><line x1="1" y1="8" x2="21" y2="8" className="stroke-content-primary" strokeWidth="1.5" strokeDasharray="4 3" /></svg>Meta: domínio integral (100%)</li>
   </ul>
