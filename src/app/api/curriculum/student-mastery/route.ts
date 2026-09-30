@@ -12,8 +12,8 @@ import {
   users,
 } from '@/db/schema'
 import { isStaffSuperuser } from '@/lib/auth/roles'
-import { answerGradeOnTen } from '@/lib/corrections/totalGrade'
-import { calculateStudentMastery, type ObservedMasteryEvidence, type PlannedMasterySkill } from '@/lib/curriculum/studentMastery'
+import { questionMaxGrade } from '@/lib/corrections/gradeNormalization'
+import { calculateStudentMastery, consolidateMastery, MASTERY_LEVELS, MASTERY_RULES, type MasteryEvidenceItem, type MasteryLevel, type PlannedMasterySkill } from '@/lib/curriculum/studentMastery'
 import { enrichBnccDescriptions } from '@/lib/curriculum/bnccDescriptions'
 import type { CorrectionAnswer } from '@/types/correction'
 import type { Segment } from '@/types/exam'
@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
     answers: examCorrections.answers,
   }).from(examCorrections).innerJoin(generatedExams, eq(examCorrections.examId, generatedExams.id)).where(and(...conditions))
 
-  const observedMap = new Map<string, ObservedMasteryEvidence>()
+  const evidence: MasteryEvidenceItem[] = []
   const observedScopes = new Map<string, { academicYear: number; segment: string; gradeYear: number; subject: string; bimester: number }>()
   for (const correction of corrections) {
     if (!correction.bimester) continue
@@ -86,18 +86,15 @@ export async function GET(req: NextRequest) {
     const questions = new Map((payload.questions ?? []).map((question) => [question.number, question]))
     const answers = Array.isArray(correction.answers) ? correction.answers as CorrectionAnswer[] : []
     for (const answer of answers) {
-      const score = answerGradeOnTen(answer)
       const question = questions.get(answer.questionNumber)
-      if (score === null || !question || question.bnccStatus !== 'mapeado') continue
+      if (!question || question.bnccStatus !== 'mapeado') continue
+      // Resposta ainda sem correção não é evidência (nem acerto nem erro).
+      const graded = answer.type === 'objetiva' ? answer.isCorrect !== null : answer.finalGrade !== null
+      if (!graded) continue
+      const possiblePoints = questionMaxGrade({ weight: answer.weight ?? question.weight })
+      const earnedPoints = answer.type === 'objetiva' ? (answer.isCorrect ? possiblePoints : 0) : Math.min(Math.max(answer.finalGrade ?? 0, 0), possiblePoints)
       const codes = [...new Set((question.bnccCodes ?? []).map((code) => code.trim().toUpperCase()).filter(Boolean))]
-      for (const code of codes) {
-        const evidenceKey = `${scopeKey(scope)}:${code}`
-        const current = observedMap.get(evidenceKey) ?? { ...scope, code, description: question.bnccSummary ?? null, scoreSum: 0, evidenceCount: 0 }
-        current.scoreSum += score
-        current.evidenceCount++
-        if (!current.description && question.bnccSummary) current.description = question.bnccSummary
-        observedMap.set(evidenceKey, current)
-      }
+      for (const code of codes) evidence.push({ ...scope, code, description: question.bnccSummary ?? null, examId: correction.examId, questionNumber: answer.questionNumber, earnedPoints, possiblePoints })
     }
   }
 
@@ -135,17 +132,18 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const rows = calculateStudentMastery(await enrichBnccDescriptions(plannedSkills), [...observedMap.values()])
+  const rows = calculateStudentMastery(await enrichBnccDescriptions(plannedSkills), evidence)
+  const levelCounts = Object.fromEntries(MASTERY_LEVELS.map((level) => [level, rows.filter((row) => row.level === level).length])) as Record<MasteryLevel, number>
   return NextResponse.json({
     rows,
+    consolidated: consolidateMastery(rows, evidence),
     summary: {
       plannedSkillCount: rows.filter((row) => row.planned).length,
-      observedSkillCount: rows.filter((row) => row.evidenceCount > 0).length,
-      domainCount: rows.filter((row) => row.status === 'dominio').length,
-      priorityCount: rows.filter((row) => row.status === 'prioridade').length,
-      insufficientCount: rows.filter((row) => row.status === 'amostra_insuficiente').length,
-      noEvidenceCount: rows.filter((row) => row.status === 'sem_evidencia').length,
+      observedSkillCount: rows.filter((row) => row.itemCount > 0).length,
       outsidePlanCount: rows.filter((row) => !row.planned).length,
+      limitedBySampleCount: rows.filter((row) => row.limitedBySample).length,
+      levelCounts,
     },
+    rules: MASTERY_RULES,
   })
 }

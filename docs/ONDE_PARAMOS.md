@@ -83,6 +83,23 @@ Especificação: [`docs/AUDITORIA_RELATORIOS_2026-09-29.md`](AUDITORIA_RELATORIO
   indisponível.
 - Pendente de aplicar: preenchimento das 45 habilidades já salvas sem
   descrição (SQL gerado em 30/09/2026, aguardando execução manual).
+- **Bloco 4 — domínio individual das habilidades** (branch
+  `feature/bloco-4-dominio-individual`, 30/09/2026). API
+  `GET /api/curriculum/student-mastery` (mesmo endereço, contrato novo):
+  - aproveitamento por habilidade = pontos obtidos ÷ pontos possíveis,
+    com peso da questão e nota parcial das discursivas;
+  - por habilidade: `itemCount` (questões distintas) e `assessmentCount`
+    (provas distintas);
+  - níveis `sem_evidencia`, `evidencia_insuficiente`, `em_desenvolvimento`,
+    `proximo_do_dominio`, `dominio`; regras em `MASTERY_RULES`
+    (`src/lib/curriculum/studentMastery.ts`): menos de 3 itens =
+    evidência insuficiente; domínio exige ≥ 80%, ≥ 4 itens e ≥ 2 avaliações,
+    senão fica "próximo do domínio" com `limitedBySample: true`;
+  - `consolidated.bySubjectBimester` e `consolidated.bySubject`.
+  - Relatório individual (`/desempenho/relatorio`) atualizado para os
+    níveis novos e a tabela consolidada.
+  - **Falta validar com dados reais** em DEV/produção (pesos distintos,
+    questão com dois códigos, correção parcial).
 
 **Próximos passos (em ordem):**
 1. `/planejamento`: tela de revisão/aprovação das versões e atribuição de
