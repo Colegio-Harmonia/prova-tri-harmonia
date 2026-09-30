@@ -122,5 +122,5 @@ src/
   `192.168.1.218:3011`; nenhum deploy de reconstrução deve usar produção como
   substituto.
 - O remoto oficial privado é
-  `https://github.com/Colegio-Harmonia/prova-tri.git`; `main` e `develop`
-  permanecem protegidas e recebem mudanças somente por Pull Request.
+  `https://github.com/Colegio-Harmonia/prova-tri-harmonia`; `main` é a única
+  branch permanente e recebe mudanças somente por Pull Request.

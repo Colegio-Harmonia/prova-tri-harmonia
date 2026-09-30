@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 30/09/2026, noite (Blocos 4 a 8 em produção).
+> Última atualização: 30/09/2026, noite (ambiente oficial normalizado).
 
 ## 1. Fonte da verdade
 
@@ -42,11 +42,16 @@ commitado que existia no Mac foi preservado no branch
 
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 
-- `main` = merge 76ae9f1 (PR #12), CI verde, publicado em produção.
+- `main` = `45c0b12` (PR #14), sincronizado com produção. O PR #13 atualizou
+  este documento para os Blocos 7 e 8; o PR #14 tornou explícito o rótulo
+  "Domínio no bimestre" sem alterar a regra pedagógica.
 - Produção: `prova-tri-web` saudável; `TYPESAFE_API_KEY` carregada; migrations
   **até 0046** aplicadas (0046 aplicada à mão via `psql` antes do deploy do
   Bloco 8); 50 habilidades salvas em `curriculum_plan_skills`, todas com
   descrição (backfill do texto oficial BNCC aplicado).
+- Checkout local oficial: `prova-tri-harmonia`, com remoto
+  `Colegio-Harmonia/prova-tri-harmonia`. O checkout antigo e a antiga cópia
+  `.prod-reporting-candidate` não são usados para desenvolvimento ou deploy.
 - Suíte: 77 arquivos / 373 testes, incluindo 3 de integração com Postgres
   real em memória (PGlite).
 - Dívida aberta relevante: **TD-018** (bundle de `/desempenho` 133,6 KiB,

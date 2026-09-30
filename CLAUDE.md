@@ -416,8 +416,9 @@ funcionou antes de seguir em frente). Pra isso não se repetir:
    outra tentativa.
 3. **Documentar decisões arquiteturais não-óbvias no CLAUDE.md do
    segmento certo**, à medida que são tomadas — não só em retrospecto.
-4. O repositório git deste projeto vive em `/Users/earsani/Desktop/prova-tri/.git`
-   (escopado só ao projeto). Nunca inicializar/usar um `.git` que cubra a
+4. O repositório git deste projeto vive na raiz do checkout oficial
+   `prova-tri-harmonia` (escopado só ao projeto). Nunca inicializar/usar um
+   `.git` que cubra a
    pasta inteira do usuário (`/Users/earsani`) — isso já aconteceu uma vez
    por acidente e arrisca versionar SSH keys/credenciais de outros
    projetos junto.
