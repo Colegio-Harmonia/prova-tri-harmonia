@@ -73,6 +73,17 @@ Especificação: [`docs/AUDITORIA_RELATORIOS_2026-09-29.md`](AUDITORIA_RELATORIO
   recorte do painel, validação de correção incompleta
   (`src/lib/corrections/{examCompletion,gradeValidation}.ts`).
 
+- Conferência das descrições com o Jev (TypeSafe) na prévia de
+  `/planejamento`: para cada habilidade com descrição na planilha, pergunta ao
+  Jev se o texto corresponde à habilidade oficial do código e marca
+  "Confere", "Conferir" ou "Não confere". Não bloqueia a importação.
+  Código em `src/lib/curriculum/skillDescriptionCheck.ts`, rota
+  `POST /api/curriculum/plans/preview`. **Requer `TYPESAFE_API_KEY` no
+  `.env.local` de produção**; sem ela, a tela avisa que a conferência está
+  indisponível.
+- Pendente de aplicar: preenchimento das 45 habilidades já salvas sem
+  descrição (SQL gerado em 30/09/2026, aguardando execução manual).
+
 **Próximos passos (em ordem):**
 1. `/planejamento`: tela de revisão/aprovação das versões e atribuição de
    responsáveis. As tabelas e a política já existem; falta a UI e a API de
