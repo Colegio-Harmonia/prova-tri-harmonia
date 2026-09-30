@@ -47,6 +47,8 @@ export type TrajectoryIntervention = {
   status: string
   dueDate: string | null
   createdAt: string
+  /** Habilidades que a intervenção retoma (Bloco 8); vazio = disciplina inteira. */
+  skillCodes?: string[]
 }
 
 type Tally = { earned: number; possible: number; items: number; assessments: Set<number>; students: Set<string> }
@@ -218,7 +220,9 @@ export function buildTrajectory(evidenceInput: TrajectoryEvidence[], planned: Tr
       .map((intervention) => {
         const before = tally()
         const after = tally()
-        for (const item of items) add(item.assessedAt < intervention.createdAt ? before : after, item)
+        // Com habilidades vinculadas, antes/depois olha só para elas.
+        const targeted = new Set((intervention.skillCodes ?? []).map((code) => code.trim().toUpperCase()))
+        for (const item of items) if (!targeted.size || targeted.has(item.code)) add(item.assessedAt < intervention.createdAt ? before : after, item)
         const change = pct(before) !== null && pct(after) !== null ? round1(pct(after)! - pct(before)!) : null
         return { ...intervention, before: { percent: pct(before), itemCount: before.items }, after: { percent: pct(after), itemCount: after.items }, change, reading: interventionReading(before, after, studentCount) }
       })

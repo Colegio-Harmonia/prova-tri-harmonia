@@ -159,6 +159,33 @@ Planejamento pedagógico interno (Prova TRI como fonte oficial).
 - **Entrega operacional pendente:** criar e aprovar o planejamento de 2027
   (copiar 2026 ou criar do zero) — ação da coordenação na tela.
 
+### Bloco 8 — `feature/bloco-8-operacao-institucional`
+Liga planejamento, avaliação e intervenção. **Exige a migration
+`drizzle/0046_planning_operations.sql` aplicada em produção ANTES do deploy**
+(intervenções ganham `skill_codes`/`bimester`; nova tabela
+`pedagogical_decision_log`) — sem ela, intervenções e trajetória quebram.
+1. Aviso na revisão da prova (`/gerar/[id]/revisar`) quando ela não cobre
+   habilidades planejadas do bimestre (server component, sem JS extra).
+   API: `GET /api/exams/[id]/plan-coverage`.
+2. Habilidades ainda não avaliadas no bimestre: seção "Operação do bimestre"
+   em `/planejamento/[id]` (cobertura + aproveitamento da turma por habilidade).
+3. Sugestões: "avaliar" (planejadas sem evidência) e "retomar" (turma < 60%
+   com ≥ 2 itens por aluno, sem intervenção aberta), com atalho para
+   registrar intervenção já preenchida. Pré-preencher `/gerar`/`/atividades`
+   com as habilidades ainda não existe (as telas escolhem por capítulo).
+4. Intervenções ligadas a habilidades (`skillCodes`); na trajetória (Bloco
+   6) o antes/depois passa a olhar só essas habilidades.
+5. Indicadores: aba "Indicadores" em `/planejamento` (professor: seus
+   planejamentos; gestão: escola, por segmento e disciplina) — aprovação,
+   cobertura do planejado, intervenções abertas/atrasadas.
+   API: `GET /api/curriculum/indicators`.
+6. Histórico de decisões (`pedagogical_decision_log`): criação, edição (com
+   habilidades +/−), transições, responsáveis, cópia de ano, intervenções.
+- Código: `operations.ts` (puro), `operationsData.ts`, `decisionLog.ts`.
+  Testes de integração com PGlite usando `src/test/pgliteDb.ts`, que aplica
+  as migrations e completa as colunas que `schema.ts` declara e a cadeia de
+  migrations não cria.
+
 ### Validação com dados reais (só leitura, agregados, 30/09/2026)
 - 1.786 correções revisadas, 322 alunos, 83 turmas, 14.563 respostas com
   BNCC, 0 linhas inválidas.

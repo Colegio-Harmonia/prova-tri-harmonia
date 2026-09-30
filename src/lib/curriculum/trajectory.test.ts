@@ -52,6 +52,15 @@ describe('buildTrajectory', () => {
     expect(t.interventions[1].reading).toBe('sem_avaliacao_posterior')
   })
 
+  it('intervenção ligada a habilidades compara antes/depois só nelas', () => {
+    const evidence = [...items('MA01', 1, 1, [0, 0]), ...items('MA02', 1, 1, [1, 1]), ...items('MA01', 2, 2, [1, 1]), ...items('MA02', 2, 2, [0, 0])]
+    const base = { id: 1, segment: scope.segment, gradeYear: 5, subject: 'Matemática', academicYear: 2026, action: 'Retomada MA01', ownerName: 'Prof.', status: 'concluida', dueDate: null, createdAt: '2026-03-01T00:00:00.000Z' }
+    const [whole] = buildTrajectory(evidence, [], [base])
+    expect(whole.interventions[0]).toMatchObject({ change: 0, reading: 'sem_mudanca_relevante' })
+    const [targeted] = buildTrajectory(evidence, [], [{ ...base, skillCodes: ['ma01'] }])
+    expect(targeted.interventions[0]).toMatchObject({ before: { percent: 0, itemCount: 2 }, after: { percent: 100, itemCount: 2 }, change: 100, reading: 'melhora_posterior' })
+  })
+
   it('na turma, a mesma questão de alunos diferentes conta para cada aluno', () => {
     const shared = { ...scope, code: 'MA01', bimester: 1, examId: 9, questionNumber: 1, possiblePoints: 1, assessedAt: '2026-02-01T00:00:00.000Z' }
     const rows = [{ ...shared, studentKey: 'a1', earnedPoints: 1 }, { ...shared, studentKey: 'a2', earnedPoints: 0 }, { ...shared, studentKey: 'a1', earnedPoints: 1 }]

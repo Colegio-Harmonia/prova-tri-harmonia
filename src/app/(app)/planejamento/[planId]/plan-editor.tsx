@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
 import { PLANNING_STATUS_LABELS, type PlanningStatus } from '@/lib/curriculum/planningPolicy'
 import { StatusBadge } from '../planning-list'
+import PlanOperations from './plan-operations'
 
 type Skill = { code: string; description: string | null; targetMasteryPercent: number }
 type Unit = { title: string; content: string | null; objectives: string | null; skills: Skill[] }
@@ -213,5 +214,7 @@ export default function PlanEditor({ planId }: { planId: number }) {
         </section>
       </aside>
     </div>
+
+    <PlanOperations plan={plan} canManage={permissions.manage} />
   </div>
 }
