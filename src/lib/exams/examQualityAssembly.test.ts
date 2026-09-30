@@ -1,38 +1,40 @@
 import { describe, expect, it } from 'vitest'
 import type { ExamQuestion } from '@/lib/gemini/examSchema'
 import type { PlannedQuestionSlot } from './contentPlan'
-import { assembleBestExamCandidates, validateExamAssembly } from './examQualityAssembly'
+import { validateExamAssembly } from './examQualityAssembly'
 
-function question(number: number, statement: string, unit = 1): ExamQuestion {
+function mathQuestion(number: number, base: number): ExamQuestion {
   return {
-    number, curriculumUnitRowIndex: unit, source: 'ia', type: 'objetiva', weight: 1, bloomLevel: 'aplicar', statement,
-    alternatives: [{ letter: 'A', text: 'a' }, { letter: 'B', text: 'b' }, { letter: 'C', text: 'c' }, { letter: 'D', text: 'd' }, { letter: 'E', text: 'e' }], correctLetter: 'A',
-    bnccCodes: [], bnccStatus: 'nao_mapeado', bnccSummary: null,
-    pedagogicalClassification: { dok: { categoryCode: 'DOK_2', confidence: 1, justification: 'teste', evidence: statement }, soloExpected: { categoryCode: 'UNIESTRUTURAL', confidence: 1, justification: 'teste', evidence: statement } },
-    saeb: { applicable: false, source: null, value: null, approximate: false }, needsImage: false,
-  }
+    number,
+    type: 'objetiva',
+    statement: `Considere os dados a seguir. De uma quantidade de ${base} unidades, determine o valor correspondente a 10%.`,
+    supportText: null,
+    solutionBlueprint: {
+      domain: 'percentage', variables: [], equations: [], values: { base, percent: 10 },
+      calculationSteps: [], derivedAnswer: String(base / 10), visualSpec: 'none',
+    },
+  } as unknown as ExamQuestion
 }
 
-const slots: PlannedQuestionSlot[] = [
-  { number: 1, unitRowIndex: 1, type: 'objetiva', visualAid: 'auto' },
-  { number: 2, unitRowIndex: 1, type: 'objetiva', visualAid: 'auto' },
-]
+const slots = [
+  { number: 1, type: 'objetiva', unitRowIndex: 1 },
+  { number: 2, type: 'objetiva', unitRowIndex: 1 },
+] as unknown as PlannedQuestionSlot[]
 
-describe('montagem global da prova', () => {
-  it('seleciona a candidata menos parecida com as questões já escolhidas', () => {
-    const selected = assembleBestExamCandidates(slots, [
-      { slotNumber: 1, candidateNumber: 1, question: question(1, 'Calcule a área de um terreno retangular.') },
-      { slotNumber: 2, candidateNumber: 1, question: question(2, 'Calcule a área de um terreno retangular usando metros.') },
-      { slotNumber: 2, candidateNumber: 2, question: question(2, 'Interprete os dados de consumo de água em uma residência.') },
-    ])
-    expect(selected[1].statement).toContain('consumo de água')
+describe('montagem de questões calculáveis', () => {
+  it('aceita templates matemáticos parecidos quando os dados canônicos são diferentes', () => {
+    const questions = [
+      { ...mathQuestion(1, 200), curriculumUnitRowIndex: 1 },
+      { ...mathQuestion(2, 500), curriculumUnitRowIndex: 1 },
+    ]
+    expect(validateExamAssembly(questions, slots).filter((issue) => issue.severity === 'bloqueante')).toEqual([])
   })
 
-  it('bloqueia enunciados praticamente repetidos na prova final', () => {
-    const issues = validateExamAssembly([
-      question(1, 'Calcule a área de um terreno retangular usando metros.'),
-      question(2, 'Calcule a área de um terreno retangular usando metros.'),
-    ], slots)
-    expect(issues.some((issue) => issue.severity === 'bloqueante' && issue.questionNumbers.includes(1) && issue.questionNumbers.includes(2))).toBe(true)
+  it('continua bloqueando o mesmo domínio com os mesmos dados', () => {
+    const questions = [
+      { ...mathQuestion(1, 200), curriculumUnitRowIndex: 1 },
+      { ...mathQuestion(2, 200), curriculumUnitRowIndex: 1 },
+    ]
+    expect(validateExamAssembly(questions, slots).some((issue) => issue.severity === 'bloqueante' && issue.reason.includes('mesmos dados'))).toBe(true)
   })
 })

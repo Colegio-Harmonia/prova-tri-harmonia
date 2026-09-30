@@ -1,3 +1,8 @@
+> ⚠️ **Atualização 30/09/2026**: o repositório oficial passou a ser
+> `https://github.com/Colegio-Harmonia/prova-tri-harmonia` (branch `main`).
+> Referências a `Colegio-Harmonia/prova-tri` e `develop` abaixo são históricas.
+> Estado atual e próximos passos: `docs/ONDE_PARAMOS.md`.
+
 # Fluxo de Git e Governança de Branches
 
 Este documento define como o repositório `prova-tri` é organizado a partir de

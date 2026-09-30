@@ -53,6 +53,18 @@ export function summarizeClassroomApiError(err: unknown): ClassroomApiErrorSumma
   }
 }
 
+export function isUnavailableCourseWorkError(err: unknown): boolean {
+  if (!axios.isAxiosError(err)) return false
+  const summary = summarizeClassroomApiError(err)
+  if (summary.httpStatus === 404 || summary.googleStatus === 'NOT_FOUND' || summary.googleStatus === 'FAILED_PRECONDITION') return true
+
+  const payload = err.response?.data
+  const message = payload && typeof payload === 'object' && 'error' in payload && payload.error && typeof payload.error === 'object' && 'message' in payload.error
+    ? String(payload.error.message)
+    : ''
+  return summary.httpStatus === 400 && /course.?work|atividade/i.test(message) && /(deleted|not found|does not exist|excluída|apagada)/i.test(message)
+}
+
 export type ClassroomCourse = {
   id: string
   name: string
@@ -263,6 +275,22 @@ export async function publishCourseWork(accessToken: string, courseId: string, c
     `https://classroom.googleapis.com/v1/courses/${courseId}/courseWork/${courseWorkId}`,
     { state: 'PUBLISHED' },
     { headers: { Authorization: `Bearer ${accessToken}` }, params: { updateMask: 'state' } },
+  )
+}
+
+export async function updateCourseWorkMaxPoints(accessToken: string, courseId: string, courseWorkId: string, maxPoints: number): Promise<void> {
+  await axios.patch(
+    `https://classroom.googleapis.com/v1/courses/${courseId}/courseWork/${courseWorkId}`,
+    { maxPoints },
+    { headers: { Authorization: `Bearer ${accessToken}` }, params: { updateMask: 'maxPoints' } },
+  )
+}
+
+export async function updateCourseWorkTitle(accessToken: string, courseId: string, courseWorkId: string, title: string): Promise<void> {
+  await axios.patch(
+    `https://classroom.googleapis.com/v1/courses/${courseId}/courseWork/${courseWorkId}`,
+    { title },
+    { headers: { Authorization: `Bearer ${accessToken}` }, params: { updateMask: 'title' } },
   )
 }
 

@@ -10,7 +10,10 @@ const PAGE_WIDTH = 210 * MM
 const PAGE_HEIGHT = 297 * MM
 const MARGIN = 12 * MM
 const MARKER_SIZE = 7 * MM
-const QR_SIZE = 27 * MM
+// O QR ocupa uma área física ampla para que a correção Q mantenha módulos
+// legíveis mesmo em scanners de 150–200 DPI. A margem de quatro módulos é o
+// quiet zone esperado por leitores independentes.
+const QR_SIZE = 42 * MM
 // Coordenadas aferidas no piloto impresso PTR1. Mantê-las junto ao gerador
 // impede que uma alteração visual quebre a leitura óptica silenciosamente.
 const OBJECTIVE_LEFT_X = 9.3 * MM
@@ -62,7 +65,7 @@ function drawFiducials(page: PDFPage) {
 }
 
 async function qrPng(token: string) {
-  const dataUrl = await QRCode.toDataURL(token, { errorCorrectionLevel: 'M', margin: 1, width: 360 })
+  const dataUrl = await QRCode.toDataURL(token, { errorCorrectionLevel: 'Q', margin: 4, width: 720 })
   return Uint8Array.from(Buffer.from(dataUrl.split(',')[1], 'base64'))
 }
 

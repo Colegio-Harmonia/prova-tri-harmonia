@@ -1,4 +1,5 @@
 import type { CorrectionAnswer } from '@/types/correction'
+import { questionMaxGrade } from '@/lib/corrections/gradeNormalization'
 
 // Indicador interno para itens autorais/IA. Não é TRI, não usa parâmetros
 // INEP e nunca compõe a nota TRI. A ponderação vem apenas da dificuldade
@@ -57,7 +58,8 @@ export function buildInternalEstimate(
     } else if (answer.finalGrade === null) {
       incompleteAnswers++
     } else {
-      weightedPoints += weight * Math.min(10, Math.max(0, answer.finalGrade)) / 10
+      const maximum = questionMaxGrade(answer)
+      weightedPoints += weight * Math.min(maximum, Math.max(0, answer.finalGrade)) / maximum
     }
   }
 

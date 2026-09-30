@@ -1,5 +1,6 @@
 import type { ExamQuestion } from '@/lib/gemini/examSchema'
 import type { PlannedQuestionSlot } from './contentPlan'
+import { diversityIssues, diversityProfile } from '@/lib/generation/coherence'
 
 export type QuestionCandidate = {
   slotNumber: number
@@ -31,6 +32,19 @@ export function questionSimilarity(first: ExamQuestion, second: ExamQuestion): n
   return intersection / new Set([...a, ...b]).size
 }
 
+function hasDistinctCanonicalData(first: ExamQuestion, second: ExamQuestion): boolean {
+  const left = diversityProfile(first)
+  const right = diversityProfile(second)
+  return Boolean(left.dataSignature && right.dataSignature && left.dataSignature !== right.dataSignature)
+}
+
+function assemblySimilarity(first: ExamQuestion, second: ExamQuestion): number {
+  // Templates determinísticos de Matemática são propositalmente parecidos;
+  // dados canônicos diferentes já são a prova estrutural de que são itens
+  // distintos. A repetição dos mesmos dados continua bloqueante abaixo.
+  return hasDistinctCanonicalData(first, second) ? 0 : questionSimilarity(first, second)
+}
+
 /**
  * Seleciona um único candidato por posição sem mudar o desenho aprovado da
  * prova. A decisão é determinística: candidatos semanticamente menos
@@ -42,8 +56,10 @@ export function assembleBestExamCandidates(slots: PlannedQuestionSlot[], candida
     const options = candidates.filter((candidate) => candidate.slotNumber === slot.number)
     if (!options.length) throw new Error(`Nenhum candidato válido foi gerado para a questão ${slot.number}.`)
     const winner = [...options].sort((left, right) => {
-      const leftScore = selected.reduce((max, question) => Math.max(max, questionSimilarity(left.question, question)), 0)
-      const rightScore = selected.reduce((max, question) => Math.max(max, questionSimilarity(right.question, question)), 0)
+      const leftBlocking = diversityIssues([...selected, left.question]).filter((issue) => issue.severity === 'bloqueante').length
+      const rightBlocking = diversityIssues([...selected, right.question]).filter((issue) => issue.severity === 'bloqueante').length
+      const leftScore = leftBlocking * 10 + selected.reduce((max, question) => Math.max(max, assemblySimilarity(left.question, question)), 0)
+      const rightScore = rightBlocking * 10 + selected.reduce((max, question) => Math.max(max, assemblySimilarity(right.question, question)), 0)
       return leftScore - rightScore || left.candidateNumber - right.candidateNumber
     })[0]
     selected.push({ ...winner.question, number: slot.number, curriculumUnitRowIndex: slot.unitRowIndex })
@@ -69,12 +85,13 @@ export function validateExamAssembly(questions: ExamQuestion[], slots: PlannedQu
 
   for (let first = 0; first < questions.length; first++) {
     for (let second = first + 1; second < questions.length; second++) {
-      const similarity = questionSimilarity(questions[first], questions[second])
+      const similarity = assemblySimilarity(questions[first], questions[second])
       if (similarity >= 0.82) {
         issues.push({ questionNumbers: [questions[first].number, questions[second].number], severity: 'bloqueante', reason: 'As questões têm enunciados excessivamente semelhantes.' })
       }
     }
   }
+  issues.push(...diversityIssues(questions))
   return issues
 }
 

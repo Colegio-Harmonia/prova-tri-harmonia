@@ -8,6 +8,7 @@ import type { CorrectionAnswer } from '@/types/correction'
 import { suggestGrade } from '@/lib/gemini/gradeSuggestion'
 import { isStaffSuperuser } from '@/lib/auth/roles'
 import { aiFailureResponse } from '@/lib/ai/routeFailure'
+import { questionMaxGrade } from '@/lib/corrections/gradeNormalization'
 
 const AI_SUGGESTION_CONCURRENCY = 2
 
@@ -27,8 +28,9 @@ async function mapWithConcurrency<T, R>(
 }
 
 // Gera a sugestão da IA pra todas as questões descritivas dessa correção
-// que já têm resposta transcrita mas ainda não têm sugestão — nunca
-// sobrescreve uma sugestão já gerada nem a nota final (editada ou não).
+// que já têm resposta transcrita mas ainda não têm sugestão. A sugestão
+// preenche a nota final quando o professor ainda não informou uma nota;
+// uma nota manual existente sempre tem prioridade.
 export async function POST(
   _req: NextRequest,
   props: { params: Promise<{ examId: string; correctionId: string }> }
@@ -58,9 +60,25 @@ export async function POST(
   const payload = exam.generationPayload as ExamGenerationResult
   const answers = correction.answers as CorrectionAnswer[]
 
-  const pending = answers.filter((a) => a.type === 'descritiva' && a.transcribedAnswer.trim() && a.aiSuggestedGrade === null)
+  // Corrige registros antigos em que a sugestão foi salva no card, mas não
+  // chegou ao campo finalGrade usado pelo input da tela.
+  const answersWithExistingSuggestions = answers.map((a) =>
+    a.type === 'descritiva' && a.finalGrade == null && a.aiSuggestedGrade !== null
+      ? { ...a, finalGrade: a.aiSuggestedGrade }
+      : a,
+  )
+  const hasBackfilledGrades = answersWithExistingSuggestions.some(
+    (answer, index) => answer.finalGrade !== answers[index]?.finalGrade,
+  )
+  const pending = answersWithExistingSuggestions.filter((a) => a.type === 'descritiva' && a.transcribedAnswer.trim() && a.aiSuggestedGrade === null)
   if (pending.length === 0) {
-    return NextResponse.json({ correction, suggested: 0 })
+    if (!hasBackfilledGrades) return NextResponse.json({ correction, suggested: 0 })
+    const [updated] = await db
+      .update(examCorrections)
+      .set({ answers: answersWithExistingSuggestions, updatedAt: new Date() })
+      .where(eq(examCorrections.id, correctionId))
+      .returning()
+    return NextResponse.json({ correction: updated, suggested: 0 })
   }
 
   let suggestions: Array<{ questionNumber: number; suggestion: Awaited<ReturnType<typeof suggestGrade>> }>
@@ -76,12 +94,9 @@ export async function POST(
           expectedAnswer: question.expectedAnswer ?? null,
           gradingCriteria: question.gradingCriteria ?? null,
           studentAnswer: a.transcribedAnswer,
+          maxGrade: questionMaxGrade(question),
         })
-        // A IA avalia sempre em 0–10. A nota guardada na correção, porém,
-        // usa a escala real da questão (por exemplo, 4,5/10 vira 0,45/1).
-        const maxGrade = question.weight ?? 1
-        const grade = Math.round(Math.min(maxGrade, Math.max(0, suggestion.grade / 10 * maxGrade)) * 100) / 100
-        return { questionNumber: a.questionNumber, suggestion: { ...suggestion, grade } }
+        return { questionNumber: a.questionNumber, suggestion }
       },
     )
   } catch (err) {
@@ -90,10 +105,18 @@ export async function POST(
   }
 
   const bySuggestion = new Map(suggestions.map((s) => [s.questionNumber, s.suggestion]))
-  const updatedAnswers: CorrectionAnswer[] = answers.map((a) => {
+  const updatedAnswers: CorrectionAnswer[] = answersWithExistingSuggestions.map((a) => {
     const s = bySuggestion.get(a.questionNumber)
     if (!s) return a
-    return { ...a, aiSuggestedGrade: s.grade, aiSuggestedFeedback: s.feedback }
+    return {
+      ...a,
+      weight: a.weight ?? questionMaxGrade(payload.questions.find((question) => question.number === a.questionNumber)!),
+      aiSuggestedRawGrade: s.rawGrade,
+      aiSuggestedGradeScale: s.sourceScale,
+      aiSuggestedGrade: s.grade,
+      aiSuggestedFeedback: s.feedback,
+      finalGrade: a.finalGrade ?? s.grade,
+    }
   })
 
   const [updated] = await db

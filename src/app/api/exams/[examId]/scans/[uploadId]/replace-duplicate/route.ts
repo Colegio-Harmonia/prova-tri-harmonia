@@ -10,6 +10,7 @@ import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { enqueuePontuarProvaJob } from '@/lib/queue/enqueue'
 import { queueDiscursiveTranscriptions } from '@/lib/scan-ingest/transcriptionQueue'
 import type { CorrectionAnswer } from '@/types/correction'
+import { questionMaxGrade } from '@/lib/corrections/gradeNormalization'
 
 /** Torna um reenvio deliberadamente a única leitura oficial daquela folha.
  * A leitura anterior é preservada apenas para auditoria, mas deixa de ser
@@ -66,7 +67,8 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
       if (!reading?.suggestedLetter) return answer
       const transcribedAnswer = reading.suggestedLetter.trim().toUpperCase()
       const isCorrect = transcribedAnswer === (answer.correctLetter ?? '').trim().toUpperCase()
-      return { ...answer, transcribedAnswer, isCorrect, finalGrade: isCorrect ? 10 : 0 }
+      const maximum = questionMaxGrade(answer)
+      return { ...answer, weight: maximum, transcribedAnswer, isCorrect, finalGrade: isCorrect ? maximum : 0 }
     }) as CorrectionAnswer[]
     await tx.update(examCorrections).set({ answers, scoreResult: null, status: 'pendente', gradeReturnedAt: null, updatedAt: new Date() }).where(eq(examCorrections.id, assignment.examCorrectionId))
     await tx.insert(examScanAuditEvents).values({ examId, uploadId, action: 'duplicate_scan_replaced', actorId: access.currentUser.id, metadata: { assignmentId: assignment.id, correctionId: assignment.examCorrectionId } })

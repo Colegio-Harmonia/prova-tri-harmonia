@@ -38,14 +38,14 @@ export async function GET(_request: Request, { params }: { params: Promise<{ cou
 
     const [students, corrections] = await Promise.all([
       listStudentsInCourse(session.googleAccessToken, courseId),
-      db.select({ examId: examCorrections.examId, classroomStudentId: examCorrections.classroomStudentId, status: examCorrections.status, answers: examCorrections.answers })
+      db.select({ examId: examCorrections.examId, classroomStudentId: examCorrections.classroomStudentId, status: examCorrections.status, attendanceStatus: examCorrections.attendanceStatus, answers: examCorrections.answers })
         .from(examCorrections)
         .where(inArray(examCorrections.examId, exams.map((exam) => exam.id))),
     ])
 
     const byStudent = new Map<string, { corrected: number; grades: number[] }>()
     for (const correction of corrections) {
-      if (!correction.classroomStudentId || correction.status !== 'revisado') continue
+      if (!correction.classroomStudentId || correction.attendanceStatus === 'ausente' || correction.status !== 'revisado') continue
       const item = byStudent.get(correction.classroomStudentId) ?? { corrected: 0, grades: [] }
       item.corrected += 1
       const grade = totalGrade(correction.answers as CorrectionAnswer[])

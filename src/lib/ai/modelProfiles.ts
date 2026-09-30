@@ -14,12 +14,12 @@ export type ActiveAiModel = {
 }
 
 const fallbacks: Record<AiPurpose, ActiveAiModel> = {
-  text_generation: { id: null, provider: 'deepseek', model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash', inputCostMicrousdPerMillion: null, outputCostMicrousdPerMillion: null, imageCostMicrousd: null },
+  text_generation: { id: null, provider: 'deepseek', model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash', inputCostMicrousdPerMillion: 150000, outputCostMicrousdPerMillion: 600000, imageCostMicrousd: null },
   image_generation: { id: null, provider: 'gemini', model: process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image', inputCostMicrousdPerMillion: null, outputCostMicrousdPerMillion: null, imageCostMicrousd: null },
   image_validation: { id: null, provider: 'gemini', model: process.env.GEMINI_VISION_MODEL || 'gemini-2.5-flash', inputCostMicrousdPerMillion: null, outputCostMicrousdPerMillion: null, imageCostMicrousd: null },
   // OCR manuscrito é uma finalidade própria: a gestão pode escolher e pausar
   // seu modelo sem afetar a validação visual de ilustrações.
-  scan_transcription: { id: null, provider: 'gemini', model: process.env.GEMINI_SCAN_TRANSCRIPTION_MODEL || 'gemini-3.5-flash-lite', inputCostMicrousdPerMillion: null, outputCostMicrousdPerMillion: null, imageCostMicrousd: null },
+  scan_transcription: { id: null, provider: 'gemini', model: process.env.GEMINI_SCAN_TRANSCRIPTION_MODEL || 'gemini-3.6-flash', inputCostMicrousdPerMillion: 375000, outputCostMicrousdPerMillion: 1875000, imageCostMicrousd: null },
 }
 
 export async function activeAiModel(purpose: AiPurpose): Promise<ActiveAiModel> {

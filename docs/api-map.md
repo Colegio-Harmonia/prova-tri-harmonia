@@ -53,6 +53,7 @@
 | POST | `/api/exams/[examId]/corrections` | correção | cria registro de aluno; só após prova aplicada |
 | POST | `/api/exams/[examId]/corrections/import` | turma | importa roster do Classroom para a prova vinculada |
 | PATCH | `/api/exams/[examId]/corrections/[correctionId]` | correção | atualiza respostas e revisão |
+| PATCH | `/api/exams/[examId]/corrections/[correctionId]/attendance` | correção | marca ou desfaz ausência; não gera nota nem desempenho |
 | DELETE | `/api/exams/[examId]/corrections/[correctionId]` | correção | remove correção autorizada |
 | POST | `/api/exams/[examId]/corrections/[correctionId]/suggest` | correção | sugestão IA para resposta discursiva; não decide nota automaticamente |
 | POST | `/api/exams/[examId]/return-grades` | turma | cria/reutiliza atividade e lança notas; requer confirmação da UI |

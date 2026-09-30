@@ -1,6 +1,49 @@
 import type { ExamQuestion } from '@/lib/gemini/examSchema'
+import { comparableNumber, computeCanonicalDomain, isCanonicalDomainId } from '@/lib/generation/domains'
 
 type Blueprint = NonNullable<ExamQuestion['solutionBlueprint']>
+
+function normalizeForCompare(value: string): string {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * Valida a ficha técnica usando o motor de domínios canônicos (o mesmo do
+ * pipeline fragmentado). Cobre os domínios que antes caíam em `other`/
+ * `ratio_proportion` sem recalculador — a classe de bug da prova 331.
+ */
+function validateCanonicalBlueprint(question: ExamQuestion, blueprint: Blueprint): string[] {
+  const prefix = `Questão ${question.number}`
+  if (!isCanonicalDomainId(blueprint.domain)) return []
+  let computation
+  try {
+    computation = computeCanonicalDomain(blueprint.domain, blueprint.values)
+  } catch (error) {
+    return [`${prefix}: a ficha técnica não forma um modelo ${blueprint.domain} recalculável (${error instanceof Error ? error.message : 'entrada inválida'}).`]
+  }
+  const tolerance = Math.max(1e-6, Math.abs(computation.answer.numeric) * 1e-6)
+  const matches = (text: string): boolean => {
+    const normalized = normalizeForCompare(text)
+    if (computation.answer.category) return normalized.includes(normalizeForCompare(computation.answer.category))
+    const parsed = comparableNumber(text)
+    return (parsed !== null && Math.abs(parsed - computation.answer.numeric) <= tolerance) || normalized.includes(normalizeForCompare(computation.answer.display))
+  }
+
+  const issues: string[] = []
+  if (!matches(blueprint.derivedAnswer)) {
+    issues.push(`${prefix}: a resposta derivada da ficha técnica não confere com o cálculo do modelo (${computation.answer.display}).`)
+  }
+  if (question.type === 'objetiva' && question.correctLetter && question.alternatives) {
+    const alternative = question.alternatives.find((candidate) => candidate.letter === question.correctLetter)
+    if (!alternative) issues.push(`${prefix}: alternativa do gabarito não encontrada.`)
+    else if (!matches(alternative.text)) issues.push(`${prefix}: a alternativa marcada no gabarito não corresponde à solução calculada (${computation.answer.display}).`)
+  }
+  if (question.type === 'descritiva') {
+    if (!question.expectedAnswer || !matches(question.expectedAnswer)) issues.push(`${prefix}: resposta esperada descritiva não registra a solução calculada na ficha técnica.`)
+    if (!question.gradingCriteria?.trim()) issues.push(`${prefix}: critérios de correção são obrigatórios para questão descritiva com cálculo.`)
+  }
+  return issues
+}
 
 function normalizeNumber(value: number): string {
   return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(8)))
@@ -98,10 +141,19 @@ export function validateSolutionBlueprint(question: ExamQuestion): string[] {
   const blueprint = question.solutionBlueprint
   if (!blueprint) return [`Questão ${question.number}: falta a ficha técnica de solução (solutionBlueprint).`]
   let values: Record<string, number> | null = null
-  if (blueprint.domain === 'linear_system') values = solveTwoByTwo(blueprint.equations)
-  else values = numberValuesFor(blueprint.domain, blueprint.values)
+  if (isCanonicalDomainId(blueprint.domain)) {
+    if (blueprint.domain !== 'linear_system') return validateCanonicalBlueprint(question, blueprint)
+    // linear_system aceita o formato legado (equations "ax+by=c") ou o
+    // canônico (values a1..c2) recalculado pelo motor determinístico.
+    values = solveTwoByTwo(blueprint.equations) ?? null
+    if (!values) return validateCanonicalBlueprint(question, blueprint)
+  } else {
+    values = numberValuesFor(blueprint.domain, blueprint.values)
+  }
 
-  if (blueprint.domain !== 'other' && blueprint.domain !== 'ratio_proportion' && !values) {
+  // Os domínios canônicos (inclusive ratio_proportion) já retornaram acima.
+  // Aqui só resta linear_system (validado por equations) ou `other` legado.
+  if (blueprint.domain !== 'other' && !values) {
     return [`Questão ${question.number}: a ficha técnica não contém um modelo ${blueprint.domain} determinístico e recalculável.`]
   }
   if (!values) return []

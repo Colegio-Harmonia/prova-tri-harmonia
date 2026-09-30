@@ -3,6 +3,7 @@ import type { CorrectionAnswer } from '@/types/correction'
 import { scoringMethodForQuestions, TRI_MIN_CALIBRATED_COVERAGE } from './scoringPolicy'
 import { scorePercentual } from './percentualScorer'
 import { buildTriEstimate, estimateThetaEap, probability3pl, thetaToEnemScale, type TriItem } from './triScorer'
+import { totalGrade } from '@/lib/corrections/totalGrade'
 
 function objetiva(n: number, isCorrect: boolean | null): CorrectionAnswer {
   return {
@@ -15,6 +16,7 @@ function objetiva(n: number, isCorrect: boolean | null): CorrectionAnswer {
     aiSuggestedFeedback: null,
     finalGrade: isCorrect === null ? null : isCorrect ? 10 : 0,
     finalFeedback: null,
+    weight: 10,
   }
 }
 
@@ -29,6 +31,7 @@ function descritiva(n: number, finalGrade: number | null): CorrectionAnswer {
     aiSuggestedFeedback: null,
     finalGrade,
     finalFeedback: null,
+    weight: 10,
   }
 }
 
@@ -65,6 +68,24 @@ describe('scorePercentual', () => {
 
   it('prova sem respostas dá 0 sem dividir por zero', () => {
     expect(scorePercentual([]).percent).toBe(0)
+  })
+
+  it('mantém objetivas e dissertativas na mesma escala quando o peso padrão é 1', () => {
+    const answers = [
+      { ...objetiva(1, true), weight: 1, finalGrade: 1 },
+      { ...descritiva(2, 1), weight: 1 },
+    ]
+    expect(totalGrade(answers)).toBe(10)
+    expect(scorePercentual(answers).percent).toBe(100)
+  })
+
+  it('respeita pesos explícitos sem favorecer o tipo da questão', () => {
+    const answers = [
+      { ...objetiva(1, true), weight: 2, finalGrade: 2 },
+      { ...descritiva(2, 1), weight: 1 },
+    ]
+    expect(scorePercentual(answers).percent).toBe(100)
+    expect(scorePercentual([{ ...objetiva(1, false), weight: 2, finalGrade: 0 }, { ...descritiva(2, 1), weight: 1 }]).percent).toBe(33.3)
   })
 })
 

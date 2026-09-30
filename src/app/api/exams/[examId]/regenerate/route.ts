@@ -4,17 +4,19 @@ import { db } from '@/db/client'
 import { generatedExams } from '@/db/schema'
 import { auth } from '@/auth/auth'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
-import { buildExamPrompt } from '@/lib/gemini/promptBuilder'
-import { examGenerationResultSchema, GEMINI_RESPONSE_SCHEMA, type ExamGenerationResult } from '@/lib/gemini/examSchema'
-import { validateExamResult } from '@/lib/gemini/examValidator'
+import { computeQuestionSplit } from '@/lib/gemini/promptBuilder'
+import type { ExamQuestion } from '@/lib/gemini/examSchema'
 import { attachImagesToExam, RequiredQuestionImageError } from '@/lib/images/questionImageService'
 import { buildBankExamQuestions } from '@/lib/gemini/enemBankMerge'
 import { authorizeExamAccess } from '@/lib/exams/authorizeExamAccess'
 import { persistGeneratedQuestionClassifications } from '@/lib/pedagogical/generatedQuestionClassificationService'
-import { generateValidatedStructuredContent, StructuredGenerationError } from '@/lib/gemini/structuredRepair'
+import { StructuredGenerationError } from '@/lib/gemini/structuredRepair'
 import { aiFailureResponse } from '@/lib/ai/routeFailure'
 import { isPedagogicalQualityGateEnabled } from '@/lib/pedagogical/generationQualityGate'
-import { validateGeneratedExamPedagogicalFidelity } from '@/lib/pedagogical/generationQualityGateService'
+import { runQuestionQualityTest } from '@/lib/exams/questionQualityTest'
+import { QUALITY_REPORT_VERSION } from '@/lib/exams/qualityReport'
+import { coherenceIssues, EXAM_OVERLAP_ALERT, EXAM_OVERLAP_BLOCK, questionCoherenceText, textSimilarity } from '@/lib/generation'
+import { generateQuestionWithUnifiedFlow } from '@/lib/exams/unifiedQuestionGeneration'
 
 export async function POST(_req: NextRequest, props: { params: Promise<{ examId: string }> }) {
   const params = await props.params;
@@ -40,48 +42,88 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
     let issues: string[] = []
     let unmappedWarnings: string[] = []
     let alternativesCount = exam.segment === 'anos-iniciais' ? 4 : 5
+    let curriculum: Awaited<ReturnType<typeof getCurriculumForExam>> | null = null
 
     if (aiCount > 0) {
       const qualityGateEnabled = isPedagogicalQualityGateEnabled()
-      const curriculum = await getCurriculumForExam({
+      const activeCurriculum = await getCurriculumForExam({
         segment: exam.segment,
         gradeYear: exam.gradeYear,
         subject: exam.subject,
         bimester: exam.bimester ?? undefined,
       })
+      curriculum = activeCurriculum
 
-      const genParams = { questionCount: aiCount }
-      const prompt = await buildExamPrompt(curriculum, genParams)
-      const generated = await generateValidatedStructuredContent<ExamGenerationResult, ExamGenerationResult>({
-        context: 'exams/regenerate',
-        prompt,
-        responseSchema: GEMINI_RESPONSE_SCHEMA,
-        zodSchema: examGenerationResultSchema,
-        validate: async (parsedExam) => {
-          const validation = validateExamResult(parsedExam, curriculum, { ...genParams, enforcePedagogicalCompleteness: qualityGateEnabled })
-          if (validation.issues.length || !qualityGateEnabled) {
-            return { value: validation.corrected, issues: validation.issues, warnings: validation.warnings }
-          }
-          const fidelity = await validateGeneratedExamPedagogicalFidelity(curriculum, validation.corrected)
-          return {
-            value: fidelity.corrected,
-            issues: fidelity.issues,
-            warnings: [...validation.warnings, ...fidelity.warnings],
-          }
+      const split = computeQuestionSplit(aiCount)
+      const generatedQuestions: ExamQuestion[] = []
+      for (let index = 0; index < aiCount; index++) {
+        const questionNumber = index + 1
+        const questionType = index < split.objectiveCount ? 'objetiva' as const : 'descritiva' as const
+        const priorText = generatedQuestions.slice(-5).map((question) => question.statement.slice(0, 200)).join(' | ')
+        let accepted = null
+        for (let attempt = 0; attempt < 2 && !accepted; attempt++) {
+          const generated = await generateQuestionWithUnifiedFlow({
+            curriculum: activeCurriculum,
+            questionNumber,
+            type: questionType,
+            instruction: [
+              `regenerar questão ${questionNumber}; tipo ${questionType}`,
+              priorText ? `não repita estes enunciados: ${priorText}` : null,
+              attempt ? 'Use outro cenário e outra redação; a versão anterior ficou semelhante a outra questão.' : null,
+            ].filter(Boolean).join('; '),
+          })
+          const worst = generatedQuestions.reduce(
+            (max, question) => Math.max(max, textSimilarity(questionCoherenceText(generated.question), questionCoherenceText(question))),
+            0,
+          )
+          warnings.push(...generated.warnings)
+          if (worst >= EXAM_OVERLAP_BLOCK && attempt === 0) continue
+          if (worst >= EXAM_OVERLAP_ALERT) warnings.push(`Questão ${questionNumber}: semelhança de ${Math.round(worst * 100)}% com outra questão; confira na revisão.`)
+          accepted = generated.question
+        }
+        if (!accepted) throw new Error(`Questão ${questionNumber}: não foi possível obter uma versão distinta.`)
+        generatedQuestions.push(accepted)
+      }
+      const examWithImages = await attachImagesToExam({
+        metadata: {
+          segment: exam.segment,
+          gradeYear: exam.gradeYear,
+          subject: exam.subject,
+          bimester: exam.bimester ?? null,
+          questionCount: generatedQuestions.length,
+          objectiveCount: generatedQuestions.filter((question) => question.type === 'objetiva').length,
+          discursiveCount: generatedQuestions.filter((question) => question.type === 'descritiva').length,
+          alternativesCount,
         },
-      })
-      const examWithImages = await attachImagesToExam(generated.value, qualityGateEnabled
-        ? { requireResolvedImages: true, maxAttemptsPerImage: 2 }
-        : undefined)
+        questions: generatedQuestions,
+      }, qualityGateEnabled ? { requireResolvedImages: true, maxAttemptsPerImage: 2, subject: exam.subject } : { subject: exam.subject })
       aiQuestions = examWithImages.questions
-      warnings = generated.warnings
-      if (generated.repaired) warnings.push(`Resposta da IA validada após reparo (${generated.attempts} tentativa(s)).`)
-      unmappedWarnings = curriculum.unmappedWarnings
       alternativesCount = examWithImages.metadata.alternativesCount
+
+      unmappedWarnings = activeCurriculum.unmappedWarnings
+    }
+
+    for (const issue of coherenceIssues(aiQuestions)) {
+      warnings.push(`Coerência da prova: ${issue.reason}`)
     }
 
     const bankQuestions = await buildBankExamQuestions(bankIds, aiQuestions.length + 1)
     const allQuestions = [...aiQuestions, ...bankQuestions]
+
+    // Regenerar apagava o relatório de qualidade e deixava a prova sem como
+    // ser aprovada. Reauditamos o conjunto final e persistimos o relatório
+    // canônico junto do payload.
+    if (!curriculum) {
+      curriculum = await getCurriculumForExam({
+        segment: exam.segment,
+        gradeYear: exam.gradeYear,
+        subject: exam.subject,
+        bimester: exam.bimester ?? undefined,
+      })
+    }
+    const quality = await runQuestionQualityTest(curriculum, allQuestions)
+    warnings = [...warnings, ...quality.warnings]
+
     const examWithBank = {
       metadata: {
         segment: exam.segment,
@@ -92,6 +134,13 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
         objectiveCount: allQuestions.filter((q) => q.type === 'objetiva').length,
         discursiveCount: allQuestions.filter((q) => q.type === 'descritiva').length,
         alternativesCount,
+        qualityTest: {
+          version: QUALITY_REPORT_VERSION,
+          checkedAt: new Date().toISOString(),
+          repairedQuestionNumbers: [],
+          warnings: quality.warnings,
+          reports: [{ phase: 'Auditoria após regeneração', results: quality.report }],
+        },
       },
       questions: allQuestions,
     }

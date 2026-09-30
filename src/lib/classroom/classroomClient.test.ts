@@ -1,15 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ post: vi.fn(), isAxiosError: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  post: vi.fn(),
+  isAxiosError: vi.fn(),
+  create: vi.fn(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() })),
+}))
 
 vi.mock('axios', () => ({
   default: {
     post: mocks.post,
     isAxiosError: mocks.isAxiosError,
+    create: mocks.create,
   },
 }))
 
-import { createCourseWorkWithLinkMaterial, summarizeClassroomApiError } from './classroomClient'
+import { createCourseWorkWithLinkMaterial, isUnavailableCourseWorkError, summarizeClassroomApiError } from './classroomClient'
 
 describe('summarizeClassroomApiError', () => {
   it('keeps only safe provider identifiers for an Axios Classroom error', () => {
@@ -36,5 +41,12 @@ describe('createCourseWorkWithLinkMaterial', () => {
       { title: 'Atividade', description: 'Descrição', workType: 'ASSIGNMENT', maxPoints: 4, state: 'DRAFT', materials: [{ link: { url: 'https://drive.google.com/open?id=arquivo-1', title: 'Atividade.pdf' } }] },
       { headers: { Authorization: 'Bearer token' } },
     )
+  })
+})
+
+describe('isUnavailableCourseWorkError', () => {
+  it('reconhece atividade apagada pelo Classroom', () => {
+    mocks.isAxiosError.mockReturnValue(true)
+    expect(isUnavailableCourseWorkError({ response: { status: 400, data: { error: { status: 'FAILED_PRECONDITION', message: 'CourseWork was deleted' } } } })).toBe(true)
   })
 })

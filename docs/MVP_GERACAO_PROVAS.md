@@ -291,9 +291,11 @@ nunca autoritativa.
    uma turma real do Classroom de uma vez (em vez de cadastrar aluno
    manualmente — divergência real corrigida no mesmo dia que foi
    descoberta), corrige por aluno/questão, "Salvar progresso" (mantém
-   `pendente`) ou "Concluir correção" (marca `revisado`) — só correções
-   `revisado` entram na média/lançamento de nota.
-9. **Lançamento de nota** (`/turmas/[courseId]`, 1 clique, com
+   `pendente`), "Concluir correção" (marca `revisado`) ou "Marcar como
+   ausente". Ausentes encerram a participação, mas não entram na média nem
+   no lançamento de nota.
+9. **Lançamento de nota** (card destacado no topo de
+   `/gerar/[examId]/corrigir`, 1 clique, com
    confirmação explícita porque é ação visível pro aluno imediatamente):
    cria a atividade no Classroom (1x, `state:PUBLISHED` — obrigatório
    pra gerar 1 `StudentSubmission` por aluno matriculado), preenche
@@ -325,7 +327,7 @@ nunca autoritativa.
 | `/api/exams/[examId]/corrections/import` | POST | Importa o roster inteiro da turma vinculada de uma vez (idempotente). |
 | `/api/exams/[examId]/corrections/[correctionId]` | PATCH, DELETE | Salva respostas/notas por questão; recalcula `isCorrect` no servidor. |
 | `/api/exams/[examId]/corrections/[correctionId]/suggest` | POST | Sugestão de nota por IA (DeepSeek) pras questões descritivas ainda sem sugestão. |
-| `/api/exams/[examId]/return-grades` | POST | Cria atividade (1x) + lança + tenta devolver nota de todo aluno `revisado` com roster — dispara Chat Gatilho 2. |
+| `/api/exams/[examId]/return-grades` | POST | Cria/reutiliza atividade (1x) + lança notas dos alunos `revisado`; ausentes são ignorados e a ação exige que a prova esteja concluída — dispara Chat Gatilho 2. |
 | `/api/enem-bank/search` | GET | Busca questões reais do banco ENEM (filtros). |
 | `/api/enem-bank/skills` | GET | Lista habilidades oficiais por área (popula dropdown). |
 | `/api/stats/dashboard` | GET | Estatísticas gerais (todas as provas), inclui `revisao_concluida` no `byStatus`. |

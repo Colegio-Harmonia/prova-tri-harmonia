@@ -24,6 +24,24 @@ export const users = pgTable('users', {
   lastLoginAt: timestamp('last_login_at'),
 })
 
+export const pedagogicalInterventions = pgTable('pedagogical_interventions', {
+  id: serial('id').primaryKey(),
+  segment: text('segment', { enum: ['anos-iniciais', 'anos-finais', 'ensino-medio'] }).notNull(),
+  gradeYear: integer('grade_year').notNull(),
+  subject: text('subject').notNull(),
+  academicYear: integer('academic_year'),
+  action: text('action').notNull(),
+  ownerName: text('owner_name').notNull(),
+  dueDate: text('due_date'),
+  status: text('status', { enum: ['planejada', 'em_andamento', 'concluida'] }).notNull().default('planejada'),
+  createdBy: integer('created_by').references(() => users.id).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => ({
+  scopeIdx: index('pedagogical_interventions_scope_idx').on(table.academicYear, table.segment, table.gradeYear, table.subject),
+  statusIdx: index('pedagogical_interventions_status_idx').on(table.status, table.dueDate),
+}))
+
 // Uma instalação é a conversa direta entre um usuário e o app Prova-tri no
 // Google Chat. Ela só é vinculada depois que a própria pessoa confirma a
 // conta na plataforma; nunca inferimos e-mail pelo evento do Chat.
@@ -92,6 +110,16 @@ export const aiBudgetResets = pgTable('ai_budget_resets', {
 }, (table) => ({
   purposeCreatedAtIndex: index('ai_budget_resets_purpose_created_at_idx').on(table.purpose, table.createdAt),
 }))
+
+// Controle administrativo do teto diário. A ausência de uma linha mantém o
+// comportamento padrão (limite habilitado); a linha só é criada quando a
+// gestão altera explicitamente a configuração.
+export const aiBudgetControls = pgTable('ai_budget_controls', {
+  purpose: text('purpose', { enum: ['text_generation', 'image_generation', 'image_validation', 'scan_transcription'] }).primaryKey(),
+  disabled: boolean('disabled').notNull().default(false),
+  updatedBy: integer('updated_by').references(() => users.id).notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
 
 // Perfis de execução editáveis somente pela gestão. Preços são snapshots de
 // contrato, nunca segredo; chaves continuam exclusivamente em variáveis do servidor.
@@ -283,6 +311,11 @@ export const examCorrections = pgTable('exam_corrections', {
   studentEmail: text('student_email'),
   answers: jsonb('answers').notNull(),
   status: text('status', { enum: ['pendente', 'revisado'] }).notNull().default('pendente'),
+  // Presença é separada do ciclo de correção: uma ausência encerra a
+  // participação do aluno sem produzir nota, desempenho ou lançamento.
+  attendanceStatus: text('attendance_status', { enum: ['presente', 'ausente'] }).notNull().default('presente'),
+  absenceMarkedAt: timestamp('absence_marked_at'),
+  absenceMarkedBy: integer('absence_marked_by').references(() => users.id),
   createdBy: integer('created_by').references(() => users.id).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at'),
@@ -395,6 +428,9 @@ export const examScanPages = pgTable('exam_scan_pages', {
   id: serial('id').primaryKey(),
   uploadId: integer('upload_id').references(() => examScanUploads.id).notNull(),
   pageIndex: smallint('page_index').notNull(),
+  // Identidade detectada pelo QR quando a folha pertence a outra prova.
+  // Nunca deve ser usada como associação oficial da página à correção.
+  detectedSheetAssignmentId: integer('detected_sheet_assignment_id').references(() => examSheetAssignments.id),
   sheetAssignmentId: integer('sheet_assignment_id').references(() => examSheetAssignments.id),
   sheetPageNumber: smallint('sheet_page_number'),
   pageType: text('page_type', { enum: ['objective', 'discursive'] }),
@@ -413,6 +449,7 @@ export const examScanPages = pgTable('exam_scan_pages', {
 }, (table) => ({
   uploadPageUnique: uniqueIndex('exam_scan_pages_upload_page_unique').on(table.uploadId, table.pageIndex),
   uploadStatusIndex: index('exam_scan_pages_upload_status_idx').on(table.uploadId, table.status),
+  detectedAssignmentIndex: index('exam_scan_pages_detected_assignment_idx').on(table.detectedSheetAssignmentId),
   assignmentIndex: index('exam_scan_pages_assignment_idx').on(table.sheetAssignmentId),
   canonicalDriveFileUnique: uniqueIndex('exam_scan_pages_canonical_drive_file_unique').on(table.canonicalDriveFileId),
 }))
@@ -514,6 +551,95 @@ export const curriculumEnrichment = pgTable('curriculum_enrichment', {
   source: text('source').default('programacao_trimestral'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
+
+// Planejamento curricular institucional. `curriculum_plans` identifica o
+// recorte; o conteúdo vive em versões imutáveis depois da aprovação.
+export const curriculumPlans = pgTable('curriculum_plans', {
+  id: serial('id').primaryKey(),
+  academicYear: integer('academic_year').notNull(),
+  segment: text('segment', { enum: ['anos-iniciais', 'anos-finais', 'ensino-medio'] }).notNull(),
+  gradeYear: integer('grade_year').notNull(),
+  subject: text('subject').notNull(),
+  bimester: smallint('bimester').notNull(),
+  createdBy: integer('created_by').references(() => users.id).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => ({
+  scopeUnique: uniqueIndex('curriculum_plans_scope_unique').on(table.academicYear, table.segment, table.gradeYear, table.subject, table.bimester),
+  yearIdx: index('curriculum_plans_year_idx').on(table.academicYear, table.bimester),
+}))
+
+export const curriculumPlanVersions = pgTable('curriculum_plan_versions', {
+  id: serial('id').primaryKey(),
+  planId: integer('plan_id').references(() => curriculumPlans.id, { onDelete: 'cascade' }).notNull(),
+  versionNumber: integer('version_number').notNull(),
+  status: text('status', { enum: ['rascunho', 'em_revisao', 'aprovado', 'encerrado'] }).notNull().default('rascunho'),
+  source: text('source', { enum: ['interno', 'planilha', 'copia'] }).notNull().default('interno'),
+  sourceReference: text('source_reference'),
+  sourceHash: text('source_hash'),
+  copiedFromVersionId: integer('copied_from_version_id').references((): AnyPgColumn => curriculumPlanVersions.id),
+  createdBy: integer('created_by').references(() => users.id).notNull(),
+  reviewedBy: integer('reviewed_by').references(() => users.id),
+  approvedBy: integer('approved_by').references(() => users.id),
+  submittedAt: timestamp('submitted_at'),
+  approvedAt: timestamp('approved_at'),
+  closedAt: timestamp('closed_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => ({
+  versionUnique: uniqueIndex('curriculum_plan_versions_number_unique').on(table.planId, table.versionNumber),
+  statusIdx: index('curriculum_plan_versions_status_idx').on(table.status, table.updatedAt),
+}))
+
+export const curriculumPlanUnits = pgTable('curriculum_plan_units', {
+  id: serial('id').primaryKey(),
+  versionId: integer('version_id').references(() => curriculumPlanVersions.id, { onDelete: 'cascade' }).notNull(),
+  position: integer('position').notNull(),
+  title: text('title').notNull(),
+  content: text('content'),
+  objectives: text('objectives'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => ({
+  positionUnique: uniqueIndex('curriculum_plan_units_position_unique').on(table.versionId, table.position),
+}))
+
+export const curriculumPlanSkills = pgTable('curriculum_plan_skills', {
+  id: serial('id').primaryKey(),
+  unitId: integer('unit_id').references(() => curriculumPlanUnits.id, { onDelete: 'cascade' }).notNull(),
+  code: text('code').notNull(),
+  description: text('description'),
+  position: integer('position').notNull(),
+  targetMasteryPercent: smallint('target_mastery_percent').notNull().default(100),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (table) => ({
+  codeUnique: uniqueIndex('curriculum_plan_skills_code_unique').on(table.unitId, table.code),
+  codeIdx: index('curriculum_plan_skills_code_idx').on(table.code),
+}))
+
+export const curriculumPlanAssignments = pgTable('curriculum_plan_assignments', {
+  id: serial('id').primaryKey(),
+  planId: integer('plan_id').references(() => curriculumPlans.id, { onDelete: 'cascade' }).notNull(),
+  userId: integer('user_id').references(() => users.id).notNull(),
+  responsibility: text('responsibility', { enum: ['responsavel', 'colaborador'] }).notNull().default('responsavel'),
+  assignedBy: integer('assigned_by').references(() => users.id).notNull(),
+  assignedAt: timestamp('assigned_at').defaultNow().notNull(),
+}, (table) => ({
+  userUnique: uniqueIndex('curriculum_plan_assignments_user_unique').on(table.planId, table.userId),
+  userIdx: index('curriculum_plan_assignments_user_idx').on(table.userId),
+}))
+
+export const curriculumPlanStatusHistory = pgTable('curriculum_plan_status_history', {
+  id: serial('id').primaryKey(),
+  versionId: integer('version_id').references(() => curriculumPlanVersions.id, { onDelete: 'cascade' }).notNull(),
+  fromStatus: text('from_status', { enum: ['rascunho', 'em_revisao', 'aprovado', 'encerrado'] }),
+  toStatus: text('to_status', { enum: ['rascunho', 'em_revisao', 'aprovado', 'encerrado'] }).notNull(),
+  changedBy: integer('changed_by').references(() => users.id).notNull(),
+  note: text('note'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (table) => ({
+  versionIdx: index('curriculum_plan_status_history_version_idx').on(table.versionId, table.createdAt),
+}))
 
 // ═══════════════════════════════════════════════════════════════════
 // Motor de Classificações Pedagógicas
@@ -785,9 +911,32 @@ export const generationJobs = pgTable('generation_jobs', {
   finishedAt: timestamp('finished_at'),
   // Job adiado por cota de IA; a fila o retoma após este instante.
   availableAt: timestamp('available_at'),
+  lastHeartbeatAt: timestamp('last_heartbeat_at'),
 }, (table) => ({
   // Índice parcial usado pelo claim do worker (FOR UPDATE SKIP LOCKED).
   pollIdx: index('generation_jobs_poll_idx').on(table.status, table.priority, table.id).where(sql`${table.status} = 'pendente'`),
   requesterIdx: index('generation_jobs_requester_idx').on(table.requestedBy, table.createdAt.desc()),
   batchIdx: index('generation_jobs_batch_idx').on(table.batchId),
+}))
+
+// Progresso granular da geração: cada slot é idempotente e pode ser retomado
+// sem refazer itens já aprovados quando um job for interrompido.
+export const GENERATION_JOB_ITEM_STATUSES = ['pendente', 'gerando', 'concluido', 'erro'] as const
+export type GenerationJobItemStatus = (typeof GENERATION_JOB_ITEM_STATUSES)[number]
+
+export const generationJobItems = pgTable('generation_job_items', {
+  id: serial('id').primaryKey(),
+  jobId: integer('job_id').references(() => generationJobs.id, { onDelete: 'cascade' }).notNull(),
+  slotNumber: integer('slot_number').notNull(),
+  status: text('status', { enum: GENERATION_JOB_ITEM_STATUSES }).notNull().default('pendente'),
+  questionPayload: jsonb('question_payload'),
+  issues: jsonb('issues'),
+  attempts: integer('attempts').notNull().default(0),
+  maxAttempts: integer('max_attempts').notNull().default(3),
+  lastError: text('last_error'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => ({
+  jobSlotUnique: uniqueIndex('generation_job_items_job_slot_unique').on(table.jobId, table.slotNumber),
+  jobStatusIdx: index('generation_job_items_job_status_idx').on(table.jobId, table.status),
 }))

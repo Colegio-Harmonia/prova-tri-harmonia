@@ -6,12 +6,17 @@ import { generatedExams, users, EXAM_STATUSES } from '@/db/schema'
 import { auth } from '@/auth/auth'
 import { generateExamDocs } from '@/lib/docs/generateExamDocs'
 import { sendChatAssignmentNotification, sendChatReviewReadyNotification } from '@/lib/notifications/googleChat'
-import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
+import { singleQuestionResultSchema, SINGLE_QUESTION_RESPONSE_SCHEMA, type ExamGenerationResult, type ExamQuestion, type SingleQuestionResult } from '@/lib/gemini/examSchema'
 import { isStaffSuperuser } from '@/lib/auth/roles'
 import { isSelfManagedActivity } from '@/lib/exams/activityWorkflow'
 import { SheetAssignmentsSnapshotError, snapshotSheetAssignments } from '@/lib/scan-sheets/sheetAssignments'
 import { enqueuePontuarProvaJob } from '@/lib/queue/enqueue'
-import { qualityApprovalBlocks } from '@/lib/exams/questionQualityTest'
+import { qualityApprovalBlocks, runQuestionQualityTest } from '@/lib/exams/questionQualityTest'
+import { latestQualityReport, normalizeStoredQualityReport, qualityReportNeedsNormalization, qualityReportNeedsRecompute, recomputeQualityReport } from '@/lib/exams/qualityReport'
+import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
+import { buildSingleQuestionPrompt } from '@/lib/gemini/promptBuilder'
+import { generateValidatedStructuredContent, StructuredGenerationError } from '@/lib/gemini/structuredRepair'
+import { correctSingleQuestion } from '@/lib/gemini/examValidator'
 
 const bodySchema = z.object({
   action: z.enum(['atribuir', 'iniciar_revisao', 'aprovar_prova', 'concluir_revisao', 'aprovar', 'marcar_impresso', 'marcar_aplicado', 'marcar_corrigido', 'finalizar_atividade', 'marcar_atividade_aplicada']),
@@ -45,6 +50,69 @@ const TRANSITIONS: Record<Action, { from: ExamStatus; to: ExamStatus; assigneeAl
 
 const ACTIVITY_ONLY_ACTIONS = new Set<Action>(['finalizar_atividade', 'marcar_atividade_aplicada'])
 const FORMAL_REVIEW_ACTIONS = new Set<Action>(['atribuir', 'iniciar_revisao', 'aprovar_prova', 'concluir_revisao', 'aprovar', 'marcar_impresso', 'marcar_aplicado'])
+
+/**
+ * Recupera provas legadas que foram salvas com itens recusados. Esta é uma
+ * ponte de migração: a geração nova já faz isso antes de persistir, mas o
+ * clique único em Aprovar também não pode obrigar o usuário a trocar itens.
+ */
+async function replaceRejectedQuestionsAutomatically(exam: typeof generatedExams.$inferSelect, payload: ExamGenerationResult) {
+  const rejected = latestQualityReport(payload)?.results.filter((result) => !result.approved).map((result) => result.questionNumber) ?? []
+  if (!rejected.length) return payload
+
+  const curriculum = await getCurriculumForExam({
+    segment: exam.segment,
+    gradeYear: exam.gradeYear,
+    subject: exam.subject,
+    bimester: exam.bimester ?? undefined,
+  })
+  let questions = [...payload.questions]
+  for (const questionNumber of rejected) {
+    const index = questions.findIndex((question) => question.number === questionNumber)
+    const original = questions[index]
+    if (!original || original.source === 'enem_bank') throw new Error(`A questão ${questionNumber} não pode ser substituída automaticamente.`)
+    let replacement: ExamQuestion | null = null
+    // Cada candidata recebe até dois reparos estruturados. Se o modelo ainda
+    // errar cálculo, alternativas ou metadados, iniciamos uma candidata nova
+    // (em vez de devolver a falha bruta para quem clicou em Aprovar).
+    for (let candidateNumber = 1; candidateNumber <= 3 && !replacement; candidateNumber++) {
+      const prompt = await buildSingleQuestionPrompt(curriculum, {
+        type: original.type,
+        questionNumber,
+        avoidStatement: `${original.statement}\nNão repita nem reutilize a questão anterior.`,
+        reviewFeedback: `Substituição automática ${candidateNumber}/3: crie uma questão nova com cálculo, alternativas e gabarito verificáveis.`,
+      })
+      try {
+        const generated = await generateValidatedStructuredContent<SingleQuestionResult, ExamQuestion>({
+          context: `exams/automatic-quality-replacement-${questionNumber}-${candidateNumber}`,
+          prompt,
+          responseSchema: SINGLE_QUESTION_RESPONSE_SCHEMA,
+          zodSchema: singleQuestionResultSchema,
+          maxAttempts: 2,
+          validate: async (candidate) => {
+            const { question, issues, warnings } = correctSingleQuestion({ ...candidate.question, number: questionNumber }, curriculum)
+            const quality = await runQuestionQualityTest(curriculum, [question])
+            return { value: question, issues: [...issues, ...quality.issues.filter((issue) => issue.severity === 'bloqueante').map((issue) => issue.reason)], warnings: [...warnings, ...quality.warnings] }
+          },
+        })
+        replacement = generated.value
+      } catch (error) {
+        if (!(error instanceof StructuredGenerationError)) throw error
+      }
+    }
+    if (!replacement) throw new Error(`Não foi possível criar uma substituta aprovada para a questão ${questionNumber}; a prova permanece sem aprovação para preservar a integridade do conteúdo.`)
+    // A substituição automática preserva a revisão já concluída da prova;
+    // o novo item foi validado pelo mesmo gate antes de entrar no payload.
+    questions[index] = { ...replacement, number: questionNumber, review: original.review }
+  }
+  const repaired = await recomputeQualityReport({
+    payload: { ...payload, questions },
+    curriculum,
+    phase: 'Substituições automáticas durante a aprovação',
+    repairedQuestionNumbers: rejected,
+  })
+  return repaired.payload
+}
 
 export async function POST(req: NextRequest, props: { params: Promise<{ examId: string }> }) {
   const params = await props.params;
@@ -137,8 +205,51 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
 
   if (action === 'aprovar_prova' || action === 'aprovar' || action === 'finalizar_atividade') {
     try {
-      const payload = exam.generationPayload as ExamGenerationResult
-      const qualityBlocks = qualityApprovalBlocks(payload)
+      let payload = exam.generationPayload as ExamGenerationResult
+      let qualityBlocks = qualityApprovalBlocks(payload)
+
+      // Auto-cura: a auditoria já acontece na geração, mas provas antigas,
+      // regeneradas ou com relatório inconsistente (ex.: critério "não
+      // aplicável" marcado como reprovado por versões anteriores) são
+      // reauditadas aqui, sem exigir ação extra do revisor e sem alterar as
+      // questões. Persistimos o relatório canônico antes de reavaliar.
+      if (qualityReportNeedsRecompute(payload)) {
+        try {
+          const curriculum = await getCurriculumForExam({
+            segment: exam.segment,
+            gradeYear: exam.gradeYear,
+            subject: exam.subject,
+            bimester: exam.bimester ?? undefined,
+          })
+          const recomputed = await recomputeQualityReport({
+            payload,
+            curriculum,
+            phase: 'Auditoria automática durante a aprovação',
+          })
+          payload = recomputed.payload
+          await db.update(generatedExams).set({ generationPayload: payload }).where(eq(generatedExams.id, examId))
+          qualityBlocks = qualityApprovalBlocks(payload)
+        } catch (recomputeError) {
+          // A auto-cura é um reforço, não pode virar um novo bloqueio. Se a
+          // reauditoria falhar (Sheets/IA indisponíveis), seguimos com o
+          // relatório já normalizado em mãos.
+          console.error('[exams/status] falha ao recompor auditoria de qualidade:', recomputeError)
+        }
+      } else if (qualityReportNeedsNormalization(payload)) {
+        // Sem IA: limpa critérios "não aplicáveis" mal classificados e
+        // recalcula o veredito de relatórios de versões anteriores.
+        payload = normalizeStoredQualityReport(payload)
+        await db.update(generatedExams).set({ generationPayload: payload }).where(eq(generatedExams.id, examId))
+        qualityBlocks = qualityApprovalBlocks(payload)
+      }
+      // Registros criados antes do gate definitivo podem conter itens que a
+      // auditoria já recusou. No mesmo clique de aprovação, substituímos esses
+      // itens, refazemos a auditoria integral e só seguimos se tudo aprovar.
+      if (qualityBlocks.length && latestQualityReport(payload)?.results.some((result) => !result.approved)) {
+        payload = await replaceRejectedQuestionsAutomatically(exam, payload)
+        await db.update(generatedExams).set({ generationPayload: payload }).where(eq(generatedExams.id, examId))
+        qualityBlocks = qualityApprovalBlocks(payload)
+      }
       if (qualityBlocks.length) {
         return NextResponse.json({
           error: `Aprovação bloqueada pelo controle de qualidade. ${qualityBlocks.join(' ')}`,

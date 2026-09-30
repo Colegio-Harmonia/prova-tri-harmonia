@@ -2,7 +2,12 @@ import { z } from 'zod'
 import type { ExamGenerationResult, ExamQuestion } from '@/lib/gemini/examSchema'
 import type { CurriculumSelection } from '@/types/exam'
 import { generateValidatedStructuredContent, StructuredGenerationError } from '@/lib/gemini/structuredRepair'
+import { detectAlternativeAmbiguities } from '@/lib/generation/alternatives'
+import { diversityIssues } from '@/lib/generation/coherence'
+import { hasMissingRequiredVisual } from '@/lib/illustrations/recommendations'
 import type { ExamQualityIssue } from './examQualityAssembly'
+import { diagnosticFromIssue, humanReviewApprovalBlocks, unsupportedMathDiagnostics, type QualityDiagnostic } from './qualityDiagnostics'
+import { missingRequiredSupportTextReason } from './supportTextIntegrity'
 
 const QUALITY_CRITERIA = ['gabarito', 'unicidade', 'cálculo_ou_dados', 'linguagem', 'alinhamento'] as const
 
@@ -25,7 +30,7 @@ const qualitySchema = z.object({
     matchesDeclared: z.boolean(),
     evidence: z.string().min(1),
   }).nullable().optional(),
-  issues: z.array(z.object({ reason: z.string().min(1), severity: z.enum(['bloqueante', 'alerta']) })).default([]),
+  issues: z.array(z.object({ reason: z.string().min(1), severity: z.enum(['bloqueante', 'alerta']), criterion: z.enum(QUALITY_CRITERIA).optional() })).default([]),
 })
 
 const QUALITY_RESPONSE_SCHEMA = {
@@ -33,13 +38,54 @@ const QUALITY_RESPONSE_SCHEMA = {
     questionNumber: { type: 'integer' }, approved: { type: 'boolean' }, verdictReason: { type: 'string' },
     checks: { type: 'array', items: { type: 'object', properties: { criterion: { type: 'string', enum: QUALITY_CRITERIA }, status: { type: 'string', enum: ['aprovado', 'reprovado', 'não_aplicável'] }, evidence: { type: 'string' } }, required: ['criterion', 'status', 'evidence'] } },
     answerKeyAudit: { type: 'object', nullable: true, properties: { declaredLetter: { type: 'string', nullable: true }, independentlyDerivedLetter: { type: 'string', nullable: true }, matchesDeclared: { type: 'boolean' }, evidence: { type: 'string' } }, required: ['declaredLetter', 'independentlyDerivedLetter', 'matchesDeclared', 'evidence'] },
-    issues: { type: 'array', items: { type: 'object', properties: { reason: { type: 'string' }, severity: { type: 'string', enum: ['bloqueante', 'alerta'] } }, required: ['reason', 'severity'] } },
+    issues: { type: 'array', items: { type: 'object', properties: { reason: { type: 'string' }, severity: { type: 'string', enum: ['bloqueante', 'alerta'] }, criterion: { type: 'string', enum: QUALITY_CRITERIA } }, required: ['reason', 'severity', 'criterion'] } },
   }, required: ['questionNumber', 'approved', 'verdictReason', 'checks', 'issues'],
 }
 
 function normalized(value: string) { return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLocaleLowerCase('pt-BR').replace(/\s+/g, ' ') }
 
 function brazilianNumber(value: string) { return Number(value.replace(/\./g, '').replace(',', '.')) }
+
+export type QualityCheck = { criterion: string; status: 'aprovado' | 'reprovado' | 'não_aplicável'; evidence: string }
+
+export type QualityReportResult = {
+  questionNumber: number
+  approved: boolean
+  verdictReason?: string
+  checks?: QualityCheck[]
+  answerKeyAudit?: { declaredLetter: string | null; independentlyDerivedLetter: string | null; matchesDeclared: boolean; evidence: string } | null
+  issues: Array<{ severity: 'bloqueante' | 'alerta'; reason: string }>
+  diagnostics?: QualityDiagnostic[]
+}
+
+// Só estes critérios têm evidência objetiva suficiente para vetar a questão
+// automaticamente. Linguagem e alinhamento continuam no relatório, mas
+// chegam à revisão como alerta — nunca como julgamento livre da IA.
+const AI_BLOCKING_CRITERIA = new Set(['gabarito', 'unicidade', 'cálculo_ou_dados'])
+
+// O modelo às vezes devolve status "reprovado" com uma evidência que, na
+// prática, diz que o critério NÃO se aplica (ex.: cálculo_ou_dados numa
+// questão discursiva de Química). Isso é uma inconsistência do relatório,
+// não uma falha da questão. Detectamos pelo texto normalizado (sem acento).
+const NOT_APPLICABLE_EVIDENCE = /nao aplic|nao se aplic|nao e aplicavel|sem calculo|nao envolve calculo|nao ha calculo|nao possui calculo|nao se trata de calculo|analise conceitual, sem|conceitual, sem calculo/i
+
+export function isNotApplicableEvidence(evidence: string): boolean {
+  return NOT_APPLICABLE_EVIDENCE.test(normalized(evidence))
+}
+
+/**
+ * Normaliza os critérios do relatório: um "reprovado" cuja evidência diz
+ * "não aplicável" vira "não_aplicável" e deixa de bloquear a aprovação.
+ * Usado tanto ao gerar o relatório quanto ao lê-lo (inclusive de provas
+ * antigas já persistidas).
+ */
+export function normalizeQualityChecks(checks: QualityCheck[] | undefined): QualityCheck[] {
+  return (checks ?? []).map((check) =>
+    check.status === 'reprovado' && isNotApplicableEvidence(check.evidence)
+      ? { ...check, status: 'não_aplicável' as const }
+      : check,
+  )
+}
 
 function compoundInterestIssue(question: ExamQuestion): ExamQualityIssue | null {
   if (question.type !== 'objetiva' || !question.alternatives) return null
@@ -60,14 +106,18 @@ function compoundInterestIssue(question: ExamQuestion): ExamQualityIssue | null 
 
 /** Regras locais baratas; não substituem a revisão semântica da IA. */
 export function deterministicQuestionQualityIssues(questions: ExamQuestion[]): ExamQualityIssue[] {
-  const issues: ExamQualityIssue[] = []
+  const issues: ExamQualityIssue[] = diversityIssues(questions)
   for (const question of questions) {
+    const supportTextIssue = missingRequiredSupportTextReason(question)
+    if (supportTextIssue) issues.push({ questionNumbers: [question.number], severity: 'bloqueante', reason: supportTextIssue })
+    if (hasMissingRequiredVisual(question)) {
+      issues.push({ questionNumbers: [question.number], severity: 'bloqueante', reason: 'A questão depende de uma figura, imagem, gráfico, mapa ou diagrama que não foi fornecido.' })
+    }
     if (question.type !== 'objetiva' || !question.alternatives) continue
-    const seen = new Map<string, string>()
-    for (const alternative of question.alternatives) {
-      const prior = seen.get(normalized(alternative.text))
-      if (prior) issues.push({ questionNumbers: [question.number], severity: 'bloqueante', reason: `Alternativas ${prior} e ${alternative.letter} têm o mesmo conteúdo.` })
-      else seen.set(normalized(alternative.text), alternative.letter)
+    // Pares de alternativas defensáveis: duplicadas, numericamente
+    // equivalentes, quase idênticas ou separadas por negação.
+    for (const ambiguity of detectAlternativeAmbiguities(question.alternatives)) {
+      issues.push({ questionNumbers: [question.number], severity: ambiguity.severity, reason: ambiguity.reason })
     }
     const interest = compoundInterestIssue(question)
     if (interest) issues.push(interest)
@@ -87,18 +137,20 @@ function card(question: ExamQuestion) {
 function auditConsistencyIssues(question: ExamQuestion, result: z.infer<typeof qualitySchema>): ExamQualityIssue[] {
   const issues: ExamQualityIssue[] = []
   const blocking = (reason: string) => issues.push({ questionNumbers: [question.number], severity: 'bloqueante', reason })
-  const rejectedChecks = result.checks.filter((check) => check.status === 'reprovado')
+  const checks = normalizeQualityChecks(result.checks)
+  const rejectedChecks = checks.filter((check) => check.status === 'reprovado' && AI_BLOCKING_CRITERIA.has(check.criterion))
 
   for (const check of rejectedChecks) {
     blocking(`Teste de qualidade — ${check.criterion}: ${check.evidence}`)
   }
-  if (!result.approved && !rejectedChecks.length && !result.issues.some((issue) => issue.severity === 'bloqueante')) {
-    blocking(`Teste de qualidade reprovou a questão: ${result.verdictReason}`)
-  }
+  // Não bloqueamos só porque o campo `approved` do modelo veio `false`: a
+  // barreira exige evidência concreta (critério reprovado ou issue
+  // bloqueante). Sem isso, um veredito contraditório do modelo (texto
+  // positivo + approved:false) travava questões válidas.
 
   if (question.type !== 'objetiva') return issues
 
-  const answerKeyChecks = result.checks.filter((check) => check.criterion === 'gabarito')
+  const answerKeyChecks = checks.filter((check) => check.criterion === 'gabarito')
   if (answerKeyChecks.length !== 1 || answerKeyChecks[0]?.status !== 'aprovado') {
     blocking('Teste de qualidade não confirmou o gabarito como correto e único.')
   }
@@ -129,12 +181,12 @@ export async function runQuestionQualityTest(curriculum: CurriculumSelection, qu
       : 'Confira conceito, dados, gabarito e se existe somente uma resposta defensável.'
   const reports: Array<z.infer<typeof qualitySchema>> = []
   const warnings: string[] = []
-  for (const question of questions) {
+  const auditQuestion = async (question: ExamQuestion): Promise<{ report: z.infer<typeof qualitySchema>; warnings: string[] }> => {
     const prompt = `Você executa o TESTE DE QUALIDADE de UMA questão escolar. Não reescreva a questão e não mostre raciocínio interno.
 
 Contexto: ${curriculum.subject}, ${curriculum.gradeYear}º ano, ${curriculum.segment}. ${subjectRule}
 
-    Produza uma JUSTIFICATIVA VERIFICÁVEL, não um raciocínio interno livre: informe um veredito curto e os critérios gabarito, unicidade, cálculo_ou_dados, linguagem e alinhamento. Cada critério deve trazer status e evidência objetiva; quando não se aplicar, use não_aplicável e explique brevemente. Decida UMA única vez: approved:true somente quando não houver falha; approved:false somente quando existir pelo menos um item bloqueante. Nunca use alerta para afirmar que a questão está errada. Todo bloqueio precisa citar o dado, cálculo ou alternativa específica que prova o erro.
+    Produza uma JUSTIFICATIVA VERIFICÁVEL, não um raciocínio interno livre: informe um veredito curto e os critérios gabarito, unicidade, cálculo_ou_dados, linguagem e alinhamento. Cada critério deve trazer status e evidência objetiva; quando não se aplicar, use não_aplicável e explique brevemente. SOMENTE gabarito, unicidade e cálculo_ou_dados podem reprovar. Linguagem e alinhamento são sempre alertas para revisão humana, nunca bloqueio. Todo bloqueio precisa citar o dado, cálculo ou alternativa específica que prova o erro.
 
     PARA QUESTÃO OBJETIVA, answerKeyAudit É OBRIGATÓRIO: primeiro determine independentemente a letra correta a partir do enunciado e das alternativas; depois compare-a com o "Gabarito declarado". Preencha declaredLetter, independentlyDerivedLetter, matchesDeclared e uma evidência curta. Se as letras diferirem, matchesDeclared deve ser false, o critério gabarito deve ser reprovado e approved deve ser false. Não aprove uma questão cujo texto de evidência indique discrepância no gabarito.
 
@@ -149,23 +201,37 @@ ${card(question)}`
         // falha da geração da prova.
         validate: (value) => ({ value: { ...value, questionNumber: question.number }, issues: [] }),
       })
-      reports.push(audited.value)
-      warnings.push(...audited.warnings)
+      return { report: audited.value, warnings: audited.warnings }
     } catch (error) {
       const detail = error instanceof StructuredGenerationError ? error.issues.join(' ') : 'falha operacional inesperada'
-      warnings.push(`Questão ${question.number}: teste de qualidade não pôde concluir a auditoria (${detail}). A prova segue para revisão humana.`)
-      reports.push({
+      return { report: {
         questionNumber: question.number,
         approved: true,
         verdictReason: 'O teste automático não concluiu esta análise; a questão foi encaminhada para revisão humana.',
         checks: [],
         issues: [{ severity: 'alerta', reason: 'Auditoria automática indisponível nesta tentativa; revisar manualmente antes da aprovação.' }],
-      })
+      }, warnings: [`Questão ${question.number}: teste de qualidade não pôde concluir a auditoria (${detail}).` ] }
+    }
+  }
+  // As questões são independentes. Três auditorias em paralelo preservam o
+  // limite seguro do provedor e eliminam a espera serial de uma prova inteira.
+  const concurrency = Math.max(1, Math.min(3, questions.length))
+  for (let offset = 0; offset < questions.length; offset += concurrency) {
+    const group = await Promise.all(questions.slice(offset, offset + concurrency).map(auditQuestion))
+    for (const item of group) {
+      reports.push(item.report)
+      warnings.push(...item.warnings)
     }
   }
   const semantic: ExamQualityIssue[] = reports.flatMap((result) => {
     const question = questions.find((candidate) => candidate.number === result.questionNumber)
-    const declared = result.issues.map((issue) => ({ questionNumbers: [result.questionNumber], severity: issue.severity, reason: `Teste de qualidade: ${issue.reason}` } satisfies ExamQualityIssue))
+    // Um "bloqueante" cuja justificativa é "não aplicável" é rebaixado a
+    // alerta, nunca bloqueio, para não repetir a contradição do modelo.
+    const declared = result.issues.map((issue) => ({
+      questionNumbers: [result.questionNumber],
+      severity: issue.severity === 'bloqueante' && !isNotApplicableEvidence(issue.reason) && issue.criterion && AI_BLOCKING_CRITERIA.has(issue.criterion) ? 'bloqueante' : 'alerta',
+      reason: `Teste de qualidade: ${issue.reason}`,
+    } satisfies ExamQualityIssue))
     return question ? [...declared, ...auditConsistencyIssues(question, result)] : declared
   })
   const rejected = [...new Set([...deterministic, ...semantic].filter((issue) => issue.severity === 'bloqueante').flatMap((issue) => issue.questionNumbers))]
@@ -173,12 +239,24 @@ ${card(question)}`
     const semanticResult = reports.find((result) => result.questionNumber === question.number)
     const localIssues = deterministic.filter((issue) => issue.questionNumbers.includes(question.number)).map((issue) => ({ severity: issue.severity, reason: issue.reason }))
     const semanticIssues = semantic.filter((issue) => issue.questionNumbers.includes(question.number)).map((issue) => ({ severity: issue.severity, reason: issue.reason }))
+    const diagnostics = [
+      ...[...localIssues, ...semanticIssues].map((issue) => diagnosticFromIssue(issue)),
+      ...unsupportedMathDiagnostics(question, curriculum.subject),
+    ]
     return {
       questionNumber: question.number,
       approved: ![...localIssues, ...semanticIssues].some((issue) => issue.severity === 'bloqueante'),
       verdictReason: semanticResult?.verdictReason,
-      checks: semanticResult?.checks,
+      // Persistimos os critérios já normalizados: sem isso a tela e a
+      // barreira de aprovação voltariam a ver um "reprovado" que na verdade
+      // é "não aplicável".
+      checks: semanticResult ? normalizeQualityChecks(semanticResult.checks) : undefined,
+      // A aprovação final precisa desta evidência estruturada. Não a omita
+      // do relatório persistido: sem ela a tela pode mostrar "Aprovada",
+      // mas a barreira de aprovação não tem como comprovar o gabarito.
+      answerKeyAudit: semanticResult?.answerKeyAudit,
       issues: [...localIssues, ...semanticIssues],
+      diagnostics,
     }
   })
   return { issues: [...deterministic, ...semantic], warnings, rejected, checked: questions.map((question) => question.number), report }
@@ -196,17 +274,25 @@ export function qualityApprovalBlocks(payload: ExamGenerationResult): string[] {
 
   const blocks: string[] = []
   for (const question of payload.questions) {
+    const supportTextIssue = missingRequiredSupportTextReason(question)
+    if (supportTextIssue) blocks.push(`Questão ${question.number}: ${supportTextIssue}`)
     const result = latest.find((candidate) => candidate.questionNumber === question.number)
     if (!result) {
       blocks.push(`Questão ${question.number}: ausente do relatório final de qualidade.`)
       continue
     }
-    if (!result.approved || result.issues.some((issue) => issue.severity === 'bloqueante') || result.checks?.some((check) => check.status === 'reprovado')) {
+    // A leitura também normaliza ("reprovado" com evidência de não
+    // aplicável não bloqueia) e ignora o booleano `approved` cru do modelo:
+    // o que bloqueia é evidência concreta.
+    const checks = normalizeQualityChecks(result.checks)
+    const rejectedCheck = checks.find((check) => check.status === 'reprovado' && AI_BLOCKING_CRITERIA.has(check.criterion))
+    const blockingIssue = result.issues.find((issue) => issue.severity === 'bloqueante' && !isNotApplicableEvidence(issue.reason))
+    if (rejectedCheck || blockingIssue) {
       blocks.push(`Questão ${question.number}: o relatório de qualidade a reprovou.`)
     }
     if (question.type === 'objetiva') {
       const audit = result.answerKeyAudit
-      const answerKeyCheck = result.checks?.filter((check) => check.criterion === 'gabarito') ?? []
+      const answerKeyCheck = checks.filter((check) => check.criterion === 'gabarito')
       if (answerKeyCheck.length !== 1 || answerKeyCheck[0]?.status !== 'aprovado') {
         blocks.push(`Questão ${question.number}: o relatório não aprovou explicitamente o gabarito.`)
       }
@@ -215,5 +301,6 @@ export function qualityApprovalBlocks(payload: ExamGenerationResult): string[] {
       }
     }
   }
+  blocks.push(...humanReviewApprovalBlocks(payload))
   return [...new Set(blocks)]
 }

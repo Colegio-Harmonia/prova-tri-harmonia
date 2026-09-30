@@ -21,10 +21,12 @@ expectMatch(performance, /<nav[\s\S]*aria-label="Visões de desempenho"/, 'As vi
 expectMatch(performance, /aria-current=\{activeView === view \? 'page' : undefined\}/, 'A visão ativa precisa ser anunciada.')
 expectMatch(performance, /role="status" aria-live="polite"/, 'O carregamento de desempenho precisa ser anunciado.')
 
-const correction = source('src/app/(app)/gerar/[examId]/corrigir/CorrigirExam.tsx')
-expectMatch(correction, /htmlFor="classroom-course"/, 'A turma do Classroom precisa ter rótulo associado.')
-expectMatch(correction, /aria-expanded=\{isExpanded\}/, 'O cartão de correção precisa informar seu estado expandido.')
-expectMatch(correction, /htmlFor=\{`transcribed-answer-\$\{correction\.id\}-\$\{q\.number\}`\}/, 'A resposta discursiva precisa ter rótulo associado.')
+// A tela de correção foi dividida: vínculo com a turma em ReturnGradesCard e
+// correção por aluno em scanCorrectionReview (não há mais cartões expansíveis).
+const returnGrades = source('src/app/(app)/gerar/[examId]/corrigir/ReturnGradesCard.tsx')
+expectMatch(returnGrades, /htmlFor="return-grades-course"/, 'A turma do Classroom precisa ter rótulo associado.')
+const correctionReview = source('src/app/(app)/gerar/[examId]/corrigir/scans/[correctionId]/scanCorrectionReview.tsx')
+expectMatch(correctionReview, /aria-label=\{`Resposta transcrita da questão \$\{question\.number\}`\}/, 'A resposta discursiva precisa ter rótulo associado.')
 
 const aiProfiles = source('src/app/(app)/ia/AiModelProfilesPanel.tsx')
 expectMatch(aiProfiles, /const selectId = `ai-model-\$\{section\.purpose\}`/, 'O seletor de modelo precisa ter ID estável.')

@@ -47,7 +47,7 @@ describe('buildGerarProvaJobPayloads', () => {
     ).toThrow(BatchValidationError)
   })
 
-  it('aceita banco ENEM com disciplina única e valida o total 12-15', () => {
+  it('aceita banco ENEM com disciplina única e valida o total 10-30', () => {
     const payloads = buildGerarProvaJobPayloads({
       ...baseInput,
       subjects: ['Matemática'],
@@ -57,7 +57,7 @@ describe('buildGerarProvaJobPayloads', () => {
     expect(payloads[0].enemBankQuestionIds).toEqual([1, 2, 3])
   })
 
-  it('rejeita total de questões fora de 12-15 (regra da rota síncrona preservada)', () => {
+  it('rejeita total de questões fora de 10-30', () => {
     expect(() =>
       buildGerarProvaJobPayloads({ ...baseInput, config: { questionCount: 5 } }),
     ).toThrow(BatchValidationError)
@@ -65,7 +65,7 @@ describe('buildGerarProvaJobPayloads', () => {
       buildGerarProvaJobPayloads({
         ...baseInput,
         subjects: ['Matemática'],
-        config: { questionCount: 10, enemBankQuestionIds: [1, 2, 3, 4, 5, 6] },
+        config: { questionCount: 30, enemBankQuestionIds: [1] },
       }),
     ).toThrow(BatchValidationError)
   })
@@ -81,6 +81,15 @@ describe('gerarProvaJobPayloadSchema', () => {
       enemBankQuestionIds: Array.from({ length: 12 }, (_, i) => i + 1),
     })
     expect(parsed.success).toBe(true)
+    if (parsed.success) expect(parsed.data.objectivePercentage).toBe(70)
+  })
+
+  it('preserva a proporção escolhida entre alternativas e dissertativas', () => {
+    const parsed = gerarProvaJobPayloadSchema.safeParse({
+      segment: 'anos-finais', gradeYear: 8, subject: 'Ciências', questionCount: 20, objectivePercentage: 35,
+    })
+    expect(parsed.success).toBe(true)
+    if (parsed.success) expect(parsed.data.objectivePercentage).toBe(35)
   })
 
   it('rejeita payload sem shape de job (JSONB não confiável)', () => {
@@ -105,6 +114,16 @@ describe('gerarAtividadeJobPayloadSchema', () => {
   it('rejeita séries incompatíveis com o segmento', () => {
     expect(gerarAtividadeJobPayloadSchema.safeParse({ ...baseActivity, segment: 'ensino-medio', gradeYear: 4 }).success).toBe(false)
     expect(gerarAtividadeJobPayloadSchema.safeParse({ ...baseActivity, segment: 'anos-iniciais', gradeYear: 1 }).success).toBe(false)
+  })
+
+  it('aceita mais de 10 habilidades BNCC (sem teto artificial)', () => {
+    const codes = ['EF08LP04', 'EF08LP11', 'EF09LP01', 'EF09LP04', 'EF09LP05', 'EF09LP07', 'EF09LP08', 'EF09LP10', 'EF09LP12', 'EF15LP08', 'EF67LP05', 'EF67LP31']
+    expect(codes).toHaveLength(12)
+    expect(gerarAtividadeJobPayloadSchema.safeParse({ ...baseActivity, segment: 'anos-finais', gradeYear: 6, bnccCodes: codes }).success).toBe(true)
+  })
+
+  it('continua exigindo pelo menos uma habilidade BNCC', () => {
+    expect(gerarAtividadeJobPayloadSchema.safeParse({ ...baseActivity, segment: 'anos-finais', gradeYear: 6, bnccCodes: [] }).success).toBe(false)
   })
 })
 

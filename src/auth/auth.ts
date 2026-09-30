@@ -153,11 +153,31 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         return token
       }
 
-      // Chamadas subsequentes (sessão já existente) — renova o access token
-      // do Google ~1min antes de expirar, se tivermos refresh_token. Cast
-      // explícito: a augmentation de next-auth/jwt não está resolvendo pro
-      // tipo de `token` nesse callback (vira `unknown` sem o cast, mesmo
-      // com o campo declarado em src/types/next-auth.d.ts).
+      // Revalida cargo/ativo direto no banco a cada requisicao, em vez de
+      // confiar so no cargo gravado na JWT no login. Sem isso, mudar o cargo
+      // em "Gerenciar usuarios" nao surtia efeito ate a pessoa sair e entrar
+      // de novo: o menu e as telas continuavam de professor mesmo com
+      // role=coordenacao no banco (bug relatado em 23/09/2026).
+      if (token.sub) {
+        try {
+          const dbUser = await db.query.users.findFirst({
+            where: eq(users.id, Number(token.sub)),
+            columns: { role: true, name: true, active: true },
+          })
+          if (!dbUser || !dbUser.active) return null
+          token.role = dbUser.role
+          token.name = dbUser.name
+        } catch (error) {
+          // Falha transitoria do banco nao deve deslogar todo mundo: mantem o
+          // token atual e tenta revalidar na proxima requisicao.
+          console.warn("[auth] falha ao revalidar cargo do usuario:", error)
+        }
+      }
+
+      // Renova o access token do Google ~1min antes de expirar, se tivermos
+      // refresh_token. Cast explicito: a augmentation de next-auth/jwt nao
+      // esta resolvendo pro tipo de token nesse callback (vira unknown sem o
+      // cast), mesmo com o campo declarado em src/types/next-auth.d.ts.
       const googleToken = token as { googleAccessTokenExpires?: number; googleRefreshToken?: string }
       const expiresAt = googleToken.googleAccessTokenExpires
       if (typeof expiresAt === 'number' && googleToken.googleRefreshToken && Date.now() > expiresAt - 60_000) {

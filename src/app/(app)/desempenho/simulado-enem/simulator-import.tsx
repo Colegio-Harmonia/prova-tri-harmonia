@@ -1,10 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { createColumnHelper } from '@tanstack/react-table'
 import EnemSaeImport from './enem-sae-import'
+import { DataTable, type DataTableFeatures } from '@/components/ui/data-table'
 
 type Area = 'linguagens' | 'matematica' | 'natureza' | 'humanas' | 'redacao'
+type ScoreScale = 'percentual' | 'pontos_1000'
 type StudentResult = { name: string; email: string; scores: Partial<Record<Area, number>>; average: number | null }
+const resultColumnHelper = createColumnHelper<DataTableFeatures, StudentResult>()
 
 const AREA_LABELS: Record<Area, string> = {
   linguagens: 'Linguagens', matematica: 'Matemática', natureza: 'Ciências da Natureza', humanas: 'Ciências Humanas', redacao: 'Redação',
@@ -34,10 +38,11 @@ function parseCsv(text: string) {
   })
 }
 
-function toPercent(raw: string) {
+function parseScore(raw: string, scale: ScoreScale) {
   const value = Number(raw.replace(',', '.').trim())
-  if (!Number.isFinite(value) || value < 0 || value > 1000) return null
-  return value > 100 ? value / 10 : value
+  const maximum = scale === 'percentual' ? 100 : 1000
+  if (!Number.isFinite(value) || value < 0 || value > maximum) return null
+  return value
 }
 
 function downloadTemplate() {
@@ -53,6 +58,12 @@ function downloadTemplate() {
 export default function EnemSimulatorImport() {
   const [results, setResults] = useState<StudentResult[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [scoreScale, setScoreScale] = useState<ScoreScale>('pontos_1000')
+  const resultColumns = useMemo(() => [
+    resultColumnHelper.accessor('name', { header: 'Aluno' }),
+    ...(Object.keys(AREA_LABELS) as Area[]).map((area) => resultColumnHelper.accessor((student) => student.scores[area] ?? null, { id: area, header: AREA_LABELS[area], cell: ({ getValue }) => getValue() === null ? '—' : `${Math.round(getValue()!)}${scoreScale === 'percentual' ? '%' : ''}` })),
+    resultColumnHelper.accessor('average', { header: 'Média', cell: ({ getValue }) => getValue() === null ? '—' : `${Math.round(getValue()!)}${scoreScale === 'percentual' ? '%' : ' pontos'}` }),
+  ], [scoreScale])
 
   function handleFile(file: File | null) {
     if (!file) return
@@ -73,7 +84,7 @@ export default function EnemSimulatorImport() {
         const name = row[nameIndex]?.trim()
         if (!name) return []
         const scores = Object.fromEntries((Object.keys(indexes) as Area[]).flatMap((area) => {
-          const score = indexes[area] >= 0 ? toPercent(row[indexes[area]] ?? '') : null
+          const score = indexes[area] >= 0 ? parseScore(row[indexes[area]] ?? '', scoreScale) : null
           return score === null ? [] : [[area, score]]
         })) as Partial<Record<Area, number>>
         const values = Object.values(scores)
@@ -99,9 +110,11 @@ export default function EnemSimulatorImport() {
 
       <section className="rounded border border-border bg-surface p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><h2 className="font-semibold text-content-primary">Importar arquivo</h2><p className="mt-1 text-sm text-content-secondary">Notas de 0 a 100 ou 0 a 1000. Valores acima de 100 são convertidos para percentual.</p></div>
+          <div><h2 className="font-semibold text-content-primary">Importar arquivo</h2><p className="mt-1 text-sm text-content-secondary">Declare a unidade antes da importação. O sistema preserva os valores e não converte pontos em percentual.</p></div>
           <button type="button" onClick={downloadTemplate} className="min-h-10 rounded border border-border px-3 text-sm font-medium text-content-primary hover:bg-surface-subtle">Baixar modelo CSV</button>
         </div>
+        <label htmlFor="enem-score-scale" className="mt-4 block text-sm font-medium text-content-primary">Unidade das notas</label>
+        <select id="enem-score-scale" value={scoreScale} onChange={(event) => { setScoreScale(event.target.value as ScoreScale); setResults([]); setError(null) }} className="mt-2 min-h-10 rounded border border-border bg-canvas px-3 text-sm text-content-primary"><option value="pontos_1000">Pontos, de 0 a 1000</option><option value="percentual">Percentual de acertos, de 0% a 100%</option></select>
         <label htmlFor="enem-simulator-file" className="mt-4 block text-sm font-medium text-content-primary">Arquivo CSV do simulado</label>
         <input id="enem-simulator-file" type="file" accept=".csv,text/csv" onChange={(event) => handleFile(event.target.files?.[0] ?? null)} className="mt-2 block w-full text-sm text-content-secondary" />
         <p className="mt-3 text-xs text-content-secondary">Colunas aceitas: `nome`, `email` (opcional), `linguagens`, `matematica`, `natureza`, `humanas`, `redacao`. Também aceita LC, MT, CN, CH e notas com vírgula decimal.</p>
@@ -110,11 +123,11 @@ export default function EnemSimulatorImport() {
 
       {results.length > 0 && <>
         <section className="rounded border border-border bg-surface p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-content-primary">Leitura da turma</h2><p className="mt-1 text-sm text-content-secondary">Referência institucional convertida: 60%.</p></div><button type="button" onClick={() => window.print()} className="min-h-10 rounded bg-harmonia-green px-3 text-sm font-semibold text-white">Imprimir / Salvar em PDF</button></div>
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-5">{(Object.keys(AREA_LABELS) as Area[]).map((area) => <div key={area} className="rounded border border-border bg-canvas p-3"><p className="text-xs text-content-secondary">{AREA_LABELS[area]}</p><p className="mt-1 text-xl font-semibold text-content-primary">{areaAverages[area] === null ? '—' : `${Math.round(areaAverages[area]!)}%`}</p></div>)}</div>
-          <ul className="mt-4 space-y-2 text-sm text-content-secondary">{(Object.keys(AREA_LABELS) as Area[]).filter((area) => areaAverages[area] !== null && areaAverages[area]! < 60).map((area) => <li key={area}>• {AREA_LABELS[area]} abaixo de 60%: planeje retomada por habilidade e aplique novo conjunto de itens equivalentes.</li>)}</ul>
+          <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-content-primary">Leitura da turma</h2><p className="mt-1 text-sm text-content-secondary">Unidade: {scoreScale === 'percentual' ? 'percentual de acertos' : 'pontos na escala informada pelo simulado'}.</p></div><button type="button" onClick={() => window.print()} className="min-h-10 rounded bg-harmonia-green px-3 text-sm font-semibold text-white">Imprimir / Salvar em PDF</button></div>
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-5">{(Object.keys(AREA_LABELS) as Area[]).map((area) => <div key={area} className="rounded border border-border bg-canvas p-3"><p className="text-xs text-content-secondary">{AREA_LABELS[area]}</p><p className="mt-1 text-xl font-semibold text-content-primary">{areaAverages[area] === null ? '—' : `${Math.round(areaAverages[area]!)}${scoreScale === 'percentual' ? '%' : ' pontos'}`}</p></div>)}</div>
+          {scoreScale === 'percentual' && <ul className="mt-4 space-y-2 text-sm text-content-secondary">{(Object.keys(AREA_LABELS) as Area[]).filter((area) => areaAverages[area] !== null && areaAverages[area]! < 60).map((area) => <li key={area}>• {AREA_LABELS[area]} abaixo de 60%: planeje retomada por habilidade e aplique novo conjunto de itens equivalentes.</li>)}</ul>}
         </section>
-        <section className="overflow-x-auto rounded border border-border bg-surface"><table className="min-w-full text-left text-sm"><thead className="border-b border-border text-content-secondary"><tr><th className="p-3">Aluno</th>{(Object.keys(AREA_LABELS) as Area[]).map((area) => <th key={area} className="p-3">{AREA_LABELS[area]}</th>)}<th className="p-3">Média</th></tr></thead><tbody>{results.map((student) => <tr key={`${student.name}-${student.email}`} className="border-b border-border last:border-0"><td className="p-3 font-medium text-content-primary">{student.name}</td>{(Object.keys(AREA_LABELS) as Area[]).map((area) => <td key={area} className="p-3 text-content-secondary">{student.scores[area] === undefined ? '—' : `${Math.round(student.scores[area]!)}%`}</td>)}<td className="p-3 font-semibold text-content-primary">{student.average === null ? '—' : `${Math.round(student.average)}%`}</td></tr>)}</tbody></table></section>
+        <section className="rounded border border-border bg-surface p-4"><DataTable columns={resultColumns} data={results} searchableColumnId="name" searchPlaceholder="Filtrar alunos..." /></section>
       </>}
 
       <EnemSaeImport />

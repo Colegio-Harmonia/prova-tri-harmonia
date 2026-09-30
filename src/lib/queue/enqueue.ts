@@ -12,6 +12,7 @@ export type GerarProvaBatchInput = {
   config: {
     bimester?: number
     questionCount: number
+    objectivePercentage?: number
     enemBankQuestionIds?: number[]
     assessmentKind?: 'padrao' | 'enem'
     contentPlan?: CurriculumPlanItem[]
@@ -46,6 +47,7 @@ export function buildGerarProvaJobPayloads(input: GerarProvaBatchInput): GerarPr
       subject,
       bimester: input.config.bimester,
       questionCount: input.config.questionCount,
+      objectivePercentage: input.config.objectivePercentage,
       enemBankQuestionIds: bankIds,
       classLabel: input.classLabel,
       assessmentKind: input.config.assessmentKind,

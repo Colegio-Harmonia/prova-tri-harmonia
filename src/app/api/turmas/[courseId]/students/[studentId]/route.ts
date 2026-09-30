@@ -21,18 +21,19 @@ export async function GET(_request: Request, { params }: { params: Promise<{ cou
     if (!course || !student) return NextResponse.json({ error: 'Aluno ou turma não encontrado.' }, { status: 404 })
     const exams = await db.select({ id: generatedExams.id, subject: generatedExams.subject, gradeYear: generatedExams.gradeYear, bimester: generatedExams.bimester, status: generatedExams.status, createdAt: generatedExams.createdAt, appliedAt: generatedExams.appliedAt })
       .from(generatedExams).where(and(eq(generatedExams.examKind, 'prova'), eq(generatedExams.classroomCourseId, courseId), ...(!isStaffSuperuser(currentUser.role) ? [eq(generatedExams.assignedTo, currentUser.id)] : [])))
-    const corrections = exams.length ? await db.select({ examId: examCorrections.examId, status: examCorrections.status, answers: examCorrections.answers, updatedAt: examCorrections.updatedAt })
+    const corrections = exams.length ? await db.select({ examId: examCorrections.examId, status: examCorrections.status, attendanceStatus: examCorrections.attendanceStatus, answers: examCorrections.answers, updatedAt: examCorrections.updatedAt })
       .from(examCorrections).where(and(inArray(examCorrections.examId, exams.map((exam) => exam.id)), eq(examCorrections.classroomStudentId, studentId))) : []
     const byExam = new Map(corrections.map((correction) => [correction.examId, correction]))
     const deliveredExams = exams.map((exam) => {
       const correction = byExam.get(exam.id)
       const answers = (correction?.answers ?? []) as CorrectionAnswer[]
       const answered = answers.filter((answer) => answer.transcribedAnswer?.trim()).length
-      return { ...exam, correctionStatus: correction?.status ?? 'não entregue', grade: correction?.status === 'revisado' ? totalGrade(answers) : null, answered, totalQuestions: answers.length, correctedAt: correction?.updatedAt ?? null }
+      const isAbsent = correction?.attendanceStatus === 'ausente'
+      return { ...exam, correctionStatus: isAbsent ? 'ausente' : correction?.status ?? 'não entregue', grade: !isAbsent && correction?.status === 'revisado' ? totalGrade(answers) : null, answered, totalQuestions: answers.length, correctedAt: correction?.updatedAt ?? null }
     })
     const graded = deliveredExams.filter((exam) => exam.grade !== null)
     const averageGrade = graded.length ? Math.round((graded.reduce((sum, exam) => sum + (exam.grade ?? 0), 0) / graded.length) * 10) / 10 : null
-    return NextResponse.json({ course, student, exams: deliveredExams, statistics: { exams: deliveredExams.length, graded: graded.length, averageGrade, delivered: deliveredExams.filter((exam) => exam.correctionStatus !== 'não entregue').length } })
+    return NextResponse.json({ course, student, exams: deliveredExams, statistics: { exams: deliveredExams.length, graded: graded.length, averageGrade, delivered: deliveredExams.filter((exam) => !['não entregue', 'ausente'].includes(exam.correctionStatus)).length } })
   } catch (err) {
     if (isInsufficientScopeError(err)) return NextResponse.json({ error: 'reauth_required', message: 'Sua conta Google precisa autorizar de novo.' }, { status: 401 })
     console.error('[api/turmas/student] falha ao carregar aluno:', err)

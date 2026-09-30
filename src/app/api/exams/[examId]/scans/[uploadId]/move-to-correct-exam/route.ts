@@ -19,7 +19,7 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
   if ('error' in source) return source.error
   const upload = await db.query.examScanUploads.findFirst({ where: and(eq(examScanUploads.id, uploadId), eq(examScanUploads.examId, examId)) })
   const pages = await db.query.examScanPages.findMany({ where: eq(examScanPages.uploadId, uploadId) })
-  const assignmentIds = [...new Set(pages.map((page) => page.sheetAssignmentId).filter((id): id is number => id !== null))]
+  const assignmentIds = [...new Set(pages.map((page) => page.detectedSheetAssignmentId ?? page.sheetAssignmentId).filter((id): id is number => id !== null))]
   const assignments = assignmentIds.length ? await db.query.examSheetAssignments.findMany({ where: inArray(examSheetAssignments.id, assignmentIds) }) : []
   const targetExamIds = [...new Set(assignments.map((assignment) => assignment.examId))]
   if (!upload || !pages.length || targetExamIds.length !== 1 || targetExamIds[0] === examId || pages.some((page) => page.exceptionCode !== 'SCAN_BELONGS_TO_ANOTHER_EXAM')) {
@@ -32,7 +32,7 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
   await db.transaction(async (tx) => {
     await tx.delete(examScanReadings).where(inArray(examScanReadings.pageId, pages.map((page) => page.id)))
     await tx.delete(examScanProcessingAttempts).where(eq(examScanProcessingAttempts.uploadId, uploadId))
-    await tx.update(examScanPages).set({ sheetAssignmentId: null, sheetPageNumber: null, pageType: null, exceptionCode: null, status: 'pending', updatedAt: new Date() }).where(eq(examScanPages.uploadId, uploadId))
+    await tx.update(examScanPages).set({ detectedSheetAssignmentId: null, sheetAssignmentId: null, sheetPageNumber: null, pageType: null, exceptionCode: null, status: 'pending', updatedAt: new Date() }).where(eq(examScanPages.uploadId, uploadId))
     await tx.update(examScanUploads).set({ examId: targetExamId, updatedAt: new Date() }).where(eq(examScanUploads.id, uploadId))
     await tx.insert(examScanAuditEvents).values([
       { examId, uploadId, action: 'scan_moved_to_correct_exam', actorId: source.currentUser.id, metadata: { targetExamId } },

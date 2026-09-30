@@ -1,8 +1,10 @@
 'use client'
 
-import { useDeferredValue, useEffect, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useState, type FormEvent } from 'react'
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { createColumnHelper } from '@tanstack/react-table'
+import { DataTable, type DataTableFeatures } from '@/components/ui/data-table'
 
 type GroupStats = Record<string, { avg: number | null; count: number }>
 type BloomStats = {
@@ -70,7 +72,7 @@ type InepAxisStats = {
   evolution: Array<{ period: string; count: number; accuracyPercent: number | null }>
 }
 type InepAxisDashboardData = {
-  summary: { classifiedItemCount: number; unclassifiedEnemItemCount: number }
+  summary: { classifiedItemCount: number; unclassifiedEnemItemCount: number; officialQuestionCount: number; officialClassifiedQuestionCount: number; alignedGeneratedQuestionCount: number; evaluatedAnswerCount: number }
   axes: InepAxisStats[]
 }
 type BloomDokCell = {
@@ -102,6 +104,7 @@ type SoloDashboardData = {
   observed: { summary: { classifiedAnswerCount: number; unclassifiedDiscursiveAnswerCount: number }; levels: SoloLevelStats[] }
 }
 type CognitiveProfile = {
+  studentId: string | null
   studentName: string
   overallAverage: number | null
   itemAccuracyPercent: number | null
@@ -115,10 +118,14 @@ type CognitiveProfile = {
   bnccInterventions: Array<{ code: string; summary: string | null; itemCount: number; accuracyPercent: number | null }>
   sustainedDok: { level: string; accuracyPercent: number | null; itemCount: number } | null
   inepHighlights: Array<{ key: string; itemCount: number; accuracyPercent: number | null; averageScore: number | null }>
+  priorities: Array<{ code: string; summary: string | null; accuracyPercent: number | null; itemCount: number; action: string }>
+  assessments: Array<{ examId: number; subject: string; period: string; grade: number; evaluatedItems: number; pendingItems: number }>
+  evidence: { assessmentCount: number; subjectCount: number; periodCount: number; evaluatedItemCount: number; pendingItemCount: number }
   limitations: string[]
 }
 type Performance = {
   overall: { avg: number | null; max: number; min: number; count: number } | null
+  coverage: { reviewedCorrections: number; evaluatedCorrections: number; incompleteCorrections: number; uniqueStudents: number; uniqueExams: number }
   bySubject: GroupStats
   byGradeYear: GroupStats
   byBloomLevel: GroupStats
@@ -129,10 +136,17 @@ type Performance = {
   bloomDokMatrix: BloomDokMatrixData
   soloDashboard: SoloDashboardData
   cognitiveProfiles: CognitiveProfile[]
+  management: { coordinationGroups: ManagementRow[]; schoolSegments: ManagementRow[] }
   byProfessor: GroupStats
   topMissedQuestions: Array<{ examId: number; questionNumber: number; subject: string; gradeYear: number; errorRate: number }>
 }
+type ManagementRow = { key: string; segment: string; gradeYear: number | null; subject: string | null; average: number | null; uniqueStudents: number; uniqueExams: number; reviewedCorrections: number; evaluatedCorrections: number; incompleteCorrections: number }
+type ClassroomRow = { id: string; studentId: string | null; studentName: string; average: number | null; priority: string; assessments: number; evaluatedItems: number }
+type Intervention = { id: number; segment: string; gradeYear: number; subject: string; academicYear: number | null; action: string; ownerName: string; dueDate: string | null; status: 'planejada' | 'em_andamento' | 'concluida' }
 type UserOption = { id: number; name: string }
+type FilterRow = { examId: number; segment: string; gradeYear: number; subject: string; academicYear: number; bimester: number | null; classroomCourseId: string | null; assignedTo: number | null }
+type CourseOption = { id: string; name: string; section?: string | null }
+type Filters = { subject: string; gradeYear: string; segment: string; assignedTo: string; academicYear: string; bimester: string; classroomCourseId: string; examId: string }
 
 const BLOOM_ORDER = ['lembrar', 'compreender', 'aplicar', 'analisar', 'avaliar', 'criar']
 const DOK_ORDER = ['DOK_1', 'DOK_2', 'DOK_3', 'DOK_4']
@@ -174,10 +188,13 @@ const BNCC_STATUS_LABELS: Record<BnccStatus, string> = {
   amostra_insuficiente: 'Amostra insuficiente',
 }
 
-type ReportView = 'geral' | 'bloom' | 'dok' | 'bncc' | 'perfis'
+type ReportView = 'geral' | 'turma' | 'coordenacao' | 'escola' | 'bloom' | 'dok' | 'bncc' | 'perfis'
 
 const VIEW_LABELS: Record<ReportView, string> = {
   geral: 'Visão geral',
+  turma: 'Visão da turma',
+  coordenacao: 'Coordenação',
+  escola: 'Escola',
   bloom: 'Análise Bloom',
   dok: 'Análise DOK',
   bncc: 'Análise BNCC',
@@ -192,6 +209,44 @@ function formatPercent(score: number | null) {
   const percent = toPercent(score)
   return percent === null ? '—' : `${percent}%`
 }
+
+function segmentLabel(segment: string) {
+  if (segment === 'ensino-medio') return 'Ensino Médio'
+  if (segment === 'anos-finais') return 'Anos Finais'
+  return 'Anos Iniciais'
+}
+
+const classroomColumnHelper = createColumnHelper<DataTableFeatures, ClassroomRow>()
+const classroomColumns = [
+  classroomColumnHelper.accessor('studentName', { header: 'Aluno' }),
+  classroomColumnHelper.accessor('average', { header: 'Desempenho', cell: ({ getValue }) => formatPercent(getValue()) }),
+  classroomColumnHelper.accessor('priority', { header: 'Prioridade' }),
+  classroomColumnHelper.accessor('assessments', { header: 'Avaliações' }),
+  classroomColumnHelper.accessor('evaluatedItems', { header: 'Itens avaliados' }),
+  classroomColumnHelper.display({ id: 'report', header: 'Relatório', enableSorting: false, cell: ({ row }) => <Link href={`/desempenho/relatorio?${row.original.studentId ? `studentId=${encodeURIComponent(row.original.studentId)}&` : ''}aluno=${encodeURIComponent(row.original.studentName)}`} className="inline-flex min-h-8 items-center rounded border border-border px-2 text-xs font-medium text-content-primary hover:bg-surface-subtle">Abrir</Link> }),
+]
+
+const managementColumnHelper = createColumnHelper<DataTableFeatures, ManagementRow>()
+const coordinationColumns = [
+  managementColumnHelper.accessor('segment', { header: 'Segmento', cell: ({ getValue }) => segmentLabel(getValue()) }),
+  managementColumnHelper.accessor('gradeYear', { header: 'Série', cell: ({ getValue }) => getValue() ? `${getValue()}º ano` : '—' }),
+  managementColumnHelper.accessor('subject', { header: 'Disciplina', cell: ({ getValue }) => getValue() ?? '—' }),
+  managementColumnHelper.accessor('average', { header: 'Desempenho', cell: ({ getValue }) => formatPercent(getValue()) }),
+  managementColumnHelper.accessor('uniqueStudents', { header: 'Alunos' }),
+  managementColumnHelper.accessor('uniqueExams', { header: 'Avaliações' }),
+  managementColumnHelper.accessor('evaluatedCorrections', { header: 'Participações avaliadas' }),
+  managementColumnHelper.accessor('incompleteCorrections', { header: 'Incompletas' }),
+]
+
+const schoolColumns = [
+  managementColumnHelper.accessor('segment', { header: 'Segmento', cell: ({ getValue }) => segmentLabel(getValue()) }),
+  managementColumnHelper.accessor('average', { header: 'Desempenho', cell: ({ getValue }) => formatPercent(getValue()) }),
+  managementColumnHelper.accessor('uniqueStudents', { header: 'Alunos com evidência' }),
+  managementColumnHelper.accessor('uniqueExams', { header: 'Avaliações' }),
+  managementColumnHelper.accessor('reviewedCorrections', { header: 'Participações revisadas' }),
+  managementColumnHelper.accessor('evaluatedCorrections', { header: 'Participações avaliadas' }),
+  managementColumnHelper.accessor('incompleteCorrections', { header: 'Incompletas' }),
+]
 
 function statusBadgeClass(status: BnccStatus) {
   if (status === 'dominio') return 'bg-status-success-surface text-status-success-content'
@@ -632,14 +687,25 @@ function InepAxisDashboard({ data }: { data: InepAxisDashboardData }) {
         <span className="text-xs text-content-muted">Códigos: DL, CF, SP, CA e EP</span>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <StatTile label="Itens ENEM com eixo" value={data.summary.classifiedItemCount} />
-        <StatTile label="Itens ENEM sem eixo" value={data.summary.unclassifiedEnemItemCount} />
+      <div className="mt-4 rounded border border-status-info-border bg-status-info-surface p-3 text-sm text-status-info-content">
+        <p className="font-semibold">Como interpretar a procedência</p>
+        <p className="mt-1">Questão oficial foi importada do banco ENEM e pode usar a matriz do INEP. Questão autoral alinhada foi criada pela escola ou pela IA com referência pedagógica ao ENEM; ela não deve ser apresentada como item oficial. O desempenho só aparece quando existe resposta efetivamente avaliada.</p>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-3">
+        <StatTile label="Questões oficiais no recorte" value={data.summary.officialQuestionCount} />
+        <StatTile label="Oficiais com matriz completa" value={data.summary.officialClassifiedQuestionCount} />
+        <StatTile label="Autorais alinhadas ao ENEM" value={data.summary.alignedGeneratedQuestionCount} />
+        <StatTile label="Respostas oficiais avaliadas" value={data.summary.evaluatedAnswerCount} />
+        <StatTile label="Respostas com eixo cognitivo" value={data.summary.classifiedItemCount} />
+        <StatTile label="Respostas sem eixo cognitivo" value={data.summary.unclassifiedEnemItemCount} />
       </div>
 
       {data.summary.classifiedItemCount === 0 ? (
         <p className="mt-4 rounded bg-surface-subtle px-3 py-2 text-xs text-content-muted">
-          Nenhuma questão real do banco ENEM com eixo cognitivo apareceu nas correções revisadas desta amostra.
+          {data.summary.officialQuestionCount > 0
+            ? `Há ${data.summary.officialQuestionCount} questão(ões) oficial(is) ENEM neste recorte, mas nenhuma possui resposta avaliada.`
+            : 'Este recorte não possui questões oficiais do banco ENEM. Questões autorais alinhadas à matriz são analisadas separadamente pela BNCC.'}
         </p>
       ) : (
         <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -852,47 +918,53 @@ function SoloDashboard({ data }: { data: SoloDashboardData }) {
         <div>
           <p className="text-sm font-medium text-content-primary">Análise SOLO</p>
           <p className="mt-1 text-xs text-content-muted">
-            SOLO_EXPECTED descreve a estrutura esperada da atividade; SOLO_OBSERVED descreve somente respostas discursivas analisáveis.
+            Compara a complexidade de raciocínio planejada nas questões com a estrutura demonstrada pelos alunos nas respostas discursivas.
           </p>
         </div>
-        <span className="text-xs text-content-muted">Nunca trate SOLO_EXPECTED como desempenho observado</span>
+        <span className="text-xs text-content-muted">O nível planejado da questão não representa, por si só, aprendizagem observada.</span>
+      </div>
+
+      <div className="mt-4 rounded border border-status-info-border bg-status-info-surface p-3 text-sm text-status-info-content">
+        <p className="font-semibold">Como interpretar</p>
+        <p className="mt-1">Leia primeiro o painel da esquerda para entender o que as questões exigiam. Depois, use o painel da direita para verificar como os alunos organizaram as respostas discursivas. Compare apenas níveis com amostra suficiente.</p>
+        <p className="mt-2 text-xs">Pré-estrutural: resposta sem compreensão identificável. Uniestrutural: usa um aspecto relevante. Multiestrutural: reúne vários aspectos ainda separados. Relacional: conecta os aspectos em uma explicação coerente. Abstrato ampliado: generaliza, transfere ou formula novas relações.</p>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatTile label="Atividades com SOLO_EXPECTED" value={data.expected.summary.classifiedItemCount} />
-        <StatTile label="Atividades sem SOLO_EXPECTED" value={data.expected.summary.unclassifiedItemCount} />
-        <StatTile label="Respostas com SOLO_OBSERVED" value={data.observed.summary.classifiedAnswerCount} />
-        <StatTile label="Discursivas sem SOLO_OBSERVED" value={data.observed.summary.unclassifiedDiscursiveAnswerCount} />
+        <StatTile label="Questões com nível planejado" value={data.expected.summary.classifiedItemCount} />
+        <StatTile label="Questões sem nível planejado" value={data.expected.summary.unclassifiedItemCount} />
+        <StatTile label="Respostas discursivas analisadas" value={data.observed.summary.classifiedAnswerCount} />
+        <StatTile label="Respostas discursivas sem análise" value={data.observed.summary.unclassifiedDiscursiveAnswerCount} />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
         {hasExpected ? (
           <SoloLevelBars
-            title="SOLO_EXPECTED das atividades"
-            subtitle="Metadado de design da questão, aplicável a objetivas e discursivas."
+            title="Complexidade planejada nas questões"
+            subtitle="Mostra o nível de organização do conhecimento exigido pela questão, tanto objetiva quanto discursiva."
             levels={data.expected.levels}
             order={SOLO_EXPECTED_ORDER}
           />
         ) : (
-          <p className="rounded bg-surface-subtle px-3 py-2 text-xs text-content-muted">Nenhuma atividade com SOLO_EXPECTED nesta amostra.</p>
+          <p className="rounded bg-surface-subtle px-3 py-2 text-xs text-content-muted">Nenhuma questão possui nível de complexidade planejado nesta amostra.</p>
         )}
 
         {hasObserved ? (
           <SoloLevelBars
-            title="SOLO_OBSERVED das respostas"
-            subtitle="Estrutura real demonstrada em respostas discursivas; objetivas não entram."
+            title="Complexidade demonstrada nas respostas"
+            subtitle="Mostra como o aluno organizou o conhecimento nas respostas discursivas; questões objetivas não entram nesta leitura."
             levels={data.observed.levels}
             order={SOLO_OBSERVED_ORDER}
           />
         ) : (
-          <p className="rounded bg-surface-subtle px-3 py-2 text-xs text-content-muted">Nenhuma resposta discursiva com SOLO_OBSERVED nesta amostra.</p>
+          <p className="rounded bg-surface-subtle px-3 py-2 text-xs text-content-muted">Nenhuma resposta discursiva possui análise de complexidade nesta amostra.</p>
         )}
       </div>
     </div>
   )
 }
 
-function CognitiveProfiles({ profiles, studentSearch }: { profiles: CognitiveProfile[]; studentSearch: string }) {
+function CognitiveProfiles({ profiles, studentSearch, reportQuery }: { profiles: CognitiveProfile[]; studentSearch: string; reportQuery: string }) {
   const normalizedSearch = studentSearch.trim().toLocaleLowerCase('pt-BR')
   const visibleProfiles = normalizedSearch
     ? profiles.filter((profile) => profile.studentName.toLocaleLowerCase('pt-BR').includes(normalizedSearch))
@@ -914,7 +986,7 @@ function CognitiveProfiles({ profiles, studentSearch }: { profiles: CognitivePro
 
       <div className="mt-4 space-y-3">
         {visibleProfiles.map((profile) => (
-          <div key={profile.studentName} className="rounded-lg border border-border bg-surface-subtle p-3">
+          <div key={profile.studentId ?? profile.studentName} className="rounded-lg border border-border bg-surface-subtle p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold text-content-primary">{profile.studentName}</p>
@@ -925,7 +997,7 @@ function CognitiveProfiles({ profiles, studentSearch }: { profiles: CognitivePro
               <div className="text-right">
                 <p className="text-2xl font-semibold text-content-primary">{formatPercent(profile.overallAverage)}</p>
                 <p className="text-xs text-content-muted">{profile.sampleSize} itens · {profile.itemAccuracyPercent ?? '—'}{profile.itemAccuracyPercent !== null ? '%' : ''}</p>
-                <Link href={`/desempenho/relatorio?aluno=${encodeURIComponent(profile.studentName)}`} className="mt-2 inline-flex min-h-8 items-center rounded border border-border px-2 text-xs font-medium text-content-primary hover:bg-surface-subtle">
+                <Link href={`/desempenho/relatorio?${profile.studentId ? `studentId=${encodeURIComponent(profile.studentId)}&` : ''}aluno=${encodeURIComponent(profile.studentName)}${reportQuery ? `&${reportQuery}` : ''}`} className="mt-2 inline-flex min-h-8 items-center rounded border border-border px-2 text-xs font-medium text-content-primary hover:bg-surface-subtle">
                   Abrir relatório
                 </Link>
               </div>
@@ -999,51 +1071,245 @@ function CognitiveProfiles({ profiles, studentSearch }: { profiles: CognitivePro
   )
 }
 
+function ClassroomView({ data }: { data: Performance }) {
+  const bands = [
+    { label: 'Abaixo de 40%', count: data.cognitiveProfiles.filter((profile) => (profile.overallAverage ?? 0) < 4).length, tone: 'bg-status-danger-surface' },
+    { label: '40% a 59%', count: data.cognitiveProfiles.filter((profile) => (profile.overallAverage ?? 0) >= 4 && (profile.overallAverage ?? 0) < 6).length, tone: 'bg-status-warning-surface' },
+    { label: '60% a 79%', count: data.cognitiveProfiles.filter((profile) => (profile.overallAverage ?? 0) >= 6 && (profile.overallAverage ?? 0) < 8).length, tone: 'bg-status-info-surface' },
+    { label: '80% ou mais', count: data.cognitiveProfiles.filter((profile) => (profile.overallAverage ?? 0) >= 8).length, tone: 'bg-status-success-surface' },
+  ]
+  const rows: ClassroomRow[] = data.cognitiveProfiles.map((profile) => {
+    const priority = profile.priorities[0]
+    return {
+      id: profile.studentId ?? profile.studentName,
+      studentId: profile.studentId,
+      studentName: profile.studentName,
+      average: profile.overallAverage,
+      priority: priority ? `${priority.code} · ${priority.accuracyPercent}%` : 'Sem prioridade com amostra mínima',
+      assessments: profile.evidence.assessmentCount,
+      evaluatedItems: profile.evidence.evaluatedItemCount,
+    }
+  })
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <StatTile label="Alunos com evidência" value={data.coverage.uniqueStudents} />
+        <StatTile label="Avaliações" value={data.coverage.uniqueExams} />
+        <StatTile label="Correções avaliadas" value={data.coverage.evaluatedCorrections} />
+        <StatTile label="Correções incompletas" value={data.coverage.incompleteCorrections} />
+        <StatTile label="Desempenho" value={formatPercent(data.overall?.avg ?? null)} />
+      </div>
+
+      <div className="rounded border border-border bg-surface p-4">
+        <h2 className="font-semibold text-content-primary">Distribuição dos alunos</h2>
+        <p className="mt-1 text-xs text-content-muted">Faixas calculadas com o desempenho médio de cada aluno no mesmo recorte.</p>
+        <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {bands.map((band) => <div key={band.label} className={`rounded p-3 ${band.tone}`}><p className="text-xs text-content-secondary">{band.label}</p><p className="mt-1 text-2xl font-semibold text-content-primary">{band.count}</p></div>)}
+        </div>
+      </div>
+
+      <div className="rounded border border-border bg-surface p-4">
+        <h2 className="font-semibold text-content-primary">Matriz aluno × habilidade prioritária</h2>
+        <p className="mt-1 text-xs text-content-muted">Mostra a prioridade BNCC mais urgente de cada aluno. Abra o relatório para ver as evidências e a trajetória.</p>
+        <DataTable className="mt-4" columns={classroomColumns} data={rows} searchableColumnId="studentName" searchPlaceholder="Filtrar alunos..." />
+      </div>
+    </div>
+  )
+}
+
+function InterventionTracker({ groups, academicYear }: { groups: ManagementRow[]; academicYear: string }) {
+  const actionable = groups.filter((group) => group.gradeYear && group.subject)
+  const [items, setItems] = useState<Intervention[]>([])
+  const [groupKey, setGroupKey] = useState(actionable[0]?.key ?? '')
+  const [action, setAction] = useState('')
+  const [ownerName, setOwnerName] = useState('')
+  const [dueDate, setDueDate] = useState('')
+  const [message, setMessage] = useState('')
+  const load = useCallback(async () => {
+    const query = academicYear ? `?academicYear=${academicYear}` : ''
+    const response = await fetch(`/api/analytics/interventions${query}`)
+    if (response.ok) setItems((await response.json()).interventions)
+  }, [academicYear])
+  useEffect(() => { void load() }, [load])
+  async function createIntervention(event: FormEvent) {
+    event.preventDefault()
+    const group = actionable.find((candidate) => candidate.key === groupKey)
+    if (!group) return
+    const response = await fetch('/api/analytics/interventions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ segment: group.segment, gradeYear: group.gradeYear, subject: group.subject, academicYear: academicYear || new Date().getFullYear(), action, ownerName, dueDate }) })
+    const body = await response.json()
+    if (!response.ok) { setMessage(body.error ?? 'Não foi possível salvar.'); return }
+    setAction(''); setOwnerName(''); setDueDate(''); setMessage('Intervenção registrada.'); await load()
+  }
+  async function changeStatus(id: number, status: Intervention['status']) {
+    const response = await fetch('/api/analytics/interventions', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, status }) })
+    if (response.ok) await load()
+  }
+  return <div className="rounded border border-border bg-surface p-4">
+    <h2 className="font-semibold text-content-primary">Acompanhamento das intervenções</h2>
+    <p className="mt-1 text-xs text-content-muted">Registre responsável e prazo para transformar o diagnóstico em acompanhamento institucional.</p>
+    <form onSubmit={createIntervention} className="mt-4 grid gap-3 lg:grid-cols-4">
+      <select aria-label="Grupo da intervenção" value={groupKey} onChange={(event) => setGroupKey(event.target.value)} className="rounded border border-border bg-canvas px-2 py-2 text-sm" required>{actionable.map((group) => <option key={group.key} value={group.key}>{segmentLabel(group.segment)} · {group.gradeYear}º · {group.subject}</option>)}</select>
+      <input aria-label="Ação pedagógica" value={action} onChange={(event) => setAction(event.target.value)} placeholder="Ação pedagógica" className="rounded border border-border bg-canvas px-3 py-2 text-sm" required />
+      <input aria-label="Responsável" value={ownerName} onChange={(event) => setOwnerName(event.target.value)} placeholder="Responsável" className="rounded border border-border bg-canvas px-3 py-2 text-sm" required />
+      <div className="flex gap-2"><input aria-label="Prazo" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} className="min-w-0 flex-1 rounded border border-border bg-canvas px-2 py-2 text-sm" /><button className="rounded bg-harmonia-green px-3 py-2 text-sm font-semibold text-action-primary-foreground">Registrar</button></div>
+    </form>
+    {message && <p className="mt-2 text-xs text-content-secondary">{message}</p>}
+    <div className="mt-4 space-y-2">{items.map((item) => <div key={item.id} className="grid gap-2 rounded bg-surface-subtle p-3 text-sm lg:grid-cols-[1.2fr_2fr_1fr_1fr] lg:items-center"><div><p className="font-medium text-content-primary">{segmentLabel(item.segment)} · {item.gradeYear}º · {item.subject}</p><p className="text-xs text-content-muted">Prazo: {item.dueDate ? new Date(`${item.dueDate}T12:00:00`).toLocaleDateString('pt-BR') : 'não definido'}</p></div><p className="text-content-secondary">{item.action}</p><p className="text-content-secondary">{item.ownerName}</p><select aria-label={`Status de ${item.action}`} value={item.status} onChange={(event) => changeStatus(item.id, event.target.value as Intervention['status'])} className="rounded border border-border bg-canvas px-2 py-2"><option value="planejada">Planejada</option><option value="em_andamento">Em andamento</option><option value="concluida">Concluída</option></select></div>)}</div>
+  </div>
+}
+
+function CoordinationView({ data, academicYear }: { data: Performance; academicYear: string }) {
+  const priorities = data.management.coordinationGroups
+    .filter((group) => group.evaluatedCorrections === 0 || (group.average ?? 10) < 6 || group.incompleteCorrections > 0)
+    .sort((a, b) => (a.evaluatedCorrections === 0 ? -1 : 0) - (b.evaluatedCorrections === 0 ? -1 : 0) || (a.average ?? 99) - (b.average ?? 99))
+    .slice(0, 8)
+  return <div className="space-y-6">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <StatTile label="Alunos com evidência" value={data.coverage.uniqueStudents} />
+      <StatTile label="Avaliações" value={data.coverage.uniqueExams} />
+      <StatTile label="Participações avaliadas" value={data.coverage.evaluatedCorrections} />
+      <StatTile label="Participações incompletas" value={data.coverage.incompleteCorrections} />
+    </div>
+    <div className="rounded border border-border bg-surface p-4">
+      <h2 className="font-semibold text-content-primary">Comparação pedagógica por segmento, série e disciplina</h2>
+      <p className="mt-1 text-xs text-content-muted">Cada linha explicita alunos, avaliações e participações do recorte. Use a comparação para localizar apoio pedagógico; ela não mede qualidade docente.</p>
+      <DataTable className="mt-4" columns={coordinationColumns} data={data.management.coordinationGroups} searchableColumnId="subject" searchPlaceholder="Filtrar por disciplina..." />
+    </div>
+    <div className="rounded border border-border bg-surface p-4">
+      <h2 className="font-semibold text-content-primary">Encaminhamentos sugeridos</h2>
+      <p className="mt-1 text-xs text-content-muted">Lista gerada pelo recorte atual para orientar a reunião pedagógica. Registre abaixo a ação, o responsável e o prazo de acompanhamento.</p>
+      {priorities.length ? <ol className="mt-4 space-y-2 text-sm text-content-secondary">{priorities.map((group, index) => <li key={group.key} className="rounded bg-surface-subtle p-3"><span className="font-semibold text-content-primary">{index + 1}. {segmentLabel(group.segment)} · {group.gradeYear}º ano · {group.subject}</span><p className="mt-1">{group.evaluatedCorrections === 0 ? `Há ${group.uniqueExams} avaliação(ões) atribuída(s), mas nenhuma participação revisada para análise.` : group.incompleteCorrections > 0 ? `Revisar ${group.incompleteCorrections} participação(ões) incompleta(s) antes da leitura pedagógica.` : `Desempenho de ${formatPercent(group.average)} em ${group.evaluatedCorrections} participação(ões): planejar retomada e nova verificação com itens equivalentes.`}</p></li>)}</ol> : <p className="mt-3 text-sm text-content-muted">Nenhum encaminhamento automático neste recorte.</p>}
+    </div>
+    <InterventionTracker groups={data.management.coordinationGroups} academicYear={academicYear} />
+  </div>
+}
+
+function SchoolView({ data }: { data: Performance }) {
+  const recurringDifficulty = data.cognitiveProfiles.filter((profile) => profile.priorities.length > 0 && profile.evidence.assessmentCount >= 2).length
+  return <div className="space-y-6">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <StatTile label="Alunos com evidência" value={data.coverage.uniqueStudents} />
+      <StatTile label="Avaliações" value={data.coverage.uniqueExams} />
+      <StatTile label="Participações revisadas" value={data.coverage.reviewedCorrections} />
+      <StatTile label="Participações incompletas" value={data.coverage.incompleteCorrections} />
+      <StatTile label="Dificuldade recorrente" value={recurringDifficulty} />
+    </div>
+    <div className="rounded border border-border bg-surface p-4">
+      <h2 className="font-semibold text-content-primary">Síntese institucional por segmento</h2>
+      <p className="mt-1 text-xs text-content-muted">Desempenho descritivo acompanhado dos denominadores. Diferenças entre segmentos podem refletir avaliações e coberturas distintas.</p>
+      <DataTable className="mt-4" columns={schoolColumns} data={data.management.schoolSegments} searchableColumnId="segment" searchPlaceholder="Filtrar por segmento..." />
+    </div>
+  </div>
+}
+
 export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean }) {
   const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
   const requestedView = searchParams.get('visao')
-  const activeView: ReportView = requestedView === 'bloom' || requestedView === 'dok' || requestedView === 'bncc' || requestedView === 'perfis' ? requestedView : 'geral'
+  const activeView: ReportView = requestedView === 'turma' || requestedView === 'bloom' || requestedView === 'dok' || requestedView === 'bncc' || requestedView === 'perfis' || (isSuperuser && (requestedView === 'coordenacao' || requestedView === 'escola')) ? requestedView as ReportView : 'geral'
   const [data, setData] = useState<Performance | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [professors, setProfessors] = useState<UserOption[]>([])
-  const [filters, setFilters] = useState({ subject: '', gradeYear: '', segment: '', assignedTo: '', academicYear: '', bimester: '' })
+  const [filterRows, setFilterRows] = useState<FilterRow[]>([])
+  const [assessments, setAssessments] = useState<Array<{ id: number; label: string }>>([])
+  const [courses, setCourses] = useState<CourseOption[]>([])
+  const [filters, setFilters] = useState<Filters>(() => ({
+    subject: searchParams.get('subject') ?? '', gradeYear: searchParams.get('gradeYear') ?? '', segment: searchParams.get('segment') ?? '',
+    assignedTo: searchParams.get('assignedTo') ?? '', academicYear: searchParams.get('academicYear') ?? '', bimester: searchParams.get('bimester') ?? '',
+    classroomCourseId: searchParams.get('classroomCourseId') ?? '', examId: searchParams.get('examId') ?? '',
+  }))
   const [studentSearch, setStudentSearch] = useState('')
   const deferredSubject = useDeferredValue(filters.subject)
 
+  const permittedOptions = useMemo(() => ({
+    subjects: [...new Set(filterRows.map((row) => row.subject))].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    gradeYears: [...new Set(filterRows.filter((row) => !filters.segment || row.segment === filters.segment).map((row) => row.gradeYear))].sort((a, b) => a - b),
+    academicYears: [...new Set(filterRows.map((row) => row.academicYear))].sort((a, b) => b - a),
+  }), [filterRows, filters.segment])
+
+  const filterQuery = useMemo(() => {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(filters)) if (value) params.set(key, value)
+    return params.toString()
+  }, [filters])
+
+  function setFilter(key: keyof Filters, value: string) {
+    const next = { ...filters, [key]: value }
+    if (key === 'segment') next.gradeYear = ''
+    if (key === 'classroomCourseId') next.examId = ''
+    setFilters(next)
+    const params = new URLSearchParams(searchParams.toString())
+    for (const [filterKey, filterValue] of Object.entries(next)) filterValue ? params.set(filterKey, filterValue) : params.delete(filterKey)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }
+
+  function viewHref(view: ReportView) {
+    const params = new URLSearchParams(filterQuery)
+    if (view !== 'geral') params.set('visao', view)
+    return `/desempenho${params.size ? `?${params.toString()}` : ''}`
+  }
+
   function exportCsv() {
     if (!data?.overall) return
-    const rows = [
-      ['Relatório de desempenho', 'Percentual', 'Amostra'],
-      ['Geral', String(toPercent(data.overall.avg) ?? ''), String(data.overall.count)],
-      ...Object.entries(data.bySubject).map(([subject, stat]) => [subject, String(toPercent(stat.avg) ?? ''), String(stat.count)]),
-    ]
+    let rows: string[][]
+    if (activeView === 'coordenacao' || activeView === 'escola') {
+      const groups = activeView === 'coordenacao' ? data.management.coordinationGroups : data.management.schoolSegments
+      rows = [
+        ['Segmento', 'Série', 'Disciplina', 'Desempenho (%)', 'Alunos', 'Avaliações', 'Participações revisadas', 'Participações avaliadas', 'Incompletas'],
+        ...groups.map((group) => [segmentLabel(group.segment), group.gradeYear ? `${group.gradeYear}º ano` : '', group.subject ?? '', String(toPercent(group.average) ?? ''), String(group.uniqueStudents), String(group.uniqueExams), String(group.reviewedCorrections), String(group.evaluatedCorrections), String(group.incompleteCorrections)]),
+      ]
+    } else if (activeView === 'turma' || activeView === 'perfis') {
+      rows = [
+        ['Aluno', 'Desempenho (%)', 'Avaliações', 'Itens avaliados', 'Itens pendentes', 'Prioridade BNCC'],
+        ...data.cognitiveProfiles.map((profile) => [profile.studentName, String(toPercent(profile.overallAverage) ?? ''), String(profile.evidence.assessmentCount), String(profile.evidence.evaluatedItemCount), String(profile.evidence.pendingItemCount), profile.priorities[0]?.code ?? '']),
+      ]
+    } else if (activeView === 'bncc') {
+      rows = [
+        ['Habilidade', 'Descrição', 'Disciplina', 'Série', 'Desempenho (%)', 'Itens', 'Situação'],
+        ...data.bnccDashboard.skills.map((skill) => [skill.code, skill.summary ?? '', skill.primarySubject, skill.primaryGradeYear, String(skill.accuracyPercent ?? ''), String(skill.itemCount), BNCC_STATUS_LABELS[skill.status]]),
+      ]
+    } else {
+      rows = [
+        ['Relatório de desempenho', 'Percentual', 'Amostra'],
+        ['Geral', String(toPercent(data.overall.avg) ?? ''), String(data.overall.count)],
+        ...Object.entries(data.bySubject).map(([subject, stat]) => [subject, String(toPercent(stat.avg) ?? ''), String(stat.count)]),
+      ]
+    }
+    rows.unshift(['Visão', VIEW_LABELS[activeView], 'Gerado em', new Date().toLocaleString('pt-BR')], ['Filtros', filterQuery || 'Sem filtros adicionais'])
     const csv = rows.map((row) => row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(';')).join('\n')
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = 'relatorio-desempenho.csv'
+    anchor.download = `relatorio-desempenho-${activeView}.csv`
     anchor.click()
     URL.revokeObjectURL(url)
   }
 
   useEffect(() => {
-    if (!isSuperuser) return
-    fetch('/api/users')
-      .then((r) => r.json())
-      .then((body) => !body.error && setProfessors(body.users.filter((u: { role: string }) => u.role === 'professor')))
-      .catch(() => {})
+    const requests: Promise<void>[] = [
+      fetch('/api/analytics/performance/filters').then((r) => r.json()).then((body) => {
+        if (!body.error) { setFilterRows(body.rows ?? []); setAssessments(body.assessments ?? []) }
+      }),
+      fetch('/api/turmas').then((r) => r.json()).then((body) => { if (!body.error) setCourses(body.courses ?? []) }).catch(() => {}),
+    ]
+    if (isSuperuser) requests.push(fetch('/api/users').then((r) => r.json()).then((body) => {
+      if (!body.error) setProfessors(body.users.filter((u: { role: string }) => u.role === 'professor'))
+    }))
+    Promise.all(requests).catch(() => {})
   }, [isSuperuser])
 
   useEffect(() => {
     const params = new URLSearchParams()
-    if (isSuperuser) {
-      if (deferredSubject) params.set('subject', deferredSubject)
-      if (filters.gradeYear) params.set('gradeYear', filters.gradeYear)
-      if (filters.segment) params.set('segment', filters.segment)
-      if (filters.assignedTo) params.set('assignedTo', filters.assignedTo)
-    }
+    if (deferredSubject) params.set('subject', deferredSubject)
+    if (filters.gradeYear) params.set('gradeYear', filters.gradeYear)
+    if (filters.segment) params.set('segment', filters.segment)
+    if (isSuperuser && filters.assignedTo) params.set('assignedTo', filters.assignedTo)
     if (filters.academicYear) params.set('academicYear', filters.academicYear)
     if (filters.bimester) params.set('bimester', filters.bimester)
+    if (filters.classroomCourseId) params.set('classroomCourseId', filters.classroomCourseId)
+    if (filters.examId) params.set('examId', filters.examId)
     const controller = new AbortController()
     setError(null)
     fetch(`/api/analytics/performance?${params}`, { signal: controller.signal })
@@ -1055,53 +1321,46 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
       })
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSuperuser, deferredSubject, filters.gradeYear, filters.segment, filters.assignedTo, filters.academicYear, filters.bimester])
+  }, [isSuperuser, deferredSubject, filters.gradeYear, filters.segment, filters.assignedTo, filters.academicYear, filters.bimester, filters.classroomCourseId, filters.examId])
 
   if (error) return <p role="alert" className="text-sm text-status-danger-content">{error}</p>
   if (!data) return <p role="status" aria-live="polite" className="text-sm text-content-muted">Carregando…</p>
 
-  if (!data.overall) {
-    return <p className="text-sm text-content-muted">Nenhuma correção revisada ainda — os números aparecem aqui assim que as primeiras provas forem corrigidas.</p>
-  }
-
   return (
     <div className="space-y-6">
-      {isSuperuser && (
-        <fieldset className="flex flex-wrap gap-2 rounded border border-border bg-surface p-4">
+      <fieldset className="rounded border border-border bg-surface p-4">
           <legend className="sr-only">Filtros de desempenho</legend>
-          <select aria-label="Segmento" value={filters.segment} onChange={(e) => setFilters((f) => ({ ...f, segment: e.target.value }))} className="rounded border border-border px-2 py-1.5 text-sm">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <select aria-label="Segmento" value={filters.segment} onChange={(e) => setFilter('segment', e.target.value)} className="rounded border border-border bg-canvas px-2 py-2 text-sm">
             <option value="">Todos os segmentos</option>
             <option value="anos-iniciais">Anos Iniciais</option>
             <option value="anos-finais">Anos Finais</option>
             <option value="ensino-medio">Ensino Médio</option>
           </select>
-          <input
-            aria-label="Disciplina"
-            placeholder="Disciplina"
-            value={filters.subject}
-            onChange={(e) => setFilters((f) => ({ ...f, subject: e.target.value }))}
-            className="rounded border border-border px-2 py-1.5 text-sm"
-          />
-          <select aria-label="Série" value={filters.gradeYear} onChange={(e) => setFilters((f) => ({ ...f, gradeYear: e.target.value }))} className="rounded border border-border px-2 py-1.5 text-sm">
+          <select aria-label="Disciplina" value={filters.subject} onChange={(e) => setFilter('subject', e.target.value)} className="rounded border border-border bg-canvas px-2 py-2 text-sm"><option value="">Todas as disciplinas</option>{permittedOptions.subjects.map((subject) => <option key={subject} value={subject}>{subject}</option>)}</select>
+          <select aria-label="Série" value={filters.gradeYear} onChange={(e) => setFilter('gradeYear', e.target.value)} className="rounded border border-border bg-canvas px-2 py-2 text-sm">
             <option value="">Todas as séries</option>
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((year) => <option key={year} value={year}>{year}º ano</option>)}
+            {permittedOptions.gradeYears.map((year) => <option key={year} value={year}>{year}º ano</option>)}
           </select>
-          <select aria-label="Professor responsável" value={filters.assignedTo} onChange={(e) => setFilters((f) => ({ ...f, assignedTo: e.target.value }))} className="rounded border border-border px-2 py-1.5 text-sm">
+          <select aria-label="Turma" value={filters.classroomCourseId} onChange={(e) => setFilter('classroomCourseId', e.target.value)} className="rounded border border-border bg-canvas px-2 py-2 text-sm"><option value="">Todas as turmas</option>{courses.map((course) => <option key={course.id} value={course.id}>{course.name}{course.section ? ` · ${course.section}` : ''}</option>)}</select>
+          <select aria-label="Avaliação" value={filters.examId} onChange={(e) => setFilter('examId', e.target.value)} className="rounded border border-border bg-canvas px-2 py-2 text-sm"><option value="">Todas as avaliações</option>{assessments.filter((assessment) => !filters.classroomCourseId || filterRows.some((row) => row.examId === assessment.id && row.classroomCourseId === filters.classroomCourseId)).map((assessment) => <option key={assessment.id} value={assessment.id}>{assessment.label}</option>)}</select>
+          {isSuperuser && <select aria-label="Professor responsável" value={filters.assignedTo} onChange={(e) => setFilter('assignedTo', e.target.value)} className="rounded border border-border bg-canvas px-2 py-2 text-sm">
             <option value="">Todos os professores</option>
             {professors.map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
-          </select>
-          <input aria-label="Ano letivo" placeholder="Ano letivo" inputMode="numeric" value={filters.academicYear} onChange={(e) => setFilters((f) => ({ ...f, academicYear: e.target.value }))} className="w-28 rounded border border-border px-2 py-1.5 text-sm" />
-          <select aria-label="Bimestre" value={filters.bimester} onChange={(e) => setFilters((f) => ({ ...f, bimester: e.target.value }))} className="rounded border border-border px-2 py-1.5 text-sm"><option value="">Todos os bimestres</option>{[1, 2, 3, 4].map((b) => <option key={b} value={b}>{b}º bimestre</option>)}</select>
-        </fieldset>
-      )}
+          </select>}
+          <select aria-label="Ano letivo" value={filters.academicYear} onChange={(e) => setFilter('academicYear', e.target.value)} className="rounded border border-border bg-canvas px-2 py-2 text-sm"><option value="">Todos os anos letivos</option>{permittedOptions.academicYears.map((year) => <option key={year} value={year}>{year}</option>)}</select>
+          <select aria-label="Bimestre" value={filters.bimester} onChange={(e) => setFilter('bimester', e.target.value)} className="rounded border border-border bg-canvas px-2 py-2 text-sm"><option value="">Todos os bimestres</option>{[1, 2, 3, 4].map((b) => <option key={b} value={b}>{b}º bimestre</option>)}</select>
+          </div>
+          <div className="mt-3 flex justify-end"><button type="button" onClick={() => { const cleared = { subject: '', gradeYear: '', segment: '', assignedTo: '', academicYear: '', bimester: '', classroomCourseId: '', examId: '' }; setFilters(cleared); router.replace(activeView === 'geral' ? pathname : `${pathname}?visao=${activeView}`, { scroll: false }) }} className="min-h-9 rounded border border-border px-3 text-sm text-content-secondary">Limpar filtros</button></div>
+      </fieldset>
 
       <nav className="flex flex-wrap gap-2 border-b border-border pb-3" aria-label="Visões de desempenho">
-        {(Object.keys(VIEW_LABELS) as ReportView[]).map((view) => (
+        {(Object.keys(VIEW_LABELS) as ReportView[]).filter((view) => isSuperuser || (view !== 'coordenacao' && view !== 'escola')).map((view) => (
           <Link
             key={view}
-            href={view === 'geral' ? '/desempenho' : `/desempenho?visao=${view}`}
+            href={viewHref(view)}
             aria-current={activeView === view ? 'page' : undefined}
             className={`min-h-10 rounded px-3 py-2 text-sm font-medium ${activeView === view ? 'bg-harmonia-green text-action-primary-foreground' : 'text-content-secondary hover:bg-surface-subtle hover:text-content-primary'}`}
           >
@@ -1115,7 +1374,9 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
         <button type="button" onClick={exportCsv} className="min-h-10 rounded border border-border px-3 text-sm font-medium text-content-primary">Exportar CSV do recorte</button>
       </div>
 
-      <section id={`performance-view-${activeView}`} tabIndex={-1} aria-label={VIEW_LABELS[activeView]} className="space-y-6">
+      {!data.overall && <p className="rounded border border-border bg-surface p-4 text-sm text-content-muted">Nenhuma resposta avaliada neste recorte. Os filtros continuam disponíveis para ajustar a consulta.</p>}
+
+      {data.overall && <section id={`performance-view-${activeView}`} tabIndex={-1} aria-label={VIEW_LABELS[activeView]} className="space-y-6">
       {activeView === 'geral' && <ReportReading overall={data.overall} bySubject={data.bySubject} />}
 
       {activeView === 'geral' && <>
@@ -1132,6 +1393,9 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
           {isSuperuser && <GroupBars title="Por professor" data={data.byProfessor} />}
         </div>
       </>}
+      {activeView === 'turma' && <ClassroomView data={data} />}
+      {activeView === 'coordenacao' && <CoordinationView data={data} academicYear={filters.academicYear} />}
+      {activeView === 'escola' && <SchoolView data={data} />}
 
       {activeView === 'bloom' && <>
         <BloomDashboard data={data.bloomDashboard} />
@@ -1149,7 +1413,7 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
           <input id="student-search" value={studentSearch} onChange={(event) => setStudentSearch(event.target.value)} placeholder="Filtrar por nome" className="mt-2 w-full max-w-sm rounded border border-border bg-canvas px-3 py-2 text-sm text-content-primary" />
           <p className="mt-2 text-xs text-content-secondary">Os filtros de segmento, série, ano e bimestre acima também delimitam os perfis exibidos.</p>
         </div>
-        <CognitiveProfiles profiles={data.cognitiveProfiles} studentSearch={studentSearch} />
+        <CognitiveProfiles profiles={data.cognitiveProfiles} studentSearch={studentSearch} reportQuery={filterQuery} />
       </>}
 
       {activeView === 'geral' && data.topMissedQuestions.length > 0 && (
@@ -1169,7 +1433,7 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
           </div>
         </div>
       )}
-      </section>
+      </section>}
     </div>
   )
 }
