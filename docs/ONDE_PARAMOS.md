@@ -191,6 +191,15 @@ antes de subir o código: sem ela, intervenções e trajetória quebram.
   as migrations e completa as colunas que `schema.ts` declara e a cadeia de
   migrations não cria.
 
+### Decisão 30/09/2026 — regra de domínio individual
+Mantida a regra rigorosa (≥ 80% em ≥ 4 questões de ≥ 2 avaliações), com o
+nome explícito **"Domínio no bimestre"** (e **"Domínio no ano"** na visão
+anual dos gráficos, onde os bimestres se somam). Lembrete fixo da regra
+(`src/components/pedagogy/MasteryRuleReminder.tsx`, texto gerado de
+`MASTERY_RULES`) no topo da aba Habilidades do relatório individual, para
+todos os perfis e também na impressão. Não mudar a regra sem nova decisão
+pedagógica.
+
 ### Validação com dados reais (só leitura, agregados, 30/09/2026)
 - 1.786 correções revisadas, 322 alunos, 83 turmas, 14.563 respostas com
   BNCC, 0 linhas inválidas.
@@ -200,12 +209,12 @@ antes de subir o código: sem ela, intervenções e trajetória quebram.
 
 ## 5. Pendências (em ordem)
 
-1. ⚠️ **Decisão do usuário — não mudar sozinho.** Só 9 de 8.795 habilidades
-   por bimestre chegam a "domínio", porque a regra exige 2 avaliações no
-   mesmo bimestre e em geral há uma prova por disciplina/bimestre (780 ficam
-   "próximo do domínio — limitado pela amostra"). Na visão anual do Bloco 5
-   a regra é alcançável. Opções: manter; exigir 2 avaliações só na visão
-   anual; ou aceitar 1 avaliação com ≥ 6 itens no bimestre.
+1. Painel `/desempenho` (visão BNCC) usa **outra regra** também chamada
+   "Domínio": ≥ 80% com ≥ 3 respostas somando todos os alunos
+   (`bnccDevelopmentStatus` em `api/analytics/performance/route.ts`). É leitura
+   coletiva, diferente do domínio individual. Decidir se renomeia (ex.:
+   "Domínio da turma") para não confundir com "Domínio no bimestre" — a rota
+   está no limite do orçamento de bundle (TD-018).
 2. **Entrega do Bloco 7 (ação da coordenação na tela):** criar e aprovar o
    planejamento de 2027 em `/planejamento`. Os planejamentos de 2026 foram
    importados e nunca aprovados, então "Copiar ano anterior" vai pular todos;

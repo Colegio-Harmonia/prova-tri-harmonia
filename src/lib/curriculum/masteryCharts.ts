@@ -162,10 +162,10 @@ export function interpretSubjects(axes: RadarAxis[]): string[] {
   return notes
 }
 
-export function interpretSkills(axes: RadarAxis[]): string[] {
+export function interpretSkills(axes: RadarAxis[], scope: 'bimestre' | 'ano' = 'bimestre'): string[] {
   if (!axes.length) return ['Nenhuma habilidade desta disciplina no recorte.']
   const count = (category: SkillChartCategory) => axes.filter((axis) => axis.category === category).length
-  const notes = [`${count('dominada')} dominada(s), ${count('em_desenvolvimento')} em desenvolvimento e ${count('nao_avaliada')} ainda não avaliada(s), de ${axes.length} habilidade(s).`]
+  const notes = [`${count('dominada')} com domínio no ${scope}, ${count('em_desenvolvimento')} em desenvolvimento e ${count('nao_avaliada')} ainda não avaliada(s), de ${axes.length} habilidade(s).`]
   const focus = axes.filter((axis) => axis.value !== null && !axis.preliminary && axis.value < 60).sort((a, b) => a.value! - b.value!).slice(0, 3)
   if (focus.length) notes.push(`Prioridade de retomada: ${focus.map((axis) => `${axis.label} (${formatPercentPt(axis.value)})`).join(', ')}.`)
   const preliminary = count('em_desenvolvimento') ? axes.filter((axis) => axis.preliminary).length : 0

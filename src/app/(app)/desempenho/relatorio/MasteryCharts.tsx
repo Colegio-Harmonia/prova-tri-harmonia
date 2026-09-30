@@ -61,7 +61,7 @@ function SubjectDetail({ rows, subject, period }: { rows: StudentMasteryRow[]; s
       <EvidenceList axes={axes} caption={`Evidências por habilidade de ${subject}`} />
     </div>
     {extensive && <p className="mt-2 text-xs text-content-muted">Com {axes.length} habilidades a teia mostra só as avaliadas; o mapa de calor abaixo traz todas.</p>}
-    <Interpretation notes={interpretSkills(axes)} />
+    <Interpretation notes={interpretSkills(axes, period.bimester === null ? 'ano' : 'bimestre')} />
     {(extensive || period.bimester === null) && <Heatmap rows={rows} subject={subject} academicYear={period.academicYear} />}
   </div>
 }
@@ -92,7 +92,7 @@ export default function MasteryCharts({ rows, consolidated }: Props) {
         </select>
       </div>
     </div>
-    <div className="mt-3"><MarkerLegend /></div>
+    <div className="mt-3"><MarkerLegend scope={period.bimester === null ? 'ano' : 'bimestre'} /></div>
 
     <h3 className="mt-5 text-sm font-semibold text-content-primary">Visão geral por disciplina</h3>
     <div className="mt-2 grid gap-4 md:grid-cols-[minmax(0,1fr)_16rem] print:grid-cols-[minmax(0,1fr)_7cm]">
@@ -112,6 +112,6 @@ export default function MasteryCharts({ rows, consolidated }: Props) {
       {/* Na impressão/PDF saem todas as disciplinas, uma após a outra. */}
       <div className="hidden print:block">{subjects.map((item) => <div key={item} className="mt-6"><h3 className="text-sm font-semibold text-content-primary">Detalhe por habilidade — {item}</h3><SubjectDetail rows={rows} subject={item} period={period} /></div>)}</div>
     </>}
-    <p className="mt-4 text-xs text-content-muted">Aproveitamento ponderado pelo peso das questões, com nota parcial das discursivas. “Dominada” exige ao menos 80% em 4 itens de 2 avaliações; abaixo de 3 itens a leitura é preliminar.</p>
+    <p className="mt-4 text-xs text-content-muted">Aproveitamento ponderado pelo peso das questões, com nota parcial das discursivas. “Domínio no bimestre” exige ao menos 80% em 4 itens de 2 avaliações do mesmo bimestre; na visão anual (“Domínio no ano”) as avaliações dos bimestres se somam. Abaixo de 3 itens a leitura é preliminar.</p>
   </section>
 }
