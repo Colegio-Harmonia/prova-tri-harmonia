@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 30/09/2026, fim do dia (Blocos 4, 5 e 6 em produção).
+> Última atualização: 30/09/2026, noite (Blocos 4 a 8 em produção).
 
 ## 1. Fonte da verdade
 
@@ -42,14 +42,17 @@ commitado que existia no Mac foi preservado no branch
 
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 
-- `main` = merge 723ae44 (PR #5), CI verde, publicado em produção.
+- `main` = merge 76ae9f1 (PR #12), CI verde, publicado em produção.
 - Produção: `prova-tri-web` saudável; `TYPESAFE_API_KEY` carregada; migrations
-  até 0045 aplicadas; 50 habilidades salvas em `curriculum_plan_skills`, todas
-  com descrição (backfill do texto oficial BNCC aplicado).
-- Suíte: 74 arquivos / 359 testes.
+  **até 0046** aplicadas (0046 aplicada à mão via `psql` antes do deploy do
+  Bloco 8); 50 habilidades salvas em `curriculum_plan_skills`, todas com
+  descrição (backfill do texto oficial BNCC aplicado).
+- Suíte: 77 arquivos / 373 testes, incluindo 3 de integração com Postgres
+  real em memória (PGlite).
 - Dívida aberta relevante: **TD-018** (bundle de `/desempenho` 133,6 KiB,
-  meta 125; `/desempenho/relatorio` 124,3, meta 120; `/gerar/[id]/revisar`
-  139,0, meta 130), ver `docs/tech-debt.md`.
+  meta 125; `/desempenho/relatorio` 124,9, meta 120; `/gerar/[id]/revisar`
+  139,1, meta 130), ver `docs/tech-debt.md`. As duas últimas estão a menos
+  de 1 KiB do limite: qualquer acréscimo nelas exige code-splitting antes.
 
 ## 4. Relato dos branches de 30/09/2026 (todos mergeados em `main` e apagados)
 
@@ -135,7 +138,7 @@ A regra `coverage/` do `.gitignore` ignorava `src/app/api/curriculum/coverage/`:
 a rota do painel de cobertura existia só no servidor. Regra passou a
 `/coverage/` e a rota entrou no repositório.
 
-### Bloco 7 — `feature/bloco-7-planejamento-interno`
+### PR #10 — `feature/bloco-7-planejamento-interno` (Bloco 7)
 Planejamento pedagógico interno (Prova TRI como fonte oficial).
 - `/planejamento`: lista com filtros (professor vê só os atribuídos),
   "Novo planejamento" (do zero), "Copiar ano anterior" (versões aprovadas →
@@ -156,14 +159,16 @@ Planejamento pedagógico interno (Prova TRI como fonte oficial).
   escritas), `planningRoute.ts`, rotas em `src/app/api/curriculum/plans/**`
   e `plan-versions/**`. Teste de integração com Postgres real em memória
   (`planningService.integration.test.ts`, PGlite como devDependency).
-- **Entrega operacional pendente:** criar e aprovar o planejamento de 2027
-  (copiar 2026 ou criar do zero) — ação da coordenação na tela.
+- Entrega operacional (criar e aprovar 2027) fica com a coordenação — ver
+  Pendências.
 
-### Bloco 8 — `feature/bloco-8-operacao-institucional`
-Liga planejamento, avaliação e intervenção. **Exige a migration
-`drizzle/0046_planning_operations.sql` aplicada em produção ANTES do deploy**
-(intervenções ganham `skill_codes`/`bimester`; nova tabela
-`pedagogical_decision_log`) — sem ela, intervenções e trajetória quebram.
+### PR #12 — `feature/bloco-8-operacao-institucional` (Bloco 8)
+Reaberto do #11, que o GitHub fechou ao apagar o branch base (Bloco 7).
+Liga planejamento, avaliação e intervenção. Migration
+`drizzle/0046_planning_operations.sql` (intervenções ganham
+`skill_codes`/`bimester`; nova tabela `pedagogical_decision_log`) **já
+aplicada em produção** em 30/09, antes do deploy. Em outro ambiente, aplicar
+antes de subir o código: sem ela, intervenções e trajetória quebram.
 1. Aviso na revisão da prova (`/gerar/[id]/revisar`) quando ela não cobre
    habilidades planejadas do bimestre (server component, sem JS extra).
    API: `GET /api/exams/[id]/plan-coverage`.
@@ -201,9 +206,10 @@ Liga planejamento, avaliação e intervenção. **Exige a migration
    "próximo do domínio — limitado pela amostra"). Na visão anual do Bloco 5
    a regra é alcançável. Opções: manter; exigir 2 avaliações só na visão
    anual; ou aceitar 1 avaliação com ≥ 6 itens no bimestre.
-2. `/planejamento`: tela de revisão/aprovação das versões e atribuição de
-   responsáveis (tabelas e `src/lib/curriculum/planningPolicy.ts` já existem;
-   falta UI e API de transição).
+2. **Entrega do Bloco 7 (ação da coordenação na tela):** criar e aprovar o
+   planejamento de 2027 em `/planejamento`. Os planejamentos de 2026 foram
+   importados e nunca aprovados, então "Copiar ano anterior" vai pular todos;
+   para 2027, criar do zero ou importar a planilha de 2027, revisar e aprovar.
 3. Auditoria de relatórios (`docs/AUDITORIA_RELATORIOS_2026-09-29.md`):
    - Etapa 1: conferir os aceites com dados reais (2/2 = 100%, homônimos
      separados, PDF reproduz o recorte, motivo correto para ausência de ENEM).
@@ -211,9 +217,15 @@ Liga planejamento, avaliação e intervenção. **Exige a migration
      com recorte vazio, contagens honestas (alunos/questões/respostas).
    - Etapas 3 e 4 (coordenação/escola, ENEM ampliado): não iniciadas.
 4. TD-018: code-splitting para voltar as 3 rotas às metas de bundle.
-5. Conferir no navegador, logado, o relatório individual (gráficos, evolução,
-   impressão em PDF) e a trajetória de uma turma: a validação de 30/09 foi
-   por testes, prévia renderizada e dados agregados, não pela tela logada.
+5. Conferir no navegador, logado: relatório individual (abas, gráficos,
+   evolução, PDF), trajetória de uma turma, `/planejamento` (lista, editor,
+   fluxo de revisão, exportação, operação do bimestre, indicadores) e o aviso
+   de cobertura na revisão da prova. A validação de 30/09 foi por testes
+   (inclusive integração com PGlite), prévias renderizadas e dados
+   agregados, não pela tela logada.
+6. Sugestões de avaliação/retomada do Bloco 8 levam a `/gerar` e
+   `/atividades`, que ainda escolhem conteúdo por capítulo da planilha: falta
+   aceitar habilidades BNCC pré-preenchidas.
 
 ## 6. Já entregue antes de 30/09 (frente de relatórios, Codex/GPT 29–30/09)
 
