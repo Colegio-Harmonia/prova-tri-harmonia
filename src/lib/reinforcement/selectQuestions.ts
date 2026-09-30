@@ -103,24 +103,32 @@ export function distributeAcrossSkills(
     }
     const years = shuffle([...byYear.keys()])
     for (const year of years) byYear.set(year, shuffle(byYear.get(year)!))
-    const randomized: ReinforcementCandidate[] = []
+    const yearInterleaved: ReinforcementCandidate[] = []
     let remaining = candidates.length
-    // Mantém a variação de Bloom dentro da própria rodada de anos. A ordem
-    // continua aleatória, mas não desperdiça três vagas seguidas no mesmo
-    // nível quando o banco oferece alternativas diferentes.
-    const bloomsInRound = new Set<string | null>()
     while (remaining > 0) {
       for (const year of years) {
-        const yearQueue = byYear.get(year)!
-        const variedIndex = yearQueue.findIndex((candidate) => !bloomsInRound.has(candidate.bloomLevel))
-        const candidate = yearQueue.splice(variedIndex >= 0 ? variedIndex : 0, 1)[0]
+        const candidate = byYear.get(year)!.shift()
         if (candidate) {
-          randomized.push(candidate)
-          bloomsInRound.add(candidate.bloomLevel)
+          yearInterleaved.push(candidate)
           remaining--
         }
       }
-      if (bloomsInRound.size >= new Set(candidates.map((candidate) => candidate.bloomLevel)).size) bloomsInRound.clear()
+    }
+    // Variação de Bloom: a cada vaga, pega o próximo item (na ordem sorteada
+    // por ano) cujo nível ainda não apareceu na rodada; a rodada recomeça
+    // quando todos os níveis disponíveis já saíram. Antes a busca olhava só a
+    // fila de UM ano por vez e repetia o nível quando aquele ano não tinha
+    // alternativa, mesmo havendo outros níveis no banco (teste instável ~17%).
+    const distinctBlooms = new Set(candidates.map((candidate) => candidate.bloomLevel)).size
+    const randomized: ReinforcementCandidate[] = []
+    const bloomsInRound = new Set<string | null>()
+    while (yearInterleaved.length > 0) {
+      let index = yearInterleaved.findIndex((candidate) => !bloomsInRound.has(candidate.bloomLevel))
+      if (index < 0) { bloomsInRound.clear(); index = 0 }
+      const [candidate] = yearInterleaved.splice(index, 1)
+      randomized.push(candidate)
+      bloomsInRound.add(candidate.bloomLevel)
+      if (bloomsInRound.size >= distinctBlooms) bloomsInRound.clear()
     }
     queues.set(skill, randomized)
   }

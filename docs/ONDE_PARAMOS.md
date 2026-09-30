@@ -121,6 +121,15 @@ título. Componente: `src/app/(app)/desempenho/relatorio/ReportTabs.tsx`.
 Bundle da página: 124,9/125 KiB (sem folga — próximo acréscimo precisa de
 code-splitting, ver TD-018).
 
+### PR #8 — `fix/reforco-variacao-bloom`
+O CI do `main` falhou após o PR #7 por um teste instável (~17%) do reforço
+ENEM, sem relação com as abas. Defeito real em `distributeAcrossSkills`
+(`src/lib/reinforcement/selectQuestions.ts`): a variação de Bloom só
+procurava alternativa na fila de um ano por vez e repetia o nível quando
+aquele ano não tinha outro. Agora a ordem sorteada por ano é mantida e uma
+passada garante nível diferente enquanto houver no banco. 0 falhas em 100
+execuções.
+
 ### Validação com dados reais (só leitura, agregados, 30/09/2026)
 - 1.786 correções revisadas, 322 alunos, 83 turmas, 14.563 respostas com
   BNCC, 0 linhas inválidas.
