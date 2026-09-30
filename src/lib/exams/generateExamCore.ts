@@ -22,6 +22,7 @@ import { diagnosticFromIssue } from '@/lib/exams/qualityDiagnostics'
 import { coherenceIssues, EXAM_OVERLAP_ALERT, EXAM_OVERLAP_BLOCK, generateExamBlueprint, generateStagedQuestion, generateUnifiedQuestion, isUnifiedGenerationEnabled, questionCoherenceText, textSimilarity } from '@/lib/generation'
 import { AiBudgetExceededError } from '@/lib/ai/operationBudget'
 import { decideExamGenerationStrategy, examGenerationStrategyInstruction } from '@/lib/ai/examGenerationDecision'
+import { activityGenerationStrategyInstruction, decideActivityGenerationStrategy, type ActivityGenerationDecision, type ActivityPedagogicalIntent } from '@/lib/ai/activityGenerationDecision'
 import { StructuredGenerationError } from '@/lib/gemini/structuredRepair'
 import { getCompletedItems, getPendingSlotNumbers, initializeJobItems, saveItemProgress } from '@/lib/queue/jobProgress'
 import type { CurriculumPlanItem } from '@/types/exam'
@@ -74,6 +75,7 @@ export type GenerateExamCoreParams = {
   bnccCodes?: string[]
   bnccPlan?: ActivityBnccPlanItem[]
   classroomCourseId?: string | null
+  pedagogicalIntent?: ActivityPedagogicalIntent
   contentPlan?: CurriculumPlanItem[]
   assignedTo?: number
   /** Presente somente quando a geração vem da fila; habilita retomada por item. */
@@ -185,6 +187,7 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
 
   let aiQuestions: ExamQuestion[] = []
   let warnings: string[] = []
+  let activityGenerationDecision: ActivityGenerationDecision | null = null
   let qualityTestWarnings: string[] = []
   let qualityTestRepairedNumbers: number[] = []
   let qualityTestReports: Array<{ phase: string; results: Awaited<ReturnType<typeof runQuestionQualityTest>>['report'] }> = []
@@ -228,6 +231,7 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
             })
       const byRowIndex = new Map(curriculum.units.map((unit) => [unit.rowIndex, unit]))
       const planByRowIndex = new Map((params.contentPlan ?? []).map((item) => [item.unitRowIndex, item]))
+      const selectedUnitIndexes = [...new Set(slots.map((slot) => slot.unitRowIndex))]
       const generationDecision = examKind === 'prova' ? await decideExamGenerationStrategy({
         segment: params.segment,
         gradeYear: params.gradeYear,
@@ -235,7 +239,7 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
         assessmentKind,
         objectiveCount: split.objectiveCount + params.enemBankQuestionIds.length,
         discursiveCount: split.discursiveCount,
-        units: [...new Set(slots.map((slot) => slot.unitRowIndex))].map((unitRowIndex) => {
+        units: selectedUnitIndexes.map((unitRowIndex) => {
           const unit = byRowIndex.get(unitRowIndex)
           if (!unit) throw new ExamGenerationInputError(`Capítulo ${unitRowIndex} não foi encontrado no planejamento.`)
           const plan = planByRowIndex.get(unitRowIndex)
@@ -250,13 +254,43 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
           }
         }),
       }) : null
+      if (examKind === 'atividade') {
+        activityGenerationDecision = await decideActivityGenerationStrategy({
+          segment: params.segment,
+          gradeYear: params.gradeYear,
+          subject: params.subject,
+          pedagogicalIntent: params.pedagogicalIntent ?? 'formativa',
+          questionCount: params.questionCount,
+          selectedSkills: selectedBnccCodes.map((code) => ({
+            code,
+            description: selectedBnccDescriptions.get(code) ?? null,
+            plannedQuestions: params.bnccPlan?.find((item) => item.code.trim().toUpperCase() === code)?.questionCount ?? null,
+          })),
+          units: selectedUnitIndexes.map((unitRowIndex) => {
+            const unit = byRowIndex.get(unitRowIndex)
+            if (!unit) throw new ExamGenerationInputError(`Capítulo ${unitRowIndex} não foi encontrado no planejamento.`)
+            return {
+              title: unit.tituloCapitulo,
+              objectives: unit.objetivos.map((objective) => objective.text),
+              bnccCodes: unit.habilidades.status === 'mapeado' ? unit.habilidades.skills.map((skill) => skill.code) : [],
+            }
+          }),
+        })
+      }
       if (generationDecision?.source === 'fallback') warnings.push('Jev indisponível para decidir a estratégia; foi aplicada a estratégia pedagógica equilibrada.')
       else if (generationDecision?.needsReview) warnings.push('Jev indicou baixa segurança no recorte; a estratégia sugerida deve ser conferida na revisão docente.')
+      if (activityGenerationDecision?.source === 'fallback') warnings.push('Jev indisponível para decidir a recuperação; foi aplicada a retomada guiada com progressão gradual.')
+      else if (activityGenerationDecision?.needsReview) warnings.push('Jev indicou baixa segurança na estratégia da atividade; confira a progressão na revisão docente.')
+      const strategyInstruction = generationDecision
+        ? examGenerationStrategyInstruction(generationDecision.strategy)
+        : activityGenerationDecision
+          ? activityGenerationStrategyInstruction(activityGenerationDecision.strategy, selectedBnccCodes)
+          : undefined
       const blueprint = await generateExamBlueprint({
         subject: params.subject,
         gradeYear: params.gradeYear,
         segment: params.segment,
-        ...(generationDecision ? { strategyInstruction: examGenerationStrategyInstruction(generationDecision.strategy) } : {}),
+        ...(strategyInstruction ? { strategyInstruction } : {}),
         slots: slots.map((slot) => {
           const unit = byRowIndex.get(slot.unitRowIndex)
           if (!unit) throw new ExamGenerationInputError(`Capítulo ${slot.unitRowIndex} não foi encontrado no planejamento.`)
@@ -796,7 +830,14 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
         ...examWithBank,
         metadata: {
           ...examWithBank.metadata,
-          activity: { bnccCodes: selectedBnccCodes, bnccPlan: params.bnccPlan ?? null, bnccDescriptions: Object.fromEntries(selectedBnccDescriptions), rubricVersion: 'bncc-v1' },
+          activity: {
+            bnccCodes: selectedBnccCodes,
+            bnccPlan: params.bnccPlan ?? null,
+            bnccDescriptions: Object.fromEntries(selectedBnccDescriptions),
+            pedagogicalIntent: params.pedagogicalIntent ?? 'formativa',
+            strategy: activityGenerationDecision ? { ...activityGenerationDecision.strategy, source: activityGenerationDecision.source, needsReview: activityGenerationDecision.needsReview, readinessProbability: activityGenerationDecision.readinessProbability } : null,
+            rubricVersion: 'bncc-v1',
+          },
         },
       }
     : examWithBank

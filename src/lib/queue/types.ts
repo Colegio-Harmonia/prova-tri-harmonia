@@ -112,6 +112,7 @@ export const gerarAtividadeJobPayloadSchema = z.object({
   subject: z.string().min(1),
   bimester: z.number().int().min(1).max(4).optional(),
   questionCount: z.number().int().min(1).max(30),
+  pedagogicalIntent: z.enum(['formativa', 'recuperacao']).optional().default('formativa'),
   bnccCodes: z.array(z.string().min(3)).min(1),
   // Matriz opcional para compatibilidade com atividades já enfileiradas.
   // Quando presente, distribui exatamente as questões entre as habilidades.
