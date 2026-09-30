@@ -43,6 +43,10 @@ commitado que existia no Mac foi preservado no branch
   desatualizados (TD-015) e migrar cores fixas para tokens em 5 telas.
 - Dívida aberta nova: **TD-018**, orçamento de bundle excedido em 3 rotas,
   com limites elevados temporariamente (ver `docs/tech-debt.md`).
+- **Ainda não publicado no container:** os commits `ce58b21` (aria-label na
+  resposta discursiva) e `46833f0` (cores → tokens em 5 telas) estão no git,
+  mas a imagem `prova-tri:local` em execução é anterior. Entram no próximo
+  `docker compose up -d --build`; são mudanças só visuais/acessibilidade.
 - Produção: `prova-tri-web` saudável; migrations 0044 e 0045 aplicadas; 3
   registros em `curriculum_plans`.
 
