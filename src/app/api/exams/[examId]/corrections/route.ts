@@ -7,6 +7,8 @@ import { auth } from '@/auth/auth'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { buildEmptyAnswers } from '@/lib/corrections/buildEmptyAnswers'
 import { loadExamAndAuthorize, CORRECTABLE_STATUSES } from '@/lib/corrections/authorize'
+import { getExamCompletionSummary } from '@/lib/corrections/examCompletion'
+import { normalizeCorrectionAnswers } from '@/lib/corrections/normalizeCorrectionAnswers'
 
 export async function GET(_req: NextRequest, props: { params: Promise<{ examId: string }> }) {
   const params = await props.params;
@@ -24,7 +26,12 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ examId: 
     orderBy: (t, { asc }) => [asc(t.studentName)],
   })
 
-  return NextResponse.json({ corrections })
+  const completion = await getExamCompletionSummary(examId)
+  const safeCorrections = corrections.map((correction) => ({
+    ...correction,
+    answers: normalizeCorrectionAnswers(correction.answers),
+  }))
+  return NextResponse.json({ corrections: safeCorrections, completion })
 }
 
 const createSchema = z.object({

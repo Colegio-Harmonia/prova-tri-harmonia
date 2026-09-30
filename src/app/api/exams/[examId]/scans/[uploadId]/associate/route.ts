@@ -10,6 +10,7 @@ import { planSheetPages } from '@/lib/scan-sheets/sheetLayout'
 import { queueDiscursiveTranscriptions } from '@/lib/scan-ingest/transcriptionQueue'
 import { enqueuePontuarProvaJob } from '@/lib/queue/enqueue'
 import type { CorrectionAnswer } from '@/types/correction'
+import { questionMaxGrade } from '@/lib/corrections/gradeNormalization'
 
 const schema = z.object({ correctionId: z.number().int().positive() })
 
@@ -53,7 +54,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
       if (!reading?.suggestedLetter) return answer
       const transcribedAnswer = reading.suggestedLetter.trim().toUpperCase()
       const isCorrect = transcribedAnswer === (answer.correctLetter ?? '').trim().toUpperCase()
-      return { ...answer, transcribedAnswer, isCorrect, finalGrade: isCorrect ? 10 : 0 }
+      const maximum = questionMaxGrade(answer)
+      return { ...answer, weight: maximum, transcribedAnswer, isCorrect, finalGrade: isCorrect ? maximum : 0 }
     })
     await tx.update(examCorrections).set({ answers, updatedAt: new Date() }).where(eq(examCorrections.id, correction.id))
     await tx.insert(examScanAuditEvents).values({ examId, uploadId, action: 'scan_manually_associated_to_student', actorId: access.currentUser.id, metadata: { correctionId: correction.id, assignmentId: assignment.id } })

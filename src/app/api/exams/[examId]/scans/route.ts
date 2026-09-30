@@ -13,7 +13,7 @@ export const runtime = 'nodejs'
 
 // Scans podem ser enviados para qualquer prova já aprovada — não é necessário
 // aguardar o status "aplicado", que foi removido do fluxo obrigatório.
-const SCAN_ALLOWED_STATUSES = ['aprovado', 'impresso', 'aplicado', 'corrigido'] as const
+const SCAN_ALLOWED_STATUSES = ['aprovado', 'impresso', 'aplicado', 'parcialmente_corrigida', 'corrigido'] as const
 
 async function removeStagingFile(objectKey: string) {
   try {

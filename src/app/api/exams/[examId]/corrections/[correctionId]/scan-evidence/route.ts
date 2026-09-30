@@ -1,12 +1,12 @@
-import { and, desc, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { auth } from '@/auth/auth'
 import { db } from '@/db/client'
-import { examCorrections, examScanAuditEvents, examScanPages, examScanReadings, examScanUploads, examSheetAssignments } from '@/db/schema'
+import { examCorrections, examScanAuditEvents, examScanPages, examScanReadings, examScanUploads, examSheetAssignments, generationJobs } from '@/db/schema'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { loadExamAndAuthorize } from '@/lib/corrections/authorize'
-import { cropDiscursiveAnswer, DiscursiveOcrError, transcribeDiscursiveAnswer } from '@/lib/scan-ingest/discursiveOcr'
+import { classifyDiscursiveOcrResult, cropDiscursiveAnswer, DiscursiveOcrError, transcribeDiscursiveAnswer } from '@/lib/scan-ingest/discursiveOcr'
 import { stageAndArchivePrivateArtifact } from '@/lib/scan-ingest/privateArtifact'
 import { downloadPrivateScanBytes } from '@/lib/scan-ingest/privateScanContent'
 import { planSheetPages } from '@/lib/scan-sheets/sheetLayout'
@@ -59,8 +59,8 @@ async function evidenceForCorrection(access: AuthorizedAccess, correction: typeo
     })
     .from(examScanPages)
     .innerJoin(examScanUploads, eq(examScanPages.uploadId, examScanUploads.id))
-    .where(and(eq(examScanPages.sheetAssignmentId, assignment.id), eq(examScanUploads.examId, access.exam.id)))
-    .orderBy(desc(examScanPages.createdAt))
+    .where(and(eq(examScanPages.sheetAssignmentId, assignment.id), eq(examScanUploads.examId, access.exam.id), sql`${examScanPages.exceptionCode} IS DISTINCT FROM 'SCAN_BELONGS_TO_ANOTHER_EXAM'`))
+    .orderBy(sql`CASE WHEN ${examScanPages.status} = 'processed' AND ${examScanPages.exceptionCode} IS NULL THEN 0 ELSE 1 END`, desc(examScanPages.createdAt))
   const latestPageBySheetNumber = new Map<number, (typeof pages)[number]>()
   for (const page of pages) {
     if (page.sheetPageNumber && !latestPageBySheetNumber.has(page.sheetPageNumber)) latestPageBySheetNumber.set(page.sheetPageNumber, page)
@@ -69,6 +69,14 @@ async function evidenceForCorrection(access: AuthorizedAccess, correction: typeo
   const readings = pageIds.length
     ? await db.query.examScanReadings.findMany({ where: inArray(examScanReadings.pageId, pageIds) })
     : []
+  const activeJobRows = await db.query.generationJobs.findMany({
+    where: and(eq(generationJobs.jobType, 'transcrever_scan'), inArray(generationJobs.status, ['pendente', 'gerando'])),
+    columns: { payload: true, status: true, availableAt: true },
+  })
+  const activeJobForQuestion = (pageId: number, questionNumber: number) => activeJobRows.find((row) => {
+    const payload = row.payload as { examId?: number; pageId?: number; questionNumbers?: number[] } | null
+    return payload?.examId === access.exam.id && payload.pageId === pageId && (!payload.questionNumbers?.length || payload.questionNumbers.includes(questionNumber))
+  })
   const readingByPageAndQuestion = new Map(readings.map((reading) => [`${reading.pageId}:${reading.questionNumber}`, reading]))
 
   return {
@@ -101,6 +109,8 @@ async function evidenceForCorrection(access: AuthorizedAccess, correction: typeo
           modelReference: reading.modelReference,
           reviewStatus: reading.reviewStatus,
           cropAvailable: Boolean(reading.cropDriveFileId),
+          transcriptionActive: Boolean(activeJobForQuestion(reading.pageId, reading.questionNumber)),
+          transcriptionJobStatus: activeJobForQuestion(reading.pageId, reading.questionNumber)?.status ?? null,
         } : null,
       }
     }),
@@ -143,8 +153,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     .select({ id: examScanPages.id, uploadId: examScanPages.uploadId, canonicalDriveFileId: examScanPages.canonicalDriveFileId })
     .from(examScanPages)
     .innerJoin(examScanUploads, eq(examScanPages.uploadId, examScanUploads.id))
-    .where(and(eq(examScanPages.sheetAssignmentId, assignment.id), eq(examScanPages.sheetPageNumber, expected.pageNumber), eq(examScanPages.pageType, 'discursive'), eq(examScanUploads.examId, access.exam.id)))
-    .orderBy(desc(examScanPages.createdAt))
+    .where(and(eq(examScanPages.sheetAssignmentId, assignment.id), eq(examScanPages.sheetPageNumber, expected.pageNumber), eq(examScanPages.pageType, 'discursive'), eq(examScanUploads.examId, access.exam.id), sql`${examScanPages.exceptionCode} IS DISTINCT FROM 'SCAN_BELONGS_TO_ANOTHER_EXAM'`))
+    .orderBy(sql`CASE WHEN ${examScanPages.status} = 'processed' AND ${examScanPages.exceptionCode} IS NULL THEN 0 ELSE 1 END`, desc(examScanPages.createdAt))
     .limit(1)
   const scannedPage = page[0]
   if (!scannedPage?.canonicalDriveFileId) return NextResponse.json({ error: 'A página discursiva ainda não foi processada ou sua imagem privada não está disponível.' }, { status: 409 })
@@ -152,6 +162,17 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
   let reading = await db.query.examScanReadings.findFirst({ where: and(eq(examScanReadings.pageId, scannedPage.id), eq(examScanReadings.questionNumber, parsed.data.questionNumber)) })
   if (reading?.reviewStatus === 'accepted') return NextResponse.json({ error: 'Esta transcrição já foi confirmada pelo professor e não deve ser substituída pelo OCR.' }, { status: 409 })
   if (reading?.suggestedTranscription) return NextResponse.json({ reading: { id: reading.id, suggestedTranscription: reading.suggestedTranscription, confidence: reading.confidence, modelReference: reading.modelReference }, alreadyAvailable: true })
+  const activeJob = await db.execute(sql`
+    SELECT 1
+    FROM generation_jobs
+    WHERE job_type = 'transcrever_scan'
+      AND status IN ('pendente', 'gerando')
+      AND payload ->> 'examId' = ${String(access.exam.id)}
+      AND payload ->> 'pageId' = ${String(scannedPage.id)}
+      AND (jsonb_array_length(COALESCE(payload -> 'questionNumbers', '[]'::jsonb)) = 0 OR payload -> 'questionNumbers' @> to_jsonb(${parsed.data.questionNumber}::int))
+    LIMIT 1
+  `)
+  if (activeJob.length > 0) return NextResponse.json({ error: 'Esta resposta já está na fila de transcrição. Aguarde o processamento automático terminar.' }, { status: 409 })
   if (!reading) {
     const [created] = await db.insert(examScanReadings).values({ pageId: scannedPage.id, questionNumber: parsed.data.questionNumber, kind: 'discursive', exceptionCode: 'OCR_PROCESSING' }).returning()
     reading = created
@@ -173,14 +194,30 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
       })
     }
     const ocr = await transcribeDiscursiveAnswer({ image: crop, mimeType: 'image/jpeg' })
+    const { blank, legible } = classifyDiscursiveOcrResult(ocr)
     const [updated] = await db.update(examScanReadings).set({
-      suggestedTranscription: ocr.legible ? ocr.transcription : null,
+      suggestedTranscription: legible ? ocr.transcription : null,
+      confirmedTranscription: blank ? null : reading.confirmedTranscription,
       confidence: ocr.confidence,
-      exceptionCode: ocr.legible ? null : 'OCR_UNREADABLE',
+      exceptionCode: blank || legible ? null : 'OCR_UNREADABLE',
+      reviewStatus: blank ? 'rejected' : reading.reviewStatus,
       modelReference: `${ocr.provider}:${ocr.model}`.slice(0, 120),
       updatedAt: new Date(),
     }).where(eq(examScanReadings.id, reading.id)).returning()
-    await db.insert(examScanAuditEvents).values({ examId: access.exam.id, uploadId: scannedPage.uploadId, action: 'teacher_discursive_ocr_requested', actorId: access.currentUser.id, metadata: { pageId: scannedPage.id, readingId: reading.id, questionNumber: parsed.data.questionNumber, legible: ocr.legible } })
+    if (blank) {
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(${correction.id})`)
+        const current = await tx.query.examCorrections.findFirst({ where: eq(examCorrections.id, correction.id) })
+        if (!current || current.status === 'revisado') return
+        const nextAnswers = (current.answers as CorrectionAnswer[]).map((currentAnswer) => {
+          if (currentAnswer.questionNumber !== parsed.data.questionNumber || currentAnswer.type !== 'descritiva') return currentAnswer
+          const manuallyEdited = Boolean(currentAnswer.transcribedAnswer.trim() || currentAnswer.finalGrade !== null || currentAnswer.finalFeedback?.trim())
+          return manuallyEdited ? currentAnswer : { ...currentAnswer, transcribedAnswer: '', finalGrade: 0 }
+        })
+        await tx.update(examCorrections).set({ answers: nextAnswers, updatedAt: new Date() }).where(eq(examCorrections.id, current.id))
+      })
+    }
+    await db.insert(examScanAuditEvents).values({ examId: access.exam.id, uploadId: scannedPage.uploadId, action: 'teacher_discursive_ocr_requested', actorId: access.currentUser.id, metadata: { pageId: scannedPage.id, readingId: reading.id, questionNumber: parsed.data.questionNumber, legible, blank } })
     return NextResponse.json({ reading: { id: updated.id, suggestedTranscription: updated.suggestedTranscription, confidence: updated.confidence, modelReference: updated.modelReference, reviewStatus: updated.reviewStatus, cropAvailable: Boolean(updated.cropDriveFileId) } })
   } catch (error) {
     const failureCode = error instanceof DiscursiveOcrError ? error.failureCode : 'OCR_FAILED'

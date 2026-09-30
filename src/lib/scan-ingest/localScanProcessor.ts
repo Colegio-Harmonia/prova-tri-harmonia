@@ -19,6 +19,8 @@ import { queueDiscursiveTranscriptions } from '@/lib/scan-ingest/transcriptionQu
 import { enqueuePontuarProvaJob } from '@/lib/queue/enqueue'
 import { PDFDocument } from 'pdf-lib'
 import type { CorrectionAnswer } from '@/types/correction'
+import { questionMaxGrade } from '@/lib/corrections/gradeNormalization'
+import { SCAN_PIPELINE_VERSION, SCAN_READER_MODEL } from '@/lib/scan-ingest/scanPipeline'
 
 // ---------------------------------------------------------------------------
 // Gemini Vision para leitura de QR + bolhas
@@ -53,34 +55,40 @@ function geminiModel() {
 // Poppler converts each already-isolated PDF page into the JPEG used by Vision.
 const execFileAsync = promisify(execFile)
 
-async function renderPdfPageToJpeg(pdfBytes: Buffer): Promise<Buffer> {
+async function renderPdfPageToPng(pdfBytes: Buffer): Promise<Buffer> {
   const tempDirectory = await mkdtemp(join(tmpdir(), 'prova-tri-scan-'))
   const inputPath = join(tempDirectory, 'page.pdf')
-  const outputRoot = join(tempDirectory, 'page')
+    const outputRoot = join(tempDirectory, 'page')
   try {
     await writeFile(inputPath, pdfBytes, { mode: 0o600 })
     try {
       await execFileAsync(process.env.PDFTOPPM_PATH || 'pdftoppm', [
-        '-f', '1', '-l', '1', '-r', '200', '-jpeg', '-jpegopt', 'quality=92', '-singlefile', inputPath, outputRoot,
+        '-f', '1', '-l', '1', '-r', '300', '-png', '-singlefile', inputPath, outputRoot,
       ], { maxBuffer: 1024 * 1024 })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       throw new Error(`PDF_RENDER_FAILED: pdftoppm could not rasterize the scan page (${message})`)
     }
-    return await readFile(`${outputRoot}.jpg`)
+    return await readFile(`${outputRoot}.png`)
   } finally {
     await rm(tempDirectory, { recursive: true, force: true })
   }
 }
 
-async function normalizePageToJpeg(fileBytes: Buffer, mimeType: string): Promise<Buffer> {
-  const imageBytes = mimeType === 'application/pdf' ? await renderPdfPageToJpeg(fileBytes) : fileBytes
-
+/**
+ * Prepara a imagem uma única vez e sem compressão com perdas.
+ *
+ * O scanner já entrega JPEG. Reabrir e salvar esse JPEG novamente antes do
+ * leitor destrói justamente os módulos pequenos do QR. PNG é usado como
+ * formato intermediário para preservar os pixels até a retificação/decisão.
+ */
+async function normalizePageToLosslessPng(fileBytes: Buffer, mimeType: string): Promise<Buffer> {
+  const imageBytes = mimeType === 'application/pdf' ? await renderPdfPageToPng(fileBytes) : fileBytes
   return sharp(imageBytes, { failOn: 'none' })
     .rotate()
     .flatten({ background: '#ffffff' })
     .resize({ width: 3000, height: 4200, fit: 'inside', withoutEnlargement: true })
-    .jpeg({ quality: 92, mozjpeg: true })
+    .png({ compressionLevel: 6 })
     .toBuffer()
 }
 
@@ -97,19 +105,41 @@ function describeGeminiVisionError(error: unknown, model: string) {
 
 type LocalOmrResult = {
   qrToken: string | null
+  qrFailureCode?: string | null
+  readerVersion?: string
+  qrEngine?: string
+  qrAttempts?: number
+  qrDurationMs?: number
+  qrRotation?: number
   qualityScore: number
   exceptionCode: string | null
   bubbles: Array<{ answer: string | null; confidence: number; exceptionCode: string | null }>
 }
 
+type OmrProcessError = Error & { killed?: boolean; signal?: string | null; code?: string | number | null }
+
+function normalizeOmrProcessError(error: unknown): Error {
+  const candidate = error as OmrProcessError
+  const message = error instanceof Error ? error.message : String(error)
+  if (candidate?.killed || candidate?.signal === 'SIGTERM' || candidate?.code === 'ETIMEDOUT') {
+    return new Error(`OMR_TIMEOUT: o leitor PTR1 excedeu o tempo máximo; ${message}`)
+  }
+  return new Error(`OMR_PROCESS_FAILED: ${message}`)
+}
+
 async function readLocalOmr(imageBytes: Buffer): Promise<{ result: LocalOmrResult; canonicalJpeg: Buffer }> {
   const directory = await mkdtemp(join(tmpdir(), 'prova-tri-omr-'))
-  const inputPath = join(directory, 'input.jpg')
+  const inputPath = join(directory, 'input.png')
   const outputPath = join(directory, 'canonical.jpg')
   try {
     await writeFile(inputPath, imageBytes, { mode: 0o600 })
     const pythonBin = process.env.OMR_PYTHON_BIN || join(process.cwd(), '.venv-omr', 'bin', 'python')
-    const { stdout } = await execFileAsync(pythonBin, [join(process.cwd(), 'services', 'omr', 'read_ptr1.py'), '--input', inputPath, '--output', outputPath], { maxBuffer: 1024 * 1024, timeout: 30_000 })
+    let stdout: string
+    try {
+      ;({ stdout } = await execFileAsync(pythonBin, [join(process.cwd(), 'services', 'omr', 'read_ptr1.py'), '--input', inputPath, '--output', outputPath], { maxBuffer: 1024 * 1024, timeout: 12_000 }))
+    } catch (error) {
+      throw normalizeOmrProcessError(error)
+    }
     return {
       result: JSON.parse(stdout) as LocalOmrResult,
       canonicalJpeg: await readFile(outputPath),
@@ -165,7 +195,7 @@ async function readLocalOmrWithQrRecovery(imageBytes: Buffer): Promise<{ result:
       .grayscale()
       .normalise()
       .sharpen({ sigma: 1 })
-      .jpeg({ quality: 95, mozjpeg: true })
+      .png({ compressionLevel: 6 })
       .toBuffer()
     const recovered = await readLocalOmr(qrEnhanced)
     // A versão recuperada só substitui a primeira quando trouxe o QR. Caso
@@ -175,7 +205,8 @@ async function readLocalOmrWithQrRecovery(imageBytes: Buffer): Promise<{ result:
     if (firstResult) return firstResult
     const firstMessage = firstError instanceof Error ? firstError.message : String(firstError)
     const recoveryMessage = recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
-    throw new Error(`OMR_RECOVERY_FAILED: initial=${firstMessage}; recovery=${recoveryMessage}`)
+    const code = [firstMessage, recoveryMessage].some((message) => message.startsWith('OMR_TIMEOUT:')) ? 'OMR_TIMEOUT' : 'OMR_RECOVERY_FAILED'
+    throw new Error(`${code}: initial=${firstMessage}; recovery=${recoveryMessage}`)
   }
 }
 
@@ -286,8 +317,8 @@ function resolvePage(params: {
 // Processador principal
 // ---------------------------------------------------------------------------
 
-export async function processLocalScan(input: { uploadId: number; examId: number; attemptId: number }) {
-  const { uploadId, examId, attemptId } = input
+export async function processLocalScan(input: { uploadId: number; examId: number; attemptId: number; pageId?: number }) {
+  const { uploadId, examId, attemptId, pageId } = input
 
   // 1. Carregar dados
   const [upload, attempt, exam] = await Promise.all([
@@ -313,14 +344,17 @@ export async function processLocalScan(input: { uploadId: number; examId: number
 
   // 4. Páginas catalogadas do upload
   const pages = await db.query.examScanPages.findMany({
-    where: eq(examScanPages.uploadId, uploadId),
+    where: pageId
+      ? and(eq(examScanPages.uploadId, uploadId), eq(examScanPages.id, pageId))
+      : eq(examScanPages.uploadId, uploadId),
     orderBy: [asc(examScanPages.pageIndex)],
   })
   if (pages.length === 0) throw new Error('Nenhuma página catalogada para este upload.')
+  if (pageId && pages[0].id !== pageId) throw new Error('A página do job não pertence ao upload informado.')
   await db.transaction(async (tx) => {
     await tx.update(examScanPages)
       .set({ status: 'processing', exceptionCode: null, updatedAt: new Date() })
-      .where(eq(examScanPages.uploadId, uploadId))
+      .where(pageId ? eq(examScanPages.id, pageId) : eq(examScanPages.uploadId, uploadId))
     await tx.update(examScanProcessingAttempts)
       .set({ status: 'delivered', updatedAt: new Date() })
       .where(eq(examScanProcessingAttempts.id, attemptId))
@@ -350,8 +384,11 @@ export async function processLocalScan(input: { uploadId: number; examId: number
         // PDF de 1 página: enviar direto (Gemini 2.0 aceita PDF como inlineData)
         pageBuffers = [{ bytes: fileBytes, mimeType: 'application/pdf' }]
       } else {
-        // Multi-página: extrair cada página como PDF separado
-        for (let i = 0; i < totalPdfPages; i++) {
+        // Jobs por página não precisam reconstruir todas as páginas do PDF.
+        // Em uploads grandes isso reduz bastante CPU/memória e o tempo antes
+        // da leitura; o caminho sem pageId continua processando o lote inteiro.
+        const indexesToExtract = pageId ? [Math.max(0, Math.min(totalPdfPages - 1, pages[0].pageIndex - 1))] : Array.from({ length: totalPdfPages }, (_, index) => index)
+        for (const i of indexesToExtract) {
           const singlePage = await PDFDocument.create()
           const [copiedPage] = await singlePage.copyPages(pdf, [i])
           singlePage.addPage(copiedPage)
@@ -369,7 +406,8 @@ export async function processLocalScan(input: { uploadId: number; examId: number
 
   // 7. Chamar Gemini Vision para cada página catalogada
   const workerPages: WorkerScanResult['pages'] = []
-  const model = 'local:opencv-ptr1'
+  const model = SCAN_READER_MODEL
+  const diagnosticsByPage = new Map<number, Record<string, unknown>>()
 
   for (const page of pages) {
     const pageIndex = page.pageIndex
@@ -377,26 +415,36 @@ export async function processLocalScan(input: { uploadId: number; examId: number
 
     let visionResult: WorkerScanResult['pages'][number]
     try {
-      // The normalized JPEG is both the Vision input and the private page the
-      // review UI displays. This replaces the former n8n callback upload.
-      const normalizedInput = await normalizePageToJpeg(pageBuffer.bytes, pageBuffer.mimeType)
+      // A imagem de análise permanece sem perdas até o leitor. A JPEG canônica
+      // é criada somente depois da retificação e é usada pela revisão/OCR.
+      const normalizedInput = await normalizePageToLosslessPng(pageBuffer.bytes, pageBuffer.mimeType)
       const { result: local, canonicalJpeg } = await readLocalOmrWithQrRecovery(normalizedInput)
       // Uma foto avulsa sempre tem pageIndex=1 no upload. A página real da
       // folha (e, portanto, suas questões) vem do QR assinado, não da ordem em
       // que arquivos foram selecionados ou páginas foram juntadas no PDF.
       const decodedQr = local.qrToken ? verifyPageQrPayload(local.qrToken, signingKeys) : null
-      const sheetPageIndex = decodedQr && decodedQr.pageNumber <= plannedPages.length
-        ? decodedQr.pageNumber - 1
-        : pageIndex - 1
-      const plannedPage = plannedPages[sheetPageIndex]
-      const expectedQuestions = plannedPage
+      const assignment = decodedQr ? assignmentsByPublicId.get(decodedQr.publicId) : null
+      const acceptedQr = Boolean(
+        decodedQr
+        && assignment
+        && assignment.examId === examId
+        && assignment.status === 'emitida'
+        && assignment.layoutVersion === decodedQr.layoutVersion
+        && decodedQr.pageNumber <= plannedPages.length
+        && isIssuedToken(assignment, decodedQr, signingKeys),
+      )
+      const sheetPageIndex = acceptedQr && decodedQr ? decodedQr.pageNumber - 1 : -1
+      const plannedPage = acceptedQr ? plannedPages[sheetPageIndex] : undefined
+      const expectedQuestions = acceptedQr && plannedPage
         ? plannedPage.questions.map((question) => ({
             number: question.number,
             kind: (question.type === 'objetiva' ? 'objective' : 'discursive') as 'objective' | 'discursive',
           }))
         : []
 
-      if (!page.canonicalDriveFileId) {
+      const canonicalSha256 = createHash('sha256').update(canonicalJpeg).digest('hex')
+      const shouldReplaceCanonical = page.canonicalVerifiedSha256 !== canonicalSha256
+      if (shouldReplaceCanonical) {
         await stageAndArchivePrivateArtifact({
           bytes: canonicalJpeg,
           examId,
@@ -432,9 +480,19 @@ export async function processLocalScan(input: { uploadId: number; examId: number
         qrToken: local.qrToken,
         pageType: plannedPage?.kind ?? 'unknown',
         qualityScore: typeof local.qualityScore === 'number' ? Math.min(1, Math.max(0, local.qualityScore)) : null,
-        exceptionCode: local.exceptionCode,
+        exceptionCode: local.exceptionCode ?? local.qrFailureCode ?? null,
         readings,
       }
+      diagnosticsByPage.set(page.id, {
+        readerVersion: local.readerVersion ?? null,
+        qrEngine: local.qrEngine ?? null,
+        qrAttempts: local.qrAttempts ?? null,
+        qrDurationMs: local.qrDurationMs ?? null,
+        qrRotation: local.qrRotation ?? null,
+        qrDecoded: Boolean(local.qrToken),
+        qrAccepted: acceptedQr,
+        canonicalReplaced: shouldReplaceCanonical,
+      })
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       console.error('[processar_scan] Falha no leitor OMR local', {
@@ -444,7 +502,7 @@ export async function processLocalScan(input: { uploadId: number; examId: number
         pageId: page.id,
         pageIndex,
         model,
-        exceptionCode: 'OMR_RUNTIME_ERROR',
+        exceptionCode: errMsg.startsWith('OMR_TIMEOUT:') ? 'OMR_TIMEOUT' : errMsg.startsWith('OMR_PROCESS_FAILED:') ? 'OMR_PROCESS_FAILED' : 'OMR_RUNTIME_ERROR',
         error: errMsg,
       })
       // Auditoria nunca deve impedir que a página seja marcada para revisão.
@@ -452,16 +510,17 @@ export async function processLocalScan(input: { uploadId: number; examId: number
         examId,
         uploadId,
         action: 'local_scan_page_runtime_error',
-        metadata: { attemptId, pageId: page.id, pageIndex, exceptionCode: 'OMR_RUNTIME_ERROR', error: errMsg.slice(0, 500) },
+        metadata: { attemptId, pageId: page.id, pageIndex, exceptionCode: errMsg.startsWith('OMR_TIMEOUT:') ? 'OMR_TIMEOUT' : errMsg.startsWith('OMR_PROCESS_FAILED:') ? 'OMR_PROCESS_FAILED' : 'OMR_RUNTIME_ERROR', error: errMsg.slice(0, 500) },
       }).catch((auditError) => console.error('[processar_scan] Não foi possível registrar auditoria do erro OMR', { examId, uploadId, pageId: page.id, auditError: auditError instanceof Error ? auditError.message : String(auditError) }))
       visionResult = {
         pageIndex,
         qrToken: null,
         pageType: 'unknown',
         qualityScore: null,
-        exceptionCode: 'OMR_RUNTIME_ERROR',
+        exceptionCode: errMsg.startsWith('OMR_TIMEOUT:') ? 'OMR_TIMEOUT' : errMsg.startsWith('OMR_PROCESS_FAILED:') ? 'OMR_PROCESS_FAILED' : 'OMR_RUNTIME_ERROR',
         readings: [],
       }
+      diagnosticsByPage.set(page.id, { runtimeError: errMsg.slice(0, 500) })
     }
 
     workerPages.push(visionResult)
@@ -505,6 +564,10 @@ export async function processLocalScan(input: { uploadId: number; examId: number
             sql`${examScanPages.uploadId} <> ${uploadId}`,
             sql`${examScanPages.exceptionCode} IS DISTINCT FROM 'SUPERSEDED_BY_NEW_SCAN'`,
             sql`${examScanPages.exceptionCode} IS DISTINCT FROM 'DUPLICATE_SHEET_SCAN'`,
+            // A page that was identified as belonging to another exam is not
+            // an authoritative copy of this assignment/page. It must not
+            // block a later valid scan from becoming the current one.
+            sql`${examScanPages.exceptionCode} IS DISTINCT FROM 'SCAN_BELONGS_TO_ANOTHER_EXAM'`,
           ),
           orderBy: [asc(examScanPages.createdAt)],
         })
@@ -518,12 +581,30 @@ export async function processLocalScan(input: { uploadId: number; examId: number
       const finalStatus = resolved.status === 'processed' && !hasReadingException && !isDuplicateScan ? 'processed' as const : 'needs_review' as const
       const finalException = resolved.exceptionCode ?? (isDuplicateScan ? 'DUPLICATE_SHEET_SCAN' : isIncomplete ? 'READING_INCOMPLETE' : hasInvalidReading ? 'READING_REVIEW_REQUIRED' : null)
 
+      // Uma tentativa anterior sem QR pode ter criado leituras para a página
+      // 1 por engano. Elas são apenas sugestões pendentes e precisam sair
+      // quando a página real é descoberta; decisões docentes nunca são
+      // apagadas automaticamente.
+      const existingReadings = await tx.query.examScanReadings.findMany({
+        where: eq(examScanReadings.pageId, page.id),
+        columns: { id: true, questionNumber: true, reviewStatus: true },
+      })
+      for (const existing of existingReadings) {
+        const belongsToResolvedPage = Boolean(expectedReadings?.has(existing.questionNumber))
+        if (existing.reviewStatus === 'pending' && !belongsToResolvedPage) {
+          await tx.delete(examScanReadings).where(eq(examScanReadings.id, existing.id))
+        }
+      }
+
       if (finalStatus === 'processed') processedPages += 1
       else reviewPages += 1
       if (!isDuplicateScan && resolved.assignment?.examId === examId && resolved.resolvedPageType === 'discursive') correctionIdsForOcr.add(resolved.assignment.examCorrectionId)
 
       await tx.update(examScanPages).set({
-        sheetAssignmentId: resolved.assignment?.id ?? null,
+        // A QR from another exam is evidence for routing only. It must never
+        // become the authoritative assignment of a page in this upload.
+        detectedSheetAssignmentId: resolved.assignment?.examId !== examId ? resolved.assignment?.id ?? null : null,
+        sheetAssignmentId: resolved.assignment?.examId === examId ? resolved.assignment.id : null,
         sheetPageNumber: resolved.sheetPageNumber,
         pageType: resolved.resolvedPageType,
         qrTokenDigest: resolved.qrTokenDigest,
@@ -546,7 +627,12 @@ export async function processLocalScan(input: { uploadId: number; examId: number
         const values = {
           kind: reading.kind,
           suggestedLetter: reading.suggestedLetter ?? null,
-          suggestedTranscription: reading.suggestedTranscription ?? null,
+          // Reprocessing a page must not erase a transcription already
+          // produced by the OCR worker while the scan reader was being
+          // retried. The local OMR reader intentionally has no transcription
+          // to provide for discursives.
+          suggestedTranscription: existing?.suggestedTranscription ?? reading.suggestedTranscription ?? null,
+          confirmedTranscription: existing?.confirmedTranscription ?? null,
           confidence: reading.confidence ?? null,
           exceptionCode: readingException,
           modelReference: reading.modelReference ?? null,
@@ -575,7 +661,8 @@ export async function processLocalScan(input: { uploadId: number; examId: number
             const reading = resultPage.readings.find((item) => item.kind === 'objective' && item.questionNumber === answer.questionNumber)
             if (!reading || answer.type !== 'objetiva' || !reading.suggestedLetter) return answer
             const isCorrect = reading.suggestedLetter === (answer.correctLetter ?? '').trim().toUpperCase()
-            return { ...answer, transcribedAnswer: reading.suggestedLetter, isCorrect, finalGrade: isCorrect ? 10 : 0 }
+            const maximum = questionMaxGrade(answer)
+            return { ...answer, weight: maximum, transcribedAnswer: reading.suggestedLetter, isCorrect, finalGrade: isCorrect ? maximum : 0 }
           })
           await tx.update(examCorrections).set({ answers, updatedAt: new Date() }).where(eq(examCorrections.id, correction.id))
           correctionIdsForScoring.add(correction.id)
@@ -583,15 +670,31 @@ export async function processLocalScan(input: { uploadId: number; examId: number
       }
     }
 
-    await tx.update(examScanProcessingAttempts)
-      .set({ status: 'completed', updatedAt: new Date() })
-      .where(eq(examScanProcessingAttempts.id, attemptId))
+    const allPages = await tx.query.examScanPages.findMany({
+      where: eq(examScanPages.uploadId, uploadId),
+      columns: { status: true },
+    })
+    const attemptCompleted = allPages.length > 0 && allPages.every((page) => ['processed', 'needs_review', 'failed'].includes(page.status))
+    if (attemptCompleted) {
+      await tx.update(examScanProcessingAttempts)
+        .set({ status: 'completed', updatedAt: new Date() })
+        .where(eq(examScanProcessingAttempts.id, attemptId))
+    }
 
     await tx.insert(examScanAuditEvents).values({
       examId,
       uploadId,
       action: 'local_scan_processed',
-      metadata: { attemptId, processedPages, reviewPages, model },
+      metadata: {
+        attemptId,
+        pageId: pageId ?? null,
+        processedPages,
+        reviewPages,
+        model,
+        pipelineVersion: SCAN_PIPELINE_VERSION,
+        pageDiagnostics: [...diagnosticsByPage.entries()].map(([diagnosticPageId, metadata]) => ({ pageId: diagnosticPageId, ...metadata })),
+        attemptCompleted,
+      },
     })
   })
 
@@ -617,5 +720,23 @@ export async function processLocalScan(input: { uploadId: number; examId: number
     }
   }
 
-  return { processedPages, reviewPages, readingRefs }
+  return { processedPages, reviewPages, readingRefs, pageId: pageId ?? null }
+}
+
+/** Marca uma página como revisável quando a falha ocorreu fora do leitor
+ * controlado (storage, PDF ou banco) e o job chegou ao limite de tentativas. */
+export async function markLocalScanPageFailure(input: { examId: number; uploadId: number; attemptId: number; pageId: number; error: string }) {
+  await db.transaction(async (tx) => {
+    await tx.update(examScanPages).set({
+      status: 'needs_review',
+      exceptionCode: 'SCAN_PROCESSING_FAILED',
+      updatedAt: new Date(),
+    }).where(and(eq(examScanPages.id, input.pageId), eq(examScanPages.uploadId, input.uploadId)))
+    await tx.insert(examScanAuditEvents).values({
+      examId: input.examId,
+      uploadId: input.uploadId,
+      action: 'local_scan_page_runtime_error',
+      metadata: { attemptId: input.attemptId, pageId: input.pageId, exceptionCode: 'SCAN_PROCESSING_FAILED', error: input.error.slice(0, 500) },
+    })
+  })
 }

@@ -1,11 +1,15 @@
-import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { auth } from '@/auth/auth'
 import { db } from '@/db/client'
-import { examScanPages, examScanReadings, examSheetAssignments } from '@/db/schema'
+import { examCorrections, examScanPages, examScanReadings, examScanUploads, examSheetAssignments, generationJobs } from '@/db/schema'
+import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { loadExamAndAuthorize } from '@/lib/corrections/authorize'
 import { queueDiscursiveTranscriptions } from '@/lib/scan-ingest/transcriptionQueue'
+import { planSheetPages } from '@/lib/scan-sheets/sheetLayout'
+import { latestRelevantTranscriptionPages, sheetPageNumberForQuestion, summarizeTranscriptions, type TranscriptionJob, type TranscriptionPage, type TranscriptionReading, type TranscriptionSummary } from '@/lib/scan-ingest/transcriptionStatus'
+import { normalizeCorrectionAnswers } from '@/lib/corrections/normalizeCorrectionAnswers'
 
 const bodySchema = z.object({
   correctionId: z.number().int().positive().optional(),
@@ -27,26 +31,75 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ examId: 
   const context = await accessForExam(examId)
   if ('error' in context) return context.error
 
-  const statuses = await db.execute(sql`
-    SELECT status, count(*)::int AS count
-    FROM generation_jobs
-    WHERE job_type = 'transcrever_scan'
-      AND payload ->> 'examId' = ${String(examId)}
-    GROUP BY status
-  `) as unknown as Array<{ status: string; count: number }>
-  const counts = Object.fromEntries(statuses.map((row) => [row.status, Number(row.count)])) as Record<string, number>
-  const assignments = await db.query.examSheetAssignments.findMany({ where: eq(examSheetAssignments.examId, examId), columns: { id: true } })
-  const pageIds = assignments.length
-    ? (await db.query.examScanPages.findMany({ where: and(inArray(examScanPages.sheetAssignmentId, assignments.map((assignment) => assignment.id)), eq(examScanPages.pageType, 'discursive')), columns: { id: true } })).map((page) => page.id)
+  const plan = planSheetPages((context.access.exam.generationPayload as ExamGenerationResult).questions)
+  const discursiveQuestionNumbers = new Set(plan.filter((page) => page.kind === 'discursive').flatMap((page) => page.questions.map((question) => question.number)))
+  const assignments = await db.query.examSheetAssignments.findMany({ where: eq(examSheetAssignments.examId, examId), columns: { id: true, examCorrectionId: true } })
+  const correctionIds = assignments.map((assignment) => assignment.examCorrectionId)
+  const corrections = correctionIds.length
+    ? await db.query.examCorrections.findMany({ where: inArray(examCorrections.id, correctionIds), columns: { id: true, answers: true } })
     : []
-  const ready = pageIds.length
-    ? await db.query.examScanReadings.findMany({ where: and(inArray(examScanReadings.pageId, pageIds), eq(examScanReadings.kind, 'discursive'), isNotNull(examScanReadings.suggestedTranscription)), columns: { id: true } })
+  const pages = assignments.length
+    ? await db.select({
+        id: examScanPages.id,
+        sheetAssignmentId: examScanPages.sheetAssignmentId,
+        sheetPageNumber: examScanPages.sheetPageNumber,
+        status: examScanPages.status,
+        canonicalDriveFileId: examScanPages.canonicalDriveFileId,
+        exceptionCode: examScanPages.exceptionCode,
+        createdAt: examScanPages.createdAt,
+      }).from(examScanPages)
+        .innerJoin(examScanUploads, eq(examScanPages.uploadId, examScanUploads.id))
+        .where(and(inArray(examScanPages.sheetAssignmentId, assignments.map((assignment) => assignment.id)), eq(examScanUploads.examId, examId), eq(examScanPages.pageType, 'discursive'), sql`${examScanPages.exceptionCode} IS DISTINCT FROM 'SCAN_BELONGS_TO_ANOTHER_EXAM'`))
+        .orderBy(sql`CASE WHEN ${examScanPages.status} = 'processed' AND ${examScanPages.exceptionCode} IS NULL THEN 0 ELSE 1 END`, desc(examScanPages.createdAt))
     : []
+  const currentPages = latestRelevantTranscriptionPages(pages, (page) => page.sheetAssignmentId !== null && page.sheetPageNumber !== null ? `${page.sheetAssignmentId}:${page.sheetPageNumber}` : null)
+  const latestPageByAssignmentAndNumber = new Map(currentPages.map((page) => [`${page.sheetAssignmentId}:${page.sheetPageNumber}`, page]))
+  const pageIds = currentPages.map((page) => page.id)
+  const readings = pageIds.length
+    ? await db.query.examScanReadings.findMany({ where: and(inArray(examScanReadings.pageId, pageIds), eq(examScanReadings.kind, 'discursive')) })
+    : []
+  const activeJobRows = await db.query.generationJobs.findMany({
+    where: and(eq(generationJobs.jobType, 'transcrever_scan'), inArray(generationJobs.status, ['pendente', 'gerando'])),
+    columns: { payload: true, status: true, availableAt: true },
+  })
+  const activeJobs: TranscriptionJob[] = []
+  for (const row of activeJobRows) {
+    const payload = row.payload as { examId?: number; pageId?: number; questionNumbers?: number[] } | null
+    if (payload?.examId !== examId || !Number.isInteger(payload.pageId)) continue
+    const questionNumbers = Array.isArray(payload.questionNumbers) ? payload.questionNumbers.filter((value): value is number => Number.isInteger(value)) : []
+    activeJobs.push({ pageId: payload.pageId!, questionNumbers, status: row.status as 'pendente' | 'gerando', availableAt: row.availableAt })
+  }
+  const readingsByPage = new Map<number, TranscriptionReading[]>([])
+  for (const reading of readings) readingsByPage.set(reading.pageId, [...(readingsByPage.get(reading.pageId) ?? []), reading])
+  const assignmentsByCorrection = new Map(assignments.map((assignment) => [assignment.examCorrectionId, assignment]))
+  const summaries: Array<{ correctionId: number; summary: TranscriptionSummary }> = []
+  for (const correction of corrections) {
+    const assignment = assignmentsByCorrection.get(correction.id)
+    const pageForQuestion = new Map<number, TranscriptionPage | undefined>()
+    for (const questionNumber of discursiveQuestionNumbers) {
+      const sheetPageNumber = sheetPageNumberForQuestion(plan, questionNumber)
+      pageForQuestion.set(questionNumber, assignment && sheetPageNumber ? latestPageByAssignmentAndNumber.get(`${assignment.id}:${sheetPageNumber}`) : undefined)
+    }
+    const summary = summarizeTranscriptions({
+      answers: normalizeCorrectionAnswers(correction.answers),
+      discursiveQuestionNumbers,
+      pages: currentPages as TranscriptionPage[],
+      readings: pageForQuestion.size ? [...new Set([...pageForQuestion.values()].filter(Boolean).flatMap((page) => readingsByPage.get(page!.id) ?? []))] : [],
+      pageForQuestion,
+      activeJobs,
+    })
+    summaries.push({ correctionId: correction.id, summary })
+  }
+  const aggregate = summaries.reduce((total, item) => {
+    for (const key of ['total', 'completed', 'queued', 'processing', 'deferred', 'needsReview', 'failed', 'active'] as const) total[key] += item.summary[key]
+    if (item.summary.lastUpdatedAt && (!total.lastUpdatedAt || item.summary.lastUpdatedAt > total.lastUpdatedAt)) total.lastUpdatedAt = item.summary.lastUpdatedAt
+    return total
+  }, { total: 0, completed: 0, queued: 0, processing: 0, deferred: 0, needsReview: 0, failed: 0, active: 0, lastUpdatedAt: null as string | null })
   return NextResponse.json({
-    queued: counts.pendente ?? 0,
-    processing: counts.gerando ?? 0,
-    failed: counts.erro ?? 0,
-    ready: ready.length,
+    ...aggregate,
+    ready: aggregate.completed,
+    canApprove: aggregate.active === 0 && aggregate.needsReview === 0,
+    corrections: summaries,
   })
 }
 

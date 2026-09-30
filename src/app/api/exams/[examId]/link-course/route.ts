@@ -24,6 +24,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
 
   const exam = await db.query.generatedExams.findFirst({ where: eq(generatedExams.id, examId) })
   if (!exam) return NextResponse.json({ error: 'Prova não encontrada' }, { status: 404 })
+  if (exam.classroomCourseWorkId && exam.classroomCourseId && exam.classroomCourseId !== parsed.data.classroomCourseId) {
+    return NextResponse.json({ error: 'A turma não pode ser alterada depois que a atividade da prova foi criada no Classroom.' }, { status: 409 })
+  }
 
   const isCoordenacao = isStaffSuperuser(currentUser.role)
   if (!isCoordenacao && exam.assignedTo !== currentUser.id) {

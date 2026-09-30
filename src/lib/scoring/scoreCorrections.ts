@@ -62,7 +62,11 @@ export async function scoreExamCorrections(examId: number): Promise<ScoreCorrect
   if (!exam) throw new Error(`Prova #${examId} não encontrada.`)
 
   const corrections = await db.query.examCorrections.findMany({
-    where: and(eq(examCorrections.examId, examId), eq(examCorrections.status, 'revisado')),
+    where: and(
+      eq(examCorrections.examId, examId),
+      eq(examCorrections.status, 'revisado'),
+      eq(examCorrections.attendanceStatus, 'presente'),
+    ),
   })
 
   const questions = ((exam.generationPayload as { questions?: PayloadQuestion[] })?.questions ?? [])

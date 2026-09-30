@@ -13,22 +13,29 @@ sugestões assim que estiverem prontas.
 2. Na correção, escolhe **Enviar respostas para OCR** para um aluno, ou
    **Ler com OCR** em uma questão específica.
 3. A aplicação cria um job `transcrever_scan` em `generation_jobs`. O payload
-   contém apenas `examId`, `pageId` e `questionNumber`; nunca a imagem nem o
-   texto manuscrito.
-4. `prova-tri-scan-worker` recupera os jobs com `FOR UPDATE SKIP LOCKED`,
+   contém apenas `examId`, `pageId` e a lista `questionNumbers`; quando uma
+   página tem uma única questão, o formato legado `questionNumber` continua
+   aceito. Nunca a imagem nem o texto manuscrito entram no payload.
+4. `ocr-worker` recupera os jobs com `FOR UPDATE SKIP LOCKED`,
    baixa a imagem privada, recorta a questão, arquiva o recorte e executa a
    transcrição.
-5. A tela de correção consulta o progresso a cada quatro segundos enquanto
-   existir trabalho pendente e atualiza a evidência da correção aberta.
-6. A sugestão aparece no campo da questão, ao lado do recorte. O professor
-   ainda deve conferir e usar **Confirmar e usar na correção**; a fila não
-   altera resposta formal, nota sugerida ou nota final.
+5. A tela de correção recebe eventos do banco e consulta um resumo autorizado
+   da fila. A lista mostra `Transcrevendo X/Y` por aluno e a correção aberta
+   mostra o estado de cada resposta discursiva. Uma leitura só é considerada
+   ativa quando existe um job `pendente` ou `gerando` que cobre a questão;
+   um código antigo na leitura, sem job correspondente, vira pendência de
+   revisão manual.
+6. Uma transcrição legível é usada como preenchimento provisório da correção
+   pendente, mas nunca substitui uma resposta ou nota já digitada pelo
+   professor. A aprovação permanece bloqueada enquanto houver OCR ativo ou
+   resposta sem leitura que ainda precise de revisão.
 
 ## Estados visíveis
 
 - `OCR_QUEUED`: aguardando um worker.
 - `OCR_PROCESSING`: worker lendo o manuscrito.
-- transcrição sugerida: pronta para conferência do professor.
+- `OCR_DEFERRED`/`AI_BUDGET_DEFERRED`: aguardando nova janela do provedor.
+- transcrição sugerida: pronta para conferência e ajuste do professor.
 - `OCR_UNREADABLE` ou falha do provedor: a imagem continua disponível e a
   leitura pode ser tentada novamente.
 
@@ -38,7 +45,9 @@ O serviço `ocr-worker` do `docker-compose.yml` executa o worker de
 transcrição. A concorrência é segura porque o claim atômico impede que duas
 instâncias peguem o mesmo job. Cada job conserva o retry padrão da fila. Jobs
 interrompidos por reinício são reenfileirados após 15 minutos, respeitando o
-limite de tentativas.
+limite de tentativas. Quando o job termina sem resultado, as leituras não ficam
+presas em `OCR_PROCESSING`: passam para `OCR_INTERRUPTED` e ficam disponíveis
+para nova tentativa ou decisão manual.
 
 Para diagnosticar em produção:
 
@@ -47,13 +56,20 @@ docker compose ps ocr-worker
 docker compose logs --tail=100 ocr-worker
 ```
 
-Não há migration nesta entrega: `generation_jobs.job_type` é uma coluna de
-texto; a adição de `transcrever_scan` atualiza a enumeração TypeScript e o
-handler do worker.
+A entrega inclui as migrations `0040_scan_transcription_queue_indexes.sql` e
+`0041_scan_transcription_liveness.sql`. A segunda separa o QR detectado de
+outra prova da associação oficial, impede dois jobs ativos para a mesma página
+e instala a proteção de integridade entre upload e correção. Para auditar ou
+reparar estados antigos, use primeiro o modo de simulação e depois `--apply`:
 
-## Limite desta etapa
+```bash
+npm run scan:reconcile
+npm run scan:reconcile -- --apply
+```
 
-Esta primeira versão paraleliza por resposta discursiva. O próximo ganho de
-performance, se o volume/limite do provedor justificar, é agrupar os recortes
-da mesma página em uma única chamada visual, mantendo a separação e a revisão
-por questão.
+## Agrupamento e segurança
+
+Questões discursivas da mesma página são recortadas localmente e enviadas em
+uma única chamada visual. O retorno é separado por questão antes de salvar,
+mantendo revisão, evidência e retry independentes. Uma resposta ilegível não
+é inventada: permanece como pendência para conferência humana.

@@ -12,5 +12,6 @@ export function buildEmptyAnswers(payload: ExamGenerationResult): CorrectionAnsw
     aiSuggestedFeedback: null,
     finalGrade: null,
     finalFeedback: null,
+    weight: q.weight ?? 1,
   }))
 }

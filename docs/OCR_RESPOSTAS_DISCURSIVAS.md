@@ -10,9 +10,8 @@ Ele só pode ser disparado a partir da correção do aluno e retorna uma
 
 ```text
 scan normalizado no worker -> página canônica privada no Drive ->
-recorte da área PTR1 da questão -> OCR/HTR -> sugestão + confiança ->
-professor confere/edita no aluno -> transcrição formal -> sugestão de nota ->
-professor define nota final
+recorte da área PTR1 da questão -> OCR/HTR assíncrono -> texto visível no front ->
+professor confere/edita no aluno -> sugestão de nota -> professor define nota final
 ```
 
 Os dois últimos passos são separados: uma sugestão de nota nunca é enviada ao
@@ -37,7 +36,7 @@ chave do provedor no ambiente, o botão retorna um aviso de configuração e nã
 altera a correção.
 
 O fallback local usa `GEMINI_SCAN_TRANSCRIPTION_MODEL` (por padrão,
-`gemini-3.5-flash-lite`), separado de `GEMINI_VISION_MODEL` para que a troca
+`gemini-3.6-flash`), separado de `GEMINI_VISION_MODEL` para que a troca
 de um serviço não interrompa o outro. O uso conta no orçamento diário de
 operações de IA. Na tela de correção, o professor pode
 pedir a leitura de todas as respostas discursivas pendentes da folha: o sistema
@@ -50,10 +49,11 @@ explícita do professor. Isso copia A–E para a correção formal e recalcula o
 acerto daquela questão, mantendo o registro de revisão.
 
 Quando há sugestão de OCR, ela aparece diretamente no campo de resposta da
-questão correspondente como rascunho. O texto não é salvo como resposta formal
-até que o professor clique em **Confirmar e usar na correção**. O recorte da
-resposta é mostrado junto à questão; a página completa fica recolhida para
-consulta, evitando a repetição da mesma imagem em várias questões.
+questão correspondente como preenchimento provisório. Uma resposta ou nota
+digitada pelo professor tem prioridade e nunca é substituída pelo worker. O
+recorte da resposta é mostrado junto à questão; a página completa fica
+recolhida para consulta, evitando a repetição da mesma imagem em várias
+questões.
 
 ## Limites conhecidos
 

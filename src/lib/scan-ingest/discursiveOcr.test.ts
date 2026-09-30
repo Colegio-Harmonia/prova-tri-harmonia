@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { discursiveCropGeometry, discursiveProviderFailure } from './discursiveOcr'
+import { classifyDiscursiveOcrResult, discursiveCropGeometry, discursiveProviderFailure } from './discursiveOcr'
 
 describe('recortes PTR1 de respostas discursivas', () => {
   it('gera áreas internas ordenadas sem invadir a página', () => {
@@ -25,5 +25,20 @@ describe('recortes PTR1 de respostas discursivas', () => {
 
     expect(failure?.failureCode).toBe('provider_model_not_available')
     expect(failure?.message).toContain('gemini-2.5-flash')
+  })
+  it('explica quando os creditos do provedor estao esgotados', () => {
+    const failure = discursiveProviderFailure({ isAxiosError: true, response: { status: 402 } }, 'gemini-3.6-flash')
+
+    expect(failure?.failureCode).toBe('provider_credits_exhausted')
+    expect(failure?.message).toContain('créditos')
+  })
+
+  it('classifica uma resposta sem escrita como sem resposta', () => {
+    expect(classifyDiscursiveOcrResult({ transcription: '', legible: true, blank: true })).toEqual({ blank: true, legible: false })
+    expect(classifyDiscursiveOcrResult({ transcription: '', legible: true })).toEqual({ blank: true, legible: false })
+  })
+
+  it('mantém escrita ilegível como pendência de revisão', () => {
+    expect(classifyDiscursiveOcrResult({ transcription: '', legible: false, blank: false })).toEqual({ blank: false, legible: false })
   })
 })

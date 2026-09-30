@@ -6,6 +6,7 @@ import { db } from '@/db/client'
 import { examCorrections, examScanAuditEvents, examScanPages, examScanReadings, examSheetAssignments } from '@/db/schema'
 import { loadExamAndAuthorize } from '@/lib/corrections/authorize'
 import type { CorrectionAnswer } from '@/types/correction'
+import { questionMaxGrade } from '@/lib/corrections/gradeNormalization'
 
 const bodySchema = z.object({
   decision: z.enum(['accepted', 'rejected']),
@@ -49,7 +50,8 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ examId:
         if (answer.questionNumber !== reading.questionNumber || (reading.kind === 'objective' ? answer.type !== 'objetiva' : answer.type !== 'descritiva')) return answer
         if (reading.kind === 'objective') {
           const isCorrect = confirmedLetter === (answer.correctLetter ?? '').trim().toUpperCase()
-          return { ...answer, transcribedAnswer: confirmedLetter!, isCorrect, finalGrade: isCorrect ? 10 : 0 }
+          const maximum = questionMaxGrade(answer)
+          return { ...answer, weight: maximum, transcribedAnswer: confirmedLetter!, isCorrect, finalGrade: isCorrect ? maximum : 0 }
         }
         return { ...answer, transcribedAnswer: confirmedTranscription!, isCorrect: null }
       })

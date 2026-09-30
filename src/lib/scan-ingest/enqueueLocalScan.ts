@@ -1,12 +1,13 @@
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '@/db/client'
 import { examScanAuditEvents, examScanPages, examScanProcessingAttempts, examScanUploads, generationJobs } from '@/db/schema'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { planSheetPages } from '@/lib/scan-sheets/sheetLayout'
 import { countLogicalScanPages } from '@/lib/scan-ingest/privateScanContent'
+import { SCAN_PIPELINE_VERSION } from '@/lib/scan-ingest/scanPipeline'
 
 export class LocalScanEnqueueError extends Error {
-  constructor(public readonly code: 'upload_unavailable' | 'layout_unavailable' | 'queue_error', message: string) {
+  constructor(public readonly code: 'upload_unavailable' | 'layout_unavailable' | 'already_queued' | 'nothing_to_retry' | 'queue_error', message: string) {
     super(message)
     this.name = 'LocalScanEnqueueError'
   }
@@ -22,12 +23,53 @@ export async function enqueueLocalScanProcessing(input: {
   uploadId: number
   requestedBy: number
   generationPayload: unknown
+  retryOnlyFailed?: boolean
 }) {
   const upload = await db.query.examScanUploads.findFirst({
     where: and(eq(examScanUploads.id, input.uploadId), eq(examScanUploads.examId, input.examId)),
   })
   if (!upload || upload.status !== 'archived' || !upload.driveFileId) {
     throw new LocalScanEnqueueError('upload_unavailable', 'O scan precisa estar arquivado antes de entrar na fila.')
+  }
+
+  // A ação de reprocessar pode ser disparada por dois cliques, duas abas ou
+  // por uma atualização automática da tela. O payload é a chave idempotente
+  // do processamento: não criamos uma segunda tentativa enquanto a anterior
+  // ainda está pendente ou sendo executada.
+  const activeJob = await db.execute(sql`
+    SELECT id
+    FROM generation_jobs
+    WHERE job_type = 'processar_scan'
+      AND status IN ('pendente', 'gerando')
+      AND payload ->> 'uploadId' = ${String(input.uploadId)}
+    ORDER BY id DESC
+    LIMIT 1
+  `)
+  if ((activeJob as unknown as Array<unknown>).length > 0) {
+    throw new LocalScanEnqueueError('already_queued', 'Este scan já está aguardando processamento ou sendo lido.')
+  }
+
+  // Repetir a mesma leitura sobre os mesmos bytes e a mesma versão não muda
+  // o resultado quando todas as páginas já terminaram. Se um lote tiver uma
+  // página concluída e outra com erro, porém, o retry precisa continuar
+  // disponível apenas para a página pendente; um audit da página concluída
+  // não pode bloquear a recuperação do restante do lote.
+  const currentPages = await db.query.examScanPages.findMany({
+    where: eq(examScanPages.uploadId, input.uploadId),
+    columns: { status: true, exceptionCode: true },
+  })
+  const hasRetryablePage = currentPages.length === 0 || currentPages.some((page) => page.status !== 'processed' || Boolean(page.exceptionCode))
+  const samePipelineAttempt = await db.execute(sql`
+    SELECT id
+    FROM exam_scan_audit_events
+    WHERE upload_id = ${input.uploadId}
+      AND action = 'local_scan_processed'
+      AND metadata ->> 'pipelineVersion' = ${SCAN_PIPELINE_VERSION}
+    ORDER BY id DESC
+    LIMIT 1
+  `)
+  if (!hasRetryablePage && (samePipelineAttempt as unknown as Array<unknown>).length > 0) {
+    throw new LocalScanEnqueueError('nothing_to_retry', 'Este scan já foi processado com a versão atual do leitor.')
   }
 
   let logicalPageCount: number
@@ -43,7 +85,7 @@ export async function enqueueLocalScanProcessing(input: {
     throw new LocalScanEnqueueError('layout_unavailable', 'O layout PTR1 da prova nao esta disponivel para processamento.')
   }
 
-  let attempt: { id: number; attemptNumber: number }
+  let attempt: { id: number; attemptNumber: number; pageIds: number[] }
   let pageCount = 0
   try {
     attempt = await db.transaction(async (tx) => {
@@ -51,15 +93,21 @@ export async function enqueueLocalScanProcessing(input: {
         where: eq(examScanPages.uploadId, input.uploadId),
         orderBy: [asc(examScanPages.pageIndex)],
       })
+      let pageIds: number[]
       if (pages.length === 0) {
         await tx.insert(examScanPages).values(Array.from({ length: logicalPageCount }, (_, index) => ({ uploadId: input.uploadId, pageIndex: index + 1, status: 'queued' as const })))
-        pageCount = logicalPageCount
+        const createdPages = await tx.query.examScanPages.findMany({ where: eq(examScanPages.uploadId, input.uploadId), columns: { id: true } })
+        pageIds = createdPages.map((page) => page.id)
       } else {
-        pageCount = pages.length
+        pageIds = input.retryOnlyFailed
+          ? pages.filter((page) => page.status !== 'processed' || Boolean(page.exceptionCode)).map((page) => page.id)
+          : pages.map((page) => page.id)
+        if (pageIds.length === 0) throw new LocalScanEnqueueError('nothing_to_retry', 'Este scan já foi processado sem pendências.')
         await tx.update(examScanPages)
           .set({ status: 'queued', exceptionCode: null, updatedAt: new Date() })
-          .where(eq(examScanPages.uploadId, input.uploadId))
+          .where(inArray(examScanPages.id, pageIds))
       }
+      pageCount = pageIds.length
 
       const attempts = await tx.query.examScanProcessingAttempts.findMany({
         where: eq(examScanProcessingAttempts.uploadId, input.uploadId),
@@ -79,7 +127,7 @@ export async function enqueueLocalScanProcessing(input: {
         actorId: input.requestedBy,
         metadata: { attemptNumber },
       })
-      return created
+      return { ...created, pageIds }
     })
   } catch (error) {
     if (error instanceof LocalScanEnqueueError) throw error
@@ -87,11 +135,15 @@ export async function enqueueLocalScanProcessing(input: {
   }
 
   try {
-    const [job] = await db.insert(generationJobs).values({
-      jobType: 'processar_scan',
-      payload: { uploadId: input.uploadId, examId: input.examId, attemptId: attempt.id },
+    const jobs = await db.insert(generationJobs).values(attempt.pageIds.map((pageId) => ({
+      jobType: 'processar_scan' as const,
+      payload: { uploadId: input.uploadId, examId: input.examId, attemptId: attempt.id, pageId },
       requestedBy: input.requestedBy,
-    }).returning({ jobId: generationJobs.id })
+      // Uma página = um job. Assim uma folha lenta ou defeituosa não segura
+      // as demais e o retry pode voltar somente à página problemática.
+      priority: 2,
+    }))).returning({ jobId: generationJobs.id })
+    const jobIds = jobs.map((job) => job.jobId)
     await db.update(examScanProcessingAttempts)
       .set({ status: 'delivered', deliveredAt: new Date(), deliveryErrorCode: null, updatedAt: new Date() })
       .where(eq(examScanProcessingAttempts.id, attempt.id))
@@ -100,14 +152,13 @@ export async function enqueueLocalScanProcessing(input: {
       uploadId: input.uploadId,
       action: 'local_scan_dispatch_delivered',
       actorId: input.requestedBy,
-      metadata: { attemptNumber: attempt.attemptNumber, jobId: job.jobId },
+      metadata: { attemptNumber: attempt.attemptNumber, jobIds, pageIds: attempt.pageIds },
     })
-    return { ...attempt, status: 'delivered' as const, pageCount, jobId: job.jobId }
+    return { ...attempt, status: 'delivered' as const, pageCount, jobId: jobIds[0] ?? null, jobIds }
   } catch {
     await db.update(examScanProcessingAttempts)
       .set({ status: 'delivery_failed', deliveryErrorCode: 'JOB_ENQUEUE_FAILED', updatedAt: new Date() })
       .where(eq(examScanProcessingAttempts.id, attempt.id))
-    return { ...attempt, status: 'delivery_failed' as const, pageCount, jobId: null }
+    return { ...attempt, status: 'delivery_failed' as const, pageCount, jobId: null, jobIds: [] }
   }
 }
-

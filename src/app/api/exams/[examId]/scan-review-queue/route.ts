@@ -24,6 +24,7 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ examId: 
       pageId: examScanPages.id,
       uploadId: examScanPages.uploadId,
       sheetAssignmentId: examScanPages.sheetAssignmentId,
+      detectedSheetAssignmentId: examScanPages.detectedSheetAssignmentId,
       pageIndex: examScanPages.pageIndex,
       status: examScanPages.status,
       sheetPageNumber: examScanPages.sheetPageNumber,
@@ -31,6 +32,7 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ examId: 
       qualityScore: examScanPages.qualityScore,
       exceptionCode: examScanPages.exceptionCode,
       imageAvailable: examScanPages.canonicalDriveFileId,
+      originalDriveFileId: examScanUploads.driveFileId,
       studentName: examSheetAssignments.studentNameSnapshot,
       correctionId: examSheetAssignments.examCorrectionId,
       assignmentExamId: examSheetAssignments.examId,
@@ -39,7 +41,7 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ examId: 
     })
     .from(examScanPages)
     .innerJoin(examScanUploads, eq(examScanPages.uploadId, examScanUploads.id))
-    .leftJoin(examSheetAssignments, eq(examScanPages.sheetAssignmentId, examSheetAssignments.id))
+    .leftJoin(examSheetAssignments, sql`${examSheetAssignments.id} = COALESCE(${examScanPages.sheetAssignmentId}, ${examScanPages.detectedSheetAssignmentId})`)
     .where(eq(examScanUploads.examId, examId))
     .orderBy(asc(examScanPages.createdAt), asc(examScanPages.pageIndex))
 
@@ -70,16 +72,19 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ examId: 
   }
   // Páginas substituídas permanecem no banco apenas para auditoria. Elas não
   // representam um envio pendente e nunca devem voltar para a fila da UI.
-  const serializedPages = pages.filter((page) => page.exceptionCode !== 'SUPERSEDED_BY_NEW_SCAN').map((page) => ({
-      ...page,
-      duplicateUploadId: duplicateUploadByPageId.get(page.pageId) ?? null,
-      imageAvailable: Boolean(page.imageAvailable),
-      readings: (readingsByPageId.get(page.pageId) ?? []).map((reading) => ({
-        ...reading,
-        expectedLetter: page.correctionId ? (expectedByCorrection.get(page.correctionId)?.get(reading.questionNumber) ?? null) : null,
-        cropAvailable: Boolean(reading.cropDriveFileId),
-        cropDriveFileId: undefined,
-      })),
-    }))
+  const serializedPages = pages.filter((page) => page.exceptionCode !== 'SUPERSEDED_BY_NEW_SCAN').map((page) => {
+      const { originalDriveFileId, ...pageWithoutStorageId } = page
+      return {
+        ...pageWithoutStorageId,
+        duplicateUploadId: duplicateUploadByPageId.get(page.pageId) ?? null,
+        imageAvailable: Boolean(page.imageAvailable || originalDriveFileId),
+        readings: (readingsByPageId.get(page.pageId) ?? []).map((reading) => ({
+          ...reading,
+          expectedLetter: page.correctionId ? (expectedByCorrection.get(page.correctionId)?.get(reading.questionNumber) ?? null) : null,
+          cropAvailable: Boolean(reading.cropDriveFileId),
+          cropDriveFileId: undefined,
+        })),
+      }
+    })
   return NextResponse.json({ pages: serializedPages, corrections: corrections.map(({ id, studentName }) => ({ id, studentName })), queue: serializedPages.filter((page) => page.exceptionCode) })
 }
