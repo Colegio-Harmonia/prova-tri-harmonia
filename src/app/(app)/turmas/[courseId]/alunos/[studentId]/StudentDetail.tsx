@@ -13,7 +13,7 @@ export default function StudentDetail({ courseId, studentId }: { courseId: strin
   const [data, setData] = useState<Data | null>(null)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => { fetch(`/api/turmas/${courseId}/students/${encodeURIComponent(studentId)}`).then(async (response) => { const body = await response.json(); if (!response.ok) { setError(body.message ?? 'Não foi possível carregar o aluno.'); return } setData(body) }).catch(() => setError('Não foi possível carregar o aluno.')) }, [courseId, studentId])
-  if (error) return <div className="rounded-lg border border-amber-200 bg-amber-50 p-6 text-center text-sm text-amber-900"><p>{error}</p><button type="button" onClick={() => signIn('google', { callbackUrl: `/turmas/${courseId}/alunos/${encodeURIComponent(studentId)}` })} className="mt-4 rounded bg-harmonia-green px-4 py-2 font-medium text-white">Conectar novamente</button></div>
+  if (error) return <div className="rounded-lg border border-status-warning-border bg-status-warning-surface p-6 text-center text-sm text-status-warning-content"><p>{error}</p><button type="button" onClick={() => signIn('google', { callbackUrl: `/turmas/${courseId}/alunos/${encodeURIComponent(studentId)}` })} className="mt-4 rounded bg-harmonia-green px-4 py-2 font-medium text-action-primary-foreground">Conectar novamente</button></div>
   if (!data) return <p className="text-sm text-content-secondary">Carregando aluno…</p>
   const { course, student, exams, statistics } = data
   return <div className="space-y-7">
