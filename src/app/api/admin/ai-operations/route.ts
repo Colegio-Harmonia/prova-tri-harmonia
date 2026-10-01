@@ -2,7 +2,7 @@ import { and, desc, eq, gte } from 'drizzle-orm'
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth/auth'
 import { db } from '@/db/client'
-import { aiModelProfiles, aiOperations, users } from '@/db/schema'
+import { aiModelProfiles, aiOperations, jevDecisions, users } from '@/db/schema'
 import { isStaffSuperuser } from '@/lib/auth/roles'
 
 function periodStart(value: string | null) {
@@ -26,6 +26,11 @@ export async function GET(req: NextRequest) {
     where: start ? gte(aiOperations.createdAt, start) : undefined,
     orderBy: (table) => [desc(table.createdAt)],
     limit: 100,
+  })
+  const decisions = await db.query.jevDecisions.findMany({
+    where: start ? gte(jevDecisions.createdAt, start) : undefined,
+    orderBy: (table) => [desc(table.createdAt)],
+    limit: 500,
   })
   const profiles = await db.query.aiModelProfiles.findMany()
   const profileById = new Map(profiles.map((profile) => [profile.id, profile]))
@@ -53,5 +58,22 @@ export async function GET(req: NextRequest) {
     unpriced: result.unpriced + Number(operation.effectiveCostMicrousd === null),
   }), { total: 0, succeeded: 0, rejected: 0, failed: 0, totalTokens: 0, estimatedCostMicrousd: 0, unpriced: 0 })
 
-  return NextResponse.json({ summary, operations: resolved.slice(0, 100) })
+  const jevByOperation = new Map<string, { operation: string; total: number; provider: number; cache: number; fallback: number; automatic: number; review: number; failed: number }>()
+  const jevSummary = { total: 0, provider: 0, cache: 0, fallback: 0, automatic: 0, review: 0, failed: 0 }
+  for (const decision of decisions) {
+    const group = jevByOperation.get(decision.operation) ?? { operation: decision.operation, total: 0, provider: 0, cache: 0, fallback: 0, automatic: 0, review: 0, failed: 0 }
+    group.total++; jevSummary.total++
+    group[decision.source]++; jevSummary[decision.source]++
+    if (decision.route === 'automatic') { group.automatic++; jevSummary.automatic++ }
+    if (decision.route === 'review') { group.review++; jevSummary.review++ }
+    if (decision.status === 'failed') { group.failed++; jevSummary.failed++ }
+    jevByOperation.set(decision.operation, group)
+  }
+  const jev = {
+    summary: jevSummary,
+    byOperation: [...jevByOperation.values()].sort((left, right) => right.total - left.total || left.operation.localeCompare(right.operation)),
+    truncated: decisions.length === 500,
+  }
+
+  return NextResponse.json({ summary, operations: resolved.slice(0, 100), jev })
 }

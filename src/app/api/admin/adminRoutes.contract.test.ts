@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   findUser: vi.fn(),
   findUsers: vi.fn(),
   findOperations: vi.fn(),
+  findDecisions: vi.fn(),
   findProfiles: vi.fn(),
 }))
 
@@ -15,6 +16,7 @@ vi.mock('@/db/client', () => ({
     query: {
       users: { findFirst: mocks.findUser, findMany: mocks.findUsers },
       aiOperations: { findMany: mocks.findOperations },
+      jevDecisions: { findMany: mocks.findDecisions },
       aiModelProfiles: { findMany: mocks.findProfiles },
     },
   },
@@ -35,6 +37,7 @@ function session(email = professor.email) {
 describe('contratos administrativos de API', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.findDecisions.mockResolvedValue([])
   })
 
   it('rejeita auditoria administrativa sem sessao', async () => {
@@ -75,7 +78,34 @@ describe('contratos administrativos de API', () => {
         { status: 'succeeded', totalTokens: 120, estimatedCostMicrousd: 35, effectiveCostMicrousd: 35, costStatus: 'recorded' },
         { status: 'failed', totalTokens: null, estimatedCostMicrousd: null, effectiveCostMicrousd: null, costStatus: 'unpriced' },
       ],
+      jev: { summary: { total: 0, provider: 0, cache: 0, fallback: 0, automatic: 0, review: 0, failed: 0 }, byOperation: [], truncated: false },
     })
+  })
+
+  it('resume decisoes Jev sem expor estado, contexto ou respostas', async () => {
+    mocks.auth.mockResolvedValue(session(direcao.email))
+    mocks.findUser.mockResolvedValue(direcao)
+    mocks.findOperations.mockResolvedValue([])
+    mocks.findProfiles.mockResolvedValue([])
+    mocks.findDecisions.mockResolvedValue([
+      { operation: 'jev/exams/generation-strategy', source: 'provider', route: 'automatic', status: 'succeeded', context: { secret: 'nao_expor' }, answers: { choice: 'nao_expor' } },
+      { operation: 'jev/exams/generation-strategy', source: 'cache', route: 'review', status: 'succeeded' },
+      { operation: 'jev/analytics/result-organization', source: 'fallback', route: 'fallback', status: 'failed' },
+    ])
+
+    const response = await getAiOperations(new NextRequest('http://test.local/api/admin/ai-operations?period=7d'))
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body.jev).toEqual({
+      summary: { total: 3, provider: 1, cache: 1, fallback: 1, automatic: 1, review: 1, failed: 1 },
+      byOperation: [
+        { operation: 'jev/exams/generation-strategy', total: 2, provider: 1, cache: 1, fallback: 0, automatic: 1, review: 1, failed: 0 },
+        { operation: 'jev/analytics/result-organization', total: 1, provider: 0, cache: 0, fallback: 1, automatic: 0, review: 0, failed: 1 },
+      ],
+      truncated: false,
+    })
+    expect(JSON.stringify(body)).not.toContain('nao_expor')
   })
 
   it('mantem perfis de IA inacessiveis sem privilegio administrativo', async () => {

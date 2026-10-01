@@ -1,11 +1,18 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { createColumnHelper } from '@tanstack/react-table'
+import { DataTable, type DataTableFeatures } from '@/components/ui/data-table'
 import AiModelProfilesPanel from './AiModelProfilesPanel'
 
 type Purpose = 'text_generation' | 'image_generation' | 'image_validation' | 'scan_transcription'
 type Operation = { id: number; operation: string; provider: string; model: string; status: 'succeeded' | 'rejected' | 'failed'; attempt: number; totalTokens: number | null; effectiveCostMicrousd: number | null; costStatus: 'recorded' | 'recalculated' | 'unpriced'; durationMs: number | null; errorCode: string | null; createdAt: string }
-type Payload = { summary: { total: number; succeeded: number; rejected: number; failed: number; totalTokens: number; estimatedCostMicrousd: number; unpriced: number }; operations: Operation[] }
+type JevOperation = { operation: string; total: number; provider: number; cache: number; fallback: number; automatic: number; review: number; failed: number }
+type Payload = {
+  summary: { total: number; succeeded: number; rejected: number; failed: number; totalTokens: number; estimatedCostMicrousd: number; unpriced: number }
+  operations: Operation[]
+  jev: { summary: Omit<JevOperation, 'operation'>; byOperation: JevOperation[]; truncated: boolean }
+}
 type Budget = { purpose: Purpose; limit: number; disabled: boolean; used: number; resetAt: string; nextResetAt: string }
 async function responseBody<T extends object>(response: Response): Promise<T & { error?: string }> {
   const text = await response.text()
@@ -15,6 +22,23 @@ async function responseBody<T extends object>(response: Response): Promise<T & {
 const purposeLabel: Record<Purpose, string> = { text_generation: 'Texto e questões', image_generation: 'Geração de imagens', image_validation: 'Validação visual', scan_transcription: 'Leitura de respostas' }
 const periods = [{ value: 'today', label: 'Hoje' }, { value: '7d', label: '7 dias' }, { value: '30d', label: '30 dias' }, { value: 'all', label: 'Todo período' }]
 const money = (value: number) => `US$ ${(value / 1_000_000).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
+const rate = (value: number, total: number) => total ? `${Math.round((value / total) * 100)}%` : '—'
+const operationLabels: Record<string, string> = {
+  'jev/curriculum/skill-description-check': 'Conferência de descrição BNCC',
+  'jev/exams/generation-strategy': 'Estratégia de prova',
+  'jev/activities/recovery-strategy': 'Estratégia de atividade',
+  'jev/reinforcement/enem-selection': 'Seleção do Reforço ENEM',
+  'jev/analytics/result-organization': 'Organização de resultados',
+}
+const jevColumnHelper = createColumnHelper<DataTableFeatures, JevOperation>()
+const jevColumns = [
+  jevColumnHelper.accessor('operation', { header: 'Decisão', cell: ({ getValue }) => operationLabels[getValue()] ?? getValue() }),
+  jevColumnHelper.accessor('total', { header: 'Decisões' }),
+  jevColumnHelper.accessor('provider', { header: 'Provedor', cell: ({ row, getValue }) => `${getValue()} · ${rate(getValue(), row.original.total)}` }),
+  jevColumnHelper.accessor('cache', { header: 'Cache', cell: ({ row, getValue }) => `${getValue()} · ${rate(getValue(), row.original.total)}` }),
+  jevColumnHelper.accessor('fallback', { header: 'Contingência', cell: ({ row, getValue }) => `${getValue()} · ${rate(getValue(), row.original.total)}` }),
+  jevColumnHelper.accessor('review', { header: 'Revisão', cell: ({ row, getValue }) => `${getValue()} · ${rate(getValue(), row.original.total)}` }),
+]
 
 export default function AiOperationsPanel() {
   const [data, setData] = useState<Payload | null>(null)
@@ -50,6 +74,18 @@ export default function AiOperationsPanel() {
     {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
     <section className="rounded border border-border bg-surface p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-base font-semibold">Limites de IA de hoje</h2><p className="mt-1 text-sm text-content-secondary">O reset não remove histórico: apenas reinicia a cota a partir deste momento.</p></div><button onClick={() => void resetBudget('all')} disabled={resetting !== null || toggling !== null} className="rounded border border-red-300 px-3 py-2 text-sm font-medium text-red-700 disabled:opacity-50">{resetting === 'all' ? 'Resetando…' : 'Resetar todos os limites'}</button></div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{budgets.map((budget) => <article key={budget.purpose} className="rounded border border-border p-3"><p className="text-sm font-medium">{purposeLabel[budget.purpose]}</p><p className="mt-1 text-2xl font-bold">{budget.disabled ? `${budget.used} / sem teto` : budget.limit ? `${budget.used} / ${budget.limit}` : `${budget.used} / sem teto`}</p>{budget.disabled && <p className="mt-1 text-xs font-medium text-amber-700">Limite desabilitado</p>}<p className="mt-1 text-xs text-content-secondary">Reset automático: {new Date(budget.nextResetAt).toLocaleString('pt-BR')}</p><div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2"><button onClick={() => void toggleBudget(budget)} disabled={resetting !== null || toggling !== null} className={`text-xs font-medium disabled:opacity-50 ${budget.disabled ? 'text-harmonia-green' : 'text-amber-700'}`}>{toggling === budget.purpose ? 'Salvando…' : budget.disabled ? 'Habilitar limite' : 'Desabilitar limite'}</button><button onClick={() => void resetBudget(budget.purpose)} disabled={resetting !== null || toggling !== null} className="text-xs font-medium text-harmonia-green disabled:opacity-50">{resetting === budget.purpose ? 'Resetando…' : 'Resetar esta cota'}</button></div></article>)}</div></section>
     <section className="flex flex-wrap gap-2" aria-label="Período de consumo">{periods.map((item) => <button key={item.value} onClick={() => setPeriod(item.value)} className={`rounded px-3 py-2 text-sm font-medium ${period === item.value ? 'bg-harmonia-green text-white' : 'border border-border bg-surface text-content-primary'}`}>{item.label}</button>)}</section>
+    <section className="rounded border border-border bg-surface p-5">
+      <div><h2 className="text-base font-semibold text-content-primary">Adoção do Jev</h2><p className="mt-1 text-sm text-content-secondary">Mostra decisões estruturadas, uso de cache, contingência e revisão humana. O painel não exibe estado pedagógico, respostas do Jev nem dados de alunos.</p></div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <Metric label="Decisões" value={data.jev.summary.total} />
+        <Metric label="Chamadas ao provedor" value={`${data.jev.summary.provider} · ${rate(data.jev.summary.provider, data.jev.summary.total)}`} />
+        <Metric label="Atendidas pelo cache" value={`${data.jev.summary.cache} · ${rate(data.jev.summary.cache, data.jev.summary.total)}`} />
+        <Metric label="Contingência" value={`${data.jev.summary.fallback} · ${rate(data.jev.summary.fallback, data.jev.summary.total)}`} />
+        <Metric label="Pedem revisão" value={`${data.jev.summary.review} · ${rate(data.jev.summary.review, data.jev.summary.total)}`} />
+      </div>
+      {data.jev.byOperation.length ? <DataTable className="mt-4" columns={jevColumns} data={data.jev.byOperation} searchableColumnId="operation" searchPlaceholder="Filtrar decisão..." /> : <p className="mt-4 text-sm text-content-muted">Nenhuma decisão Jev neste período.</p>}
+      {data.jev.truncated && <p className="mt-2 text-xs text-content-muted">A leitura está limitada às 500 decisões mais recentes do período.</p>}
+    </section>
     <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6" aria-label="Resumo da telemetria"><Metric label="Tentativas" value={data.summary.total} /><Metric label="Concluídas" value={data.summary.succeeded} /><Metric label="Reparos" value={data.summary.rejected} /><Metric label="Falhas" value={data.summary.failed} /><Metric label="Tokens" value={data.summary.totalTokens.toLocaleString('pt-BR')} /><Metric label="Custo calculado" value={money(data.summary.estimatedCostMicrousd)} /></section>
     {data.summary.unpriced > 0 && <p className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{data.summary.unpriced} operação(ões) sem tarifa configurada. Elas não entram no total; configure os preços do modelo abaixo para que o custo seja calculado com precisão.</p>}
     <section className="overflow-x-auto rounded border border-border bg-surface"><table className="w-full text-left text-sm"><thead className="border-b border-border bg-surface-subtle text-content-secondary"><tr><th className="px-4 py-3">Operação</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3">Modelo</th><th className="px-4 py-3">Tokens</th><th className="px-4 py-3">Custo</th><th className="px-4 py-3">Duração</th><th className="px-4 py-3">Quando</th></tr></thead><tbody>{data.operations.map((operation) => <tr key={operation.id} className="border-b border-border last:border-0"><td className="px-4 py-3 text-content-primary">{operation.operation}<span className="block text-xs text-content-muted">tentativa {operation.attempt}{operation.errorCode ? ` · ${operation.errorCode}` : ''}</span></td><td className="px-4 py-3"><Status status={operation.status} /></td><td className="px-4 py-3 text-content-secondary">{operation.provider} · {operation.model}</td><td className="px-4 py-3 text-content-secondary">{operation.totalTokens?.toLocaleString('pt-BR') ?? 'não informado'}</td><td className="px-4 py-3 text-content-secondary">{operation.effectiveCostMicrousd === null ? 'Tarifa não configurada' : <>{money(operation.effectiveCostMicrousd)}{operation.costStatus === 'recalculated' && <span className="block text-xs text-content-muted">recalculado pelo perfil</span>}</>}</td><td className="px-4 py-3 text-content-secondary">{operation.durationMs ? `${(operation.durationMs / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} s` : '—'}</td><td className="px-4 py-3 text-content-secondary">{new Date(operation.createdAt).toLocaleString('pt-BR')}</td></tr>)}</tbody></table></section>
