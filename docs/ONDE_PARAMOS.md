@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 30/09/2026, noite (Etapa 6: Jev na organização semântica dos resultados).
+> Última atualização: 01/10/2026 (Etapa 7: observabilidade e calibração do Jev).
 
 ## 1. Fonte da verdade
 
@@ -245,6 +245,14 @@ agregados; nomes, IDs, respostas, notas e percentuais individuais exatos não
 são enviados. O sistema mantém todos os cálculos e permissões, produz os textos
 em português por regras fixas e usa cache, auditoria, telemetria e fallback
 centrado em cobertura.
+
+### Etapa 7 — observabilidade e calibração do Jev
+O painel administrativo `/ia` agrega as decisões por operação e período:
+volume, chamadas ao provedor, cache, contingência e decisões que pedem revisão.
+A API não retorna estado, hash, contexto nem respostas estruturadas; expõe
+somente contagens agregadas e mantém o acesso restrito à gestão. A tabela pode
+ser filtrada e ordenada. A leitura é limitada às 500 decisões mais recentes e
+avisa quando o período foi truncado.
 
 ### Decisão 30/09/2026 — regra de domínio individual
 Mantida a regra rigorosa (≥ 80% em ≥ 4 questões de ≥ 2 avaliações), com o

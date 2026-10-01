@@ -1,5 +1,19 @@
 # Decisões Arquiteturais
 
+## ADR-016 - Observabilidade do Jev sem conteúdo pedagógico
+
+**Data:** 01/10/2026
+**Problema:** as decisões Jev já têm auditoria técnica, mas a gestão não consegue
+acompanhar adoção, cache, contingência e necessidade de revisão pelo produto.
+**Decisão:** agregar `jev_decisions` por operação e período no painel `/ia`.
+Exibir somente contagens e taxas de origem/rota; não retornar estado, hash,
+contexto, respostas estruturadas ou identificadores no contrato administrativo.
+**Acesso:** a rota mantém o mesmo controle de coordenação/direção do painel de
+IA. A tabela agregada permite filtro e ordenação e limita a leitura às 500
+decisões mais recentes, avisando quando houver truncamento.
+**Consequência:** a escola pode calibrar perguntas e limiares com evidência de
+uso sem transformar a telemetria em repositório de conteúdo pedagógico.
+
 ## ADR-015 - Jev organiza a leitura, não calcula o resultado
 
 **Data:** 30/09/2026
