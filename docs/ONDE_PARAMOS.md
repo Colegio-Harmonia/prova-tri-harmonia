@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 30/09/2026, noite (Etapa 5: Jev na seleção do Reforço ENEM).
+> Última atualização: 30/09/2026, noite (Etapa 6: Jev na organização semântica dos resultados).
 
 ## 1. Fonte da verdade
 
@@ -235,6 +235,17 @@ execução permanece determinística, nunca inventa item e respeita ano, quantid
 e competências da disciplina. A estratégia fica nos metadados, com cache,
 auditoria, telemetria e fallback equilibrado.
 
+### Etapa 6 — Jev na organização semântica dos resultados
+`src/lib/ai/resultOrganizationDecision.ts` usa Choice para escolher a lente
+principal, a política de prioridade e o próximo passo pedagógico, e Noul para
+medir se os sinais sustentam a organização. A integração é sob demanda nas
+visões Turma, Coordenação, Escola e no relatório individual. O Jev recebe
+somente faixas categóricas anônimas, códigos e descrições BNCC e sinais
+agregados; nomes, IDs, respostas, notas e percentuais individuais exatos não
+são enviados. O sistema mantém todos os cálculos e permissões, produz os textos
+em português por regras fixas e usa cache, auditoria, telemetria e fallback
+centrado em cobertura.
+
 ### Decisão 30/09/2026 — regra de domínio individual
 Mantida a regra rigorosa (≥ 80% em ≥ 4 questões de ≥ 2 avaliações), com o
 nome explícito **"Domínio no bimestre"** (e **"Domínio no ano"** na visão
@@ -252,11 +263,6 @@ pedagógica.
   bimestre corrigido; até lá a tela explica isso.
 
 ## 5. Pendências (em ordem)
-
-0. Próxima adoção do Jev, em PR separado e calibrado: organização semântica
-   dos resultados. As decisões na geração de provas, atividades e Reforço ENEM
-   foram implementadas nas Etapas 3, 4 e 5. Cálculos de
-   nota, TRI, percentuais e permissões permanecem determinísticos.
 
 1. Painel `/desempenho` (visão BNCC) usa **outra regra** também chamada
    "Domínio": ≥ 80% com ≥ 3 respostas somando todos os alunos

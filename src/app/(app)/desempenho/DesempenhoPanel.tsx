@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createColumnHelper } from '@tanstack/react-table'
 import { DataTable, type DataTableFeatures } from '@/components/ui/data-table'
+import SemanticOrganizationCard, { type SemanticOrganizationView } from '@/components/reports/SemanticOrganizationCard'
 
 type GroupStats = Record<string, { avg: number | null; count: number }>
 type BloomStats = {
@@ -139,7 +140,9 @@ type Performance = {
   management: { coordinationGroups: ManagementRow[]; schoolSegments: ManagementRow[] }
   byProfessor: GroupStats
   topMissedQuestions: Array<{ examId: number; questionNumber: number; subject: string; gradeYear: number; errorRate: number }>
+  semanticOrganization: SemanticOrganization | null
 }
+type SemanticOrganization = SemanticOrganizationView
 type ManagementRow = { key: string; segment: string; gradeYear: number | null; subject: string | null; average: number | null; uniqueStudents: number; uniqueExams: number; reviewedCorrections: number; evaluatedCorrections: number; incompleteCorrections: number }
 type ClassroomRow = { id: string; studentId: string | null; studentName: string; average: number | null; priority: string; assessments: number; evaluatedItems: number }
 type Intervention = { id: number; segment: string; gradeYear: number; subject: string; academicYear: number | null; action: string; ownerName: string; dueDate: string | null; status: 'planejada' | 'em_andamento' | 'concluida' }
@@ -1093,6 +1096,7 @@ function ClassroomView({ data }: { data: Performance }) {
 
   return (
     <div className="space-y-6">
+      <SemanticOrganizationCard organization={data.semanticOrganization} />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatTile label="Alunos com evidência" value={data.coverage.uniqueStudents} />
         <StatTile label="Avaliações" value={data.coverage.uniqueExams} />
@@ -1165,6 +1169,7 @@ function CoordinationView({ data, academicYear }: { data: Performance; academicY
     .sort((a, b) => (a.evaluatedCorrections === 0 ? -1 : 0) - (b.evaluatedCorrections === 0 ? -1 : 0) || (a.average ?? 99) - (b.average ?? 99))
     .slice(0, 8)
   return <div className="space-y-6">
+    <SemanticOrganizationCard organization={data.semanticOrganization} />
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <StatTile label="Alunos com evidência" value={data.coverage.uniqueStudents} />
       <StatTile label="Avaliações" value={data.coverage.uniqueExams} />
@@ -1188,6 +1193,7 @@ function CoordinationView({ data, academicYear }: { data: Performance; academicY
 function SchoolView({ data }: { data: Performance }) {
   const recurringDifficulty = data.cognitiveProfiles.filter((profile) => profile.priorities.length > 0 && profile.evidence.assessmentCount >= 2).length
   return <div className="space-y-6">
+    <SemanticOrganizationCard organization={data.semanticOrganization} />
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
       <StatTile label="Alunos com evidência" value={data.coverage.uniqueStudents} />
       <StatTile label="Avaliações" value={data.coverage.uniqueExams} />
@@ -1310,6 +1316,9 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
     if (filters.bimester) params.set('bimester', filters.bimester)
     if (filters.classroomCourseId) params.set('classroomCourseId', filters.classroomCourseId)
     if (filters.examId) params.set('examId', filters.examId)
+    if (activeView === 'turma') params.set('semantic', 'class')
+    if (activeView === 'coordenacao') params.set('semantic', 'coordination')
+    if (activeView === 'escola') params.set('semantic', 'school')
     const controller = new AbortController()
     setError(null)
     fetch(`/api/analytics/performance?${params}`, { signal: controller.signal })
@@ -1321,7 +1330,7 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
       })
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSuperuser, deferredSubject, filters.gradeYear, filters.segment, filters.assignedTo, filters.academicYear, filters.bimester, filters.classroomCourseId, filters.examId])
+  }, [isSuperuser, activeView, deferredSubject, filters.gradeYear, filters.segment, filters.assignedTo, filters.academicYear, filters.bimester, filters.classroomCourseId, filters.examId])
 
   if (error) return <p role="alert" className="text-sm text-status-danger-content">{error}</p>
   if (!data) return <p role="status" aria-live="polite" className="text-sm text-content-muted">Carregando…</p>

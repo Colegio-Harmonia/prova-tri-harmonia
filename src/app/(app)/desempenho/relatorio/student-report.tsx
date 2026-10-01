@@ -91,6 +91,7 @@ export default function StudentReport() {
     const params = new URLSearchParams(preservedQuery)
     if (studentId) params.set('studentId', studentId)
     else params.set('student', student)
+    params.set('semantic', 'student')
     const query = params.toString()
     async function load() {
       const [profileResult, masteryResult] = await Promise.allSettled([
