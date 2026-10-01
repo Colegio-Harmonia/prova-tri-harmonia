@@ -8,6 +8,7 @@ import { answerGradeOnTen, totalGrade } from '@/lib/corrections/totalGrade'
 import type { CorrectionAnswer } from '@/types/correction'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import type { Segment } from '@/types/exam'
+import { decideResultOrganization, type ResultOrganizationDecisionInput, type ResultOrganizationScope } from '@/lib/ai/resultOrganizationDecision'
 
 const BLOOM_LEVELS = ['lembrar', 'compreender', 'aplicar', 'analisar', 'avaliar', 'criar'] as const
 const DOK_LEVELS = ['DOK_1', 'DOK_2', 'DOK_3', 'DOK_4'] as const
@@ -141,6 +142,13 @@ function bnccDevelopmentStatus(accuracyPercent: number | null, sampleSize: numbe
   return 'intervencao'
 }
 
+function categoricalPerformance(accuracyPercent: number | null) {
+  if (accuracyPercent === null) return 'sem_evidencia' as const
+  if (accuracyPercent < 60) return 'abaixo_referencia' as const
+  if (accuracyPercent < 80) return 'em_desenvolvimento' as const
+  return 'consolidado' as const
+}
+
 function pushScore(record: Record<string, number[]>, key: string, score: number) {
   ;(record[key] ??= []).push(score)
 }
@@ -202,6 +210,13 @@ export async function GET(req: NextRequest) {
 
   const isSuperuser = isStaffSuperuser(currentUser.role)
   const params = req.nextUrl.searchParams
+  const requestedSemanticScope = params.get('semantic')
+  const semanticScope: ResultOrganizationScope | null =
+    requestedSemanticScope === 'student' || requestedSemanticScope === 'class'
+      ? requestedSemanticScope
+      : isSuperuser && (requestedSemanticScope === 'coordination' || requestedSemanticScope === 'school')
+        ? requestedSemanticScope
+        : null
 
   // Professor NUNCA vê dado de terceiro, mesmo que force um `assignedTo`
   // diferente na query string — o parâmetro só é aceito de coordenação/
@@ -334,6 +349,7 @@ export async function GET(req: NextRequest) {
       coverage: { reviewedCorrections: 0, evaluatedCorrections: 0, incompleteCorrections: 0, uniqueStudents: 0, uniqueExams: 0 },
       byProfessor: {},
       topMissedQuestions: [],
+      semanticOrganization: null,
     }, startedAt)
   }
 
@@ -997,6 +1013,44 @@ export async function GET(req: NextRequest) {
     })
     .sort((a, b) => a.studentName.localeCompare(b.studentName))
 
+  const management = isSuperuser ? {
+    coordinationGroups: [...coordinationGroups.values()].map(managementGroupRow).sort((a, b) => a.segment.localeCompare(b.segment) || (a.gradeYear ?? 0) - (b.gradeYear ?? 0) || (a.subject ?? '').localeCompare(b.subject ?? '', 'pt-BR')),
+    schoolSegments: [...schoolSegments.values()].map(managementGroupRow).sort((a, b) => a.segment.localeCompare(b.segment)),
+  } : { coordinationGroups: [], schoolSegments: [] }
+
+  let semanticOrganization = null
+  if (semanticScope) {
+    const managementRows = semanticScope === 'school' ? management.schoolSegments : semanticScope === 'coordination' ? management.coordinationGroups : []
+    const semanticInput: ResultOrganizationDecisionInput = {
+      scope: semanticScope,
+      evidence: evaluatedCorrections === 0 ? 'none' : evaluatedCorrections < 3 ? 'limited' : 'sufficient',
+      completeness: incompleteCorrections > 0 ? 'pending' : 'complete',
+      skills: bnccDashboard.skills.slice(0, 12).map((skill) => ({
+        code: skill.code, description: skill.summary, status: skill.status, confidence: skill.confidence,
+      })),
+      cognitiveLevels: [
+        ...Object.entries(bloomDashboard).map(([level, stat]) => ({ framework: 'bloom' as const, level, performance: categoricalPerformance(stat.accuracyPercent), confidence: stat.confidence })),
+        ...Object.entries(dokDashboard).map(([level, stat]) => ({ framework: 'dok' as const, level, performance: categoricalPerformance(stat.accuracyPercent), confidence: stat.confidence })),
+      ],
+      managementSignals: managementRows.slice(0, 12).map((group) => ({
+        segment: group.segment, gradeYear: group.gradeYear, subject: group.subject,
+        signal: group.evaluatedCorrections === 0 ? 'sem_evidencia' : group.incompleteCorrections > 0 ? 'incompleto' : (group.average ?? 10) < 6 ? 'abaixo_referencia' : 'adequado',
+      })),
+    }
+    semanticOrganization = await decideResultOrganization(semanticInput)
+  }
+
+  const orderedCognitiveProfiles = semanticScope === 'student' && semanticOrganization
+    ? cognitiveProfiles.map((profile) => ({
+        ...profile,
+        priorities: [...profile.priorities].sort((left, right) => {
+          const leftIndex = semanticOrganization.prioritizedSkillCodes.indexOf(left.code)
+          const rightIndex = semanticOrganization.prioritizedSkillCodes.indexOf(right.code)
+          return (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex) - (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex)
+        }),
+      }))
+    : cognitiveProfiles
+
   return performanceJson({
     overall: grades.length ? { avg: avg(grades), max: Math.max(...grades), min: Math.min(...grades), count: grades.length } : null,
     coverage: {
@@ -1015,12 +1069,10 @@ export async function GET(req: NextRequest) {
     inepAxisDashboard,
     bloomDokMatrix,
     soloDashboard,
-    cognitiveProfiles,
-    management: isSuperuser ? {
-      coordinationGroups: [...coordinationGroups.values()].map(managementGroupRow).sort((a, b) => a.segment.localeCompare(b.segment) || (a.gradeYear ?? 0) - (b.gradeYear ?? 0) || (a.subject ?? '').localeCompare(b.subject ?? '', 'pt-BR')),
-      schoolSegments: [...schoolSegments.values()].map(managementGroupRow).sort((a, b) => a.segment.localeCompare(b.segment)),
-    } : { coordinationGroups: [], schoolSegments: [] },
+    cognitiveProfiles: orderedCognitiveProfiles,
+    management,
     byProfessor: isSuperuser ? mapAvg(byProfessor) : {},
     topMissedQuestions,
+    semanticOrganization,
   }, startedAt)
 }

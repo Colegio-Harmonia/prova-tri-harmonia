@@ -1,5 +1,25 @@
 # Decisões Arquiteturais
 
+## ADR-015 - Jev organiza a leitura, não calcula o resultado
+
+**Data:** 30/09/2026
+**Problema:** os relatórios apresentam muitos eixos corretos, mas deixam ao
+leitor a tarefa de decidir por onde começar e qual próximo passo é coerente.
+**Decisão:** nas visões de turma, coordenação, escola e relatório individual,
+o Jev escolhe uma lente de leitura, uma política de prioridade e um quadro de
+ação. O código ordena os dados e produz textos fixos em português a partir
+dessas escolhas tipadas. Percentuais, notas, TRI, domínio, filtros, elegibilidade
+e permissões continuam exclusivamente determinísticos.
+**Privacidade:** o estado enviado ao Jev contém apenas faixas categóricas,
+códigos e descrições BNCC e sinais agregados. Não contém nome, ID, resposta,
+nota ou percentual exato de aluno. A consulta só ocorre quando uma dessas
+visões pede `semantic`; gestão continua restrita a perfis autorizados.
+**Contingência:** falha, indisponibilidade ou baixa segurança aplica a leitura
+determinística centrada em cobertura e sinaliza revisão pedagógica. O cache de
+sete dias evita repetir a mesma decisão para o mesmo recorte.
+**Consequência:** a organização orienta a leitura e pode reordenar prioridades,
+mas nunca inventa diagnóstico, causalidade ou altera evidências.
+
 ## ADR-014 - Jev como decisão tipada, auditável e reutilizável
 
 **Data:** 30/09/2026
