@@ -210,12 +210,12 @@ export async function GET(req: NextRequest) {
 
   const isSuperuser = isStaffSuperuser(currentUser.role)
   const params = req.nextUrl.searchParams
-  const requestedSemanticScope = params.get('semantic')
+  const requestedSemanticScope = params.get('s')
   const semanticScope: ResultOrganizationScope | null =
-    requestedSemanticScope === 'student' || requestedSemanticScope === 'class'
-      ? requestedSemanticScope
-      : isSuperuser && (requestedSemanticScope === 'coordination' || requestedSemanticScope === 'school')
-        ? requestedSemanticScope
+    requestedSemanticScope === 'a' ? 'student'
+      : requestedSemanticScope === 't' ? 'class'
+      : isSuperuser && requestedSemanticScope === 'c' ? 'coordination'
+        : isSuperuser && requestedSemanticScope === 'e' ? 'school'
         : null
 
   // Professor NUNCA vê dado de terceiro, mesmo que force um `assignedTo`

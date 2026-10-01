@@ -1,11 +1,13 @@
 'use client'
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createColumnHelper } from '@tanstack/react-table'
 import { DataTable, type DataTableFeatures } from '@/components/ui/data-table'
-import SemanticOrganizationCard, { type SemanticOrganizationView } from '@/components/reports/SemanticOrganizationCard'
+import type { SemanticOrganizationView } from '@/components/reports/SemanticOrganizationCard'
+
+const SemanticOrganizationCard = lazy(() => import('@/components/reports/SemanticOrganizationCard'))
 
 type GroupStats = Record<string, { avg: number | null; count: number }>
 type BloomStats = {
@@ -150,6 +152,10 @@ type UserOption = { id: number; name: string }
 type FilterRow = { examId: number; segment: string; gradeYear: number; subject: string; academicYear: number; bimester: number | null; classroomCourseId: string | null; assignedTo: number | null }
 type CourseOption = { id: string; name: string; section?: string | null }
 type Filters = { subject: string; gradeYear: string; segment: string; assignedTo: string; academicYear: string; bimester: string; classroomCourseId: string; examId: string }
+
+function SemanticCard({ data }: { data: Performance }) {
+  return <Suspense fallback={null}><SemanticOrganizationCard organization={data.semanticOrganization} coverage={data.coverage} /></Suspense>
+}
 
 const BLOOM_ORDER = ['lembrar', 'compreender', 'aplicar', 'analisar', 'avaliar', 'criar']
 const DOK_ORDER = ['DOK_1', 'DOK_2', 'DOK_3', 'DOK_4']
@@ -1096,7 +1102,7 @@ function ClassroomView({ data }: { data: Performance }) {
 
   return (
     <div className="space-y-6">
-      <SemanticOrganizationCard organization={data.semanticOrganization} />
+      <SemanticCard data={data} />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatTile label="Alunos com evidência" value={data.coverage.uniqueStudents} />
         <StatTile label="Avaliações" value={data.coverage.uniqueExams} />
@@ -1169,7 +1175,7 @@ function CoordinationView({ data, academicYear }: { data: Performance; academicY
     .sort((a, b) => (a.evaluatedCorrections === 0 ? -1 : 0) - (b.evaluatedCorrections === 0 ? -1 : 0) || (a.average ?? 99) - (b.average ?? 99))
     .slice(0, 8)
   return <div className="space-y-6">
-    <SemanticOrganizationCard organization={data.semanticOrganization} />
+    <SemanticCard data={data} />
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <StatTile label="Alunos com evidência" value={data.coverage.uniqueStudents} />
       <StatTile label="Avaliações" value={data.coverage.uniqueExams} />
@@ -1193,7 +1199,7 @@ function CoordinationView({ data, academicYear }: { data: Performance; academicY
 function SchoolView({ data }: { data: Performance }) {
   const recurringDifficulty = data.cognitiveProfiles.filter((profile) => profile.priorities.length > 0 && profile.evidence.assessmentCount >= 2).length
   return <div className="space-y-6">
-    <SemanticOrganizationCard organization={data.semanticOrganization} />
+    <SemanticCard data={data} />
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
       <StatTile label="Alunos com evidência" value={data.coverage.uniqueStudents} />
       <StatTile label="Avaliações" value={data.coverage.uniqueExams} />
@@ -1316,9 +1322,9 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
     if (filters.bimester) params.set('bimester', filters.bimester)
     if (filters.classroomCourseId) params.set('classroomCourseId', filters.classroomCourseId)
     if (filters.examId) params.set('examId', filters.examId)
-    if (activeView === 'turma') params.set('semantic', 'class')
-    if (activeView === 'coordenacao') params.set('semantic', 'coordination')
-    if (activeView === 'escola') params.set('semantic', 'school')
+    if (activeView === 'turma') params.set('s', 't')
+    if (activeView === 'coordenacao') params.set('s', 'c')
+    if (activeView === 'escola') params.set('s', 'e')
     const controller = new AbortController()
     setError(null)
     fetch(`/api/analytics/performance?${params}`, { signal: controller.signal })

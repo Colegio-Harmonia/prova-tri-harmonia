@@ -27,7 +27,7 @@ e permissões continuam exclusivamente determinísticos.
 **Privacidade:** o estado enviado ao Jev contém apenas faixas categóricas,
 códigos e descrições BNCC e sinais agregados. Não contém nome, ID, resposta,
 nota ou percentual exato de aluno. A consulta só ocorre quando uma dessas
-visões pede `semantic`; gestão continua restrita a perfis autorizados.
+visões solicita a organização; gestão continua restrita a perfis autorizados.
 **Contingência:** falha, indisponibilidade ou baixa segurança aplica a leitura
 determinística centrada em cobertura e sinaliza revisão pedagógica. O cache de
 sete dias evita repetir a mesma decisão para o mesmo recorte.
