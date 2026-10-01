@@ -54,6 +54,8 @@ export async function generateReinforcementCore(params: ReinforcementCoreParams,
 
   const selection = await selectReinforcementQuestions({
     area,
+    gradeYear: params.gradeYear,
+    subject: params.subject,
     skillCodes,
     count: params.questionCount,
     year: params.enemQuestionYear,
@@ -70,6 +72,8 @@ export async function generateReinforcementCore(params: ReinforcementCoreParams,
   // inferida) a partir dos ids selecionados, numerando a partir de 1.
   const questions = await buildBankExamQuestions(selection.selected.map((c) => c.id), 1)
   const warnings = [...selection.warnings]
+  if (selection.decision.source === 'fallback') warnings.push('Jev indisponível para orientar a seleção; foi mantida a distribuição equilibrada com foco em fundamentos e aplicação.')
+  else if (selection.decision.needsReview) warnings.push('Jev indicou baixa segurança na estratégia do reforço; confira as habilidades e a distribuição na revisão docente.')
 
   const { resolutions, warnings: resolutionWarnings } = await generateCommentedResolutions(questions)
   warnings.push(...resolutionWarnings)
@@ -95,6 +99,7 @@ export async function generateReinforcementCore(params: ReinforcementCoreParams,
         enemSkills: skillCodes,
         enemQuestionYear: params.enemQuestionYear ?? null,
         perSkill: selection.perSkill,
+        strategy: { ...selection.decision.strategy, source: selection.decision.source, needsReview: selection.decision.needsReview, readinessProbability: selection.decision.readinessProbability },
       },
     },
     questions: questionsWithResolutions,

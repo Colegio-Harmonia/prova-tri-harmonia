@@ -71,6 +71,35 @@ describe('distributeAcrossSkills', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
+  it('aplica pesos sem retirar completamente nenhuma habilidade', () => {
+    const bySkill = new Map([
+      ['H1', pool('H1', 20)],
+      ['H2', pool('H2', 20)],
+    ])
+    const result = distributeAcrossSkills(bySkill, 8, { allocationWeights: { H1: 3, H2: 1 } })
+    expect(result.perSkill).toEqual({ H1: 6, H2: 2 })
+  })
+
+  it('prioriza o perfil de Bloom escolhido dentro dos itens elegíveis', () => {
+    const candidates = new Map([['H5', [
+      { ...candidate(1, 'H5', 'analisar'), year: 2020 },
+      { ...candidate(2, 'H5', 'aplicar'), year: 2020 },
+      { ...candidate(3, 'H5', 'compreender'), year: 2020 },
+    ]]])
+    const result = distributeAcrossSkills(candidates, 3, { bloomProfile: 'aplicacao_contextual' })
+    expect(result.selected[0]?.bloomLevel).toBe('aplicar')
+  })
+
+  it('favorece edições recentes sem prender a seleção a um único ano', () => {
+    const candidates = new Map([['H3', [
+      { ...candidate(1, 'H3'), year: 2015 },
+      { ...candidate(2, 'H3'), year: 2025 },
+      { ...candidate(3, 'H3'), year: 2024 },
+    ]]])
+    const result = distributeAcrossSkills(candidates, 3, { yearMix: 'recente_variado' })
+    expect(result.selected.map((item) => item.year)).toEqual([2025, 2024, 2015])
+  })
+
   it('não fixa a fila em um único ano quando há candidatos de anos diferentes', () => {
     const candidates = new Map([[
       'H3',

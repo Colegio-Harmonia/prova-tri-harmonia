@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 30/09/2026, noite (Etapa 4: Jev nas atividades formativas e de recuperação).
+> Última atualização: 30/09/2026, noite (Etapa 5: Jev na seleção do Reforço ENEM).
 
 ## 1. Fonte da verdade
 
@@ -63,7 +63,7 @@ commitado que existia no Mac foi preservado no branch
   Quantidades, capítulos, tipos de questão, exigências visuais, permissões e
   validações continuam determinísticos. Falha ou baixa segurança não interrompe
   a fila: aplica estratégia equilibrada ou sinaliza conferência na revisão.
-- Suíte: 80 arquivos / 384 testes, incluindo 3 de integração com Postgres
+- Suíte: 81 arquivos / 391 testes, incluindo 3 de integração com Postgres
   real em memória (PGlite).
 - Dívida aberta relevante: **TD-018** (bundle de `/desempenho` 133,6 KiB,
   meta 125; `/desempenho/relatorio` 124,9, meta 120; `/gerar/[id]/revisar`
@@ -222,7 +222,18 @@ intenção `recuperacao`; criações livres usam `formativa`. O Jev recebe somen
 o recorte pedagógico, nunca nome ou resposta do aluno. Habilidades, quantidade
 e matriz BNCC continuam determinísticas. A decisão entra no blueprint, fica
 registrada nos metadados da atividade e usa cache, telemetria, auditoria e
-fallback de retomada guiada. Reforço ENEM permanece em etapa separada.
+fallback de retomada guiada.
+
+### Etapa 5 — Jev na seleção do Reforço ENEM
+`src/lib/ai/reinforcementSelectionDecision.ts` usa Choice para decidir a
+alocação entre habilidades, o perfil de Bloom e a mistura de anos, e Noul para
+medir se a oferta do banco sustenta a estratégia. O relatório continua
+pré-selecionando habilidades localmente; nome, ID, respostas, tentativas e taxas
+de erro não são enviados ao Jev. A decisão usa somente série, disciplina,
+habilidades escolhidas e metadados anônimos dos itens oficiais elegíveis. A
+execução permanece determinística, nunca inventa item e respeita ano, quantidade
+e competências da disciplina. A estratégia fica nos metadados, com cache,
+auditoria, telemetria e fallback equilibrado.
 
 ### Decisão 30/09/2026 — regra de domínio individual
 Mantida a regra rigorosa (≥ 80% em ≥ 4 questões de ≥ 2 avaliações), com o
@@ -242,9 +253,9 @@ pedagógica.
 
 ## 5. Pendências (em ordem)
 
-0. Próximas adoções do Jev, em PRs separados e calibrados: seleção do
-   Reforço ENEM e organização semântica dos resultados. As decisões na geração
-   de provas e atividades foram implementadas nas Etapas 3 e 4. Cálculos de
+0. Próxima adoção do Jev, em PR separado e calibrado: organização semântica
+   dos resultados. As decisões na geração de provas, atividades e Reforço ENEM
+   foram implementadas nas Etapas 3, 4 e 5. Cálculos de
    nota, TRI, percentuais e permissões permanecem determinísticos.
 
 1. Painel `/desempenho` (visão BNCC) usa **outra regra** também chamada
