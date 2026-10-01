@@ -91,7 +91,7 @@ export default function StudentReport() {
     const params = new URLSearchParams(preservedQuery)
     if (studentId) params.set('studentId', studentId)
     else params.set('student', student)
-    params.set('semantic', 'student')
+    params.set('s', 'a')
     const query = params.toString()
     async function load() {
       const [profileResult, masteryResult] = await Promise.allSettled([
@@ -106,9 +106,9 @@ export default function StudentReport() {
     load()
   }, [student, studentId, preservedQuery])
 
-  if (!student) return <p className="text-sm text-content-secondary">Selecione um aluno em Perfis cognitivos para abrir o relatório.</p>
+  if (!student) return <p className="text-sm text-content-secondary">Selecione um aluno em Perfis cognitivos.</p>
   if (error) return <p className="text-sm text-red-600">{error}</p>
-  if (!profile) return <p className="text-sm text-content-secondary">Carregando relatório…</p>
+  if (!profile) return <p className="text-sm text-content-secondary">Carregando…</p>
 
   return (
     <article className="print-report mx-auto max-w-3xl space-y-6 print:max-w-none">

@@ -33,6 +33,8 @@ export type ResultOrganizationDecisionInput = {
 
 export type ResultOrganization = {
   scope: ResultOrganizationScope
+  evidence: ResultOrganizationDecisionInput['evidence']
+  completeness: ResultOrganizationDecisionInput['completeness']
   strategy: ResultOrganizationStrategy
   source: JevDecisionResult['source']
   needsReview: boolean
@@ -109,6 +111,19 @@ export function describeResultOrganization(strategy: ResultOrganizationStrategy,
   return { heading, interpretation, nextAction }
 }
 
+export function deterministicResultStrategy(input: ResultOrganizationDecisionInput): ResultOrganizationStrategy {
+  if (input.completeness === 'pending' || input.evidence !== 'sufficient') {
+    return { primaryLens: 'coverage', priorityOrder: 'coverage_first', actionFrame: 'complete_evidence' }
+  }
+  if (input.skills.some((skill) => skill.status === 'intervencao')) {
+    return { primaryLens: 'skill_gap', priorityOrder: 'urgent_gap_first', actionFrame: 'reteach_then_reassess' }
+  }
+  if (input.cognitiveLevels.some((level) => level.performance === 'abaixo_referencia')) {
+    return { primaryLens: 'cognitive_demand', priorityOrder: 'confidence_first', actionFrame: 'scaffold_complexity' }
+  }
+  return { primaryLens: 'consolidation', priorityOrder: 'balanced', actionFrame: 'consolidate_and_transfer' }
+}
+
 export async function decideResultOrganization(
   input: ResultOrganizationDecisionInput,
   options: { evaluate?: typeof evaluateWithJev } = {},
@@ -158,9 +173,10 @@ export async function decideResultOrganization(
     context: { feature: 'result_organization', scope: input.scope, skillCount: input.skills.length, evidence: input.evidence },
     cacheTtlMs: CACHE_TTL_MS,
   })
-  const strategy = strategyFromResultOrganizationAnswers(result.answers)
+  const strategy = result.source === 'fallback' ? deterministicResultStrategy(input) : strategyFromResultOrganizationAnswers(result.answers)
   return {
-    scope: input.scope, strategy, source: result.source, needsReview: result.routing.route !== 'automatic',
+    scope: input.scope, evidence: input.evidence, completeness: input.completeness,
+    strategy, source: result.source, needsReview: result.routing.route !== 'automatic',
     ...describeResultOrganization(strategy, input),
     prioritizedSkillCodes: prioritizeResultSkills(input, strategy),
   }

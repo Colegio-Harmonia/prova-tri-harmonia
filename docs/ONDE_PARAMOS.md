@@ -245,6 +245,10 @@ agregados; nomes, IDs, respostas, notas e percentuais individuais exatos não
 são enviados. O sistema mantém todos os cálculos e permissões, produz os textos
 em português por regras fixas e usa cache, auditoria, telemetria e fallback
 centrado em cobertura.
+Em 01/10, a orientação passou a separar explicitamente amostra pequena,
+participações incompletas e indisponibilidade do Jev, mostrando os denominadores
+reais do recorte. O fallback agora usa lacunas BNCC ou exigência cognitiva
+quando a evidência é suficiente, em vez de sempre recomendar ampliar amostra.
 
 ### Etapa 7 — observabilidade e calibração do Jev
 O painel administrativo `/ia` agrega as decisões por operação e período:

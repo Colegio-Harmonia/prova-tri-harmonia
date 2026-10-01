@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { decideResultOrganization, describeResultOrganization, prioritizeResultSkills, routeResultOrganizationDecision, strategyFromResultOrganizationAnswers, type ResultOrganizationDecisionInput } from './resultOrganizationDecision'
+import { decideResultOrganization, describeResultOrganization, deterministicResultStrategy, prioritizeResultSkills, routeResultOrganizationDecision, strategyFromResultOrganizationAnswers, type ResultOrganizationDecisionInput } from './resultOrganizationDecision'
 
 const input: ResultOrganizationDecisionInput = {
   scope: 'student', evidence: 'sufficient', completeness: 'complete',
@@ -35,6 +35,14 @@ describe('resultOrganizationDecision', () => {
     })
   })
 
+  it('separates pending or small samples from sufficient evidence', () => {
+    expect(deterministicResultStrategy({ ...input, evidence: 'limited' }).primaryLens).toBe('coverage')
+    expect(deterministicResultStrategy({ ...input, completeness: 'pending' }).actionFrame).toBe('complete_evidence')
+    expect(deterministicResultStrategy(input)).toEqual({
+      primaryLens: 'skill_gap', priorityOrder: 'urgent_gap_first', actionFrame: 'reteach_then_reassess',
+    })
+  })
+
   it('falls back safely when provider is unavailable', async () => {
     const evaluate = vi.fn(async (options) => ({
       model: 'test', answers: options.fallback.answers, source: 'fallback' as const,
@@ -42,7 +50,8 @@ describe('resultOrganizationDecision', () => {
     }))
     const result = await decideResultOrganization(input, { evaluate })
     expect(result.source).toBe('fallback')
-    expect(result.strategy.primaryLens).toBe('coverage')
+    expect(result.strategy.primaryLens).toBe('skill_gap')
+    expect(result.evidence).toBe('sufficient')
     const state = evaluate.mock.calls[0][0].state
     expect(JSON.stringify(state)).not.toMatch(/studentName|studentId|answer|grade|score/i)
   })
