@@ -1021,10 +1021,11 @@ export async function GET(req: NextRequest) {
   let semanticOrganization = null
   if (semanticScope) {
     const managementRows = semanticScope === 'school' ? management.schoolSegments : semanticScope === 'coordination' ? management.coordinationGroups : []
+    const incompleteShare = incompleteCorrections / Math.max(1, evaluatedCorrections + incompleteCorrections)
     const semanticInput: ResultOrganizationDecisionInput = {
       scope: semanticScope,
       evidence: evaluatedCorrections === 0 ? 'none' : evaluatedCorrections < 3 ? 'limited' : 'sufficient',
-      completeness: incompleteCorrections > 0 ? 'pending' : 'complete',
+      completeness: incompleteCorrections === 0 ? 'complete' : incompleteShare > 0.05 ? 'material_pending' : 'minor_pending',
       skills: bnccDashboard.skills.slice(0, 12).map((skill) => ({
         code: skill.code, description: skill.summary, status: skill.status, confidence: skill.confidence,
       })),

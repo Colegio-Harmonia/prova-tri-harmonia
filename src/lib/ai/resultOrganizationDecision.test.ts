@@ -37,7 +37,8 @@ describe('resultOrganizationDecision', () => {
 
   it('separates pending or small samples from sufficient evidence', () => {
     expect(deterministicResultStrategy({ ...input, evidence: 'limited' }).primaryLens).toBe('coverage')
-    expect(deterministicResultStrategy({ ...input, completeness: 'pending' }).actionFrame).toBe('complete_evidence')
+    expect(deterministicResultStrategy({ ...input, completeness: 'material_pending' }).actionFrame).toBe('complete_evidence')
+    expect(deterministicResultStrategy({ ...input, completeness: 'minor_pending' }).primaryLens).toBe('skill_gap')
     expect(deterministicResultStrategy(input)).toEqual({
       primaryLens: 'skill_gap', priorityOrder: 'urgent_gap_first', actionFrame: 'reteach_then_reassess',
     })
