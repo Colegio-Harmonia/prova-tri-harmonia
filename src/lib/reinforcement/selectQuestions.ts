@@ -1,12 +1,14 @@
 import { sql } from 'drizzle-orm'
 import { db } from '@/db/client'
+import { decideReinforcementSelectionStrategy, reinforcementAllocationWeights, type ReinforcementSelectionDecision, type ReinforcementSelectionStrategy } from '@/lib/ai/reinforcementSelectionDecision'
 
 // Seleção de questões do banco ENEM por habilidade INEP (Módulo 3, spec
 // seção 3.4). Fonte: imported_questions + classificação oficial
 // (enem_skill_id). Questões com imagem oficial também entram: o merge do
 // banco preserva o arquivo do Drive para a revisão e os documentos.
-// A distribuição entre habilidades é equilibrada e variada em Bloom;
-// habilidade com poucas questões gera aviso, nunca invenção.
+// A distribuição entre habilidades e a preferência de Bloom são orientadas
+// pelo Jev e executadas por regras locais; habilidade com poucas questões
+// gera aviso, nunca invenção.
 
 export type ReinforcementCandidate = {
   id: number
@@ -85,6 +87,7 @@ export async function fetchCandidatesBySkill(
 export function distributeAcrossSkills(
   candidatesBySkill: Map<string, ReinforcementCandidate[]>,
   count: number,
+  options: { allocationWeights?: Record<string, number>; bloomProfile?: ReinforcementSelectionStrategy['bloomProfile']; yearMix?: ReinforcementSelectionStrategy['yearMix'] } = {},
 ): { selected: ReinforcementCandidate[]; perSkill: Record<string, number>; warnings: string[] } {
   const skills = [...candidatesBySkill.keys()]
   const warnings: string[] = []
@@ -101,7 +104,7 @@ export function distributeAcrossSkills(
       if (!byYear.has(c.year)) byYear.set(c.year, [])
       byYear.get(c.year)!.push(c)
     }
-    const years = shuffle([...byYear.keys()])
+    const years = options.yearMix === 'recente_variado' ? [...byYear.keys()].sort((a, b) => b - a) : shuffle([...byYear.keys()])
     for (const year of years) byYear.set(year, shuffle(byYear.get(year)!))
     const yearInterleaved: ReinforcementCandidate[] = []
     let remaining = candidates.length
@@ -123,7 +126,19 @@ export function distributeAcrossSkills(
     const randomized: ReinforcementCandidate[] = []
     const bloomsInRound = new Set<string | null>()
     while (yearInterleaved.length > 0) {
-      let index = yearInterleaved.findIndex((candidate) => !bloomsInRound.has(candidate.bloomLevel))
+      const bloomRank = (candidate: ReinforcementCandidate) => {
+        const level = (candidate.bloomLevel ?? '').toLocaleLowerCase('pt-BR')
+        const groups: Record<NonNullable<typeof options.bloomProfile>, string[][]> = {
+          fundamentos_aplicacao: [['lembr', 'conhec', 'compreend', 'entend'], ['aplic'], ['analis', 'avali', 'cri']],
+          aplicacao_contextual: [['aplic'], ['compreend', 'entend', 'analis'], ['lembr', 'conhec', 'avali', 'cri']],
+          analise_transferencia: [['analis', 'avali', 'cri'], ['aplic'], ['compreend', 'entend', 'lembr', 'conhec']],
+        }
+        const groupsForProfile = groups[options.bloomProfile ?? 'fundamentos_aplicacao']
+        const rank = groupsForProfile.findIndex((keywords) => keywords.some((keyword) => level.includes(keyword)))
+        return rank < 0 ? groupsForProfile.length : rank
+      }
+      const eligibleIndexes = yearInterleaved.map((candidate, candidateIndex) => ({ candidate, candidateIndex })).filter(({ candidate }) => !bloomsInRound.has(candidate.bloomLevel))
+      let index = eligibleIndexes.sort((a, b) => bloomRank(a.candidate) - bloomRank(b.candidate))[0]?.candidateIndex ?? -1
       if (index < 0) { bloomsInRound.clear(); index = 0 }
       const [candidate] = yearInterleaved.splice(index, 1)
       randomized.push(candidate)
@@ -134,13 +149,16 @@ export function distributeAcrossSkills(
   }
 
   const selected: ReinforcementCandidate[] = []
+  const weights = Object.fromEntries(skills.map((skill) => [skill, Math.max(1, Math.min(3, Math.round(options.allocationWeights?.[skill] ?? 1)))]))
+  const maxWeight = Math.max(1, ...Object.values(weights))
+  const skillSchedule = Array.from({ length: maxWeight }, (_, round) => skills.filter((skill) => weights[skill] > round)).flat()
   const perSkill: Record<string, number> = Object.fromEntries(skills.map((s) => [s, 0]))
 
   // Round-robin entre habilidades até fechar `count` ou esgotar o banco.
   let progressed = true
   while (selected.length < count && progressed) {
     progressed = false
-    for (const skill of skills) {
+    for (const skill of skillSchedule) {
       if (selected.length >= count) break
       const queue = queues.get(skill)!
       const next = queue.shift()
@@ -151,8 +169,9 @@ export function distributeAcrossSkills(
     }
   }
 
-  const targetPerSkill = Math.floor(count / Math.max(1, skills.length))
+  const totalWeight = Object.values(weights).reduce((sum, weight) => sum + weight, 0)
   for (const skill of skills) {
+    const targetPerSkill = Math.floor(count * weights[skill] / Math.max(1, totalWeight))
     const available = candidatesBySkill.get(skill)?.length ?? 0
     if (available === 0) {
       warnings.push(`${skill}: nenhuma questão elegível no banco com classificação oficial — habilidade ficou de fora.`)
@@ -169,11 +188,35 @@ export function distributeAcrossSkills(
 
 export async function selectReinforcementQuestions(params: {
   area: string
+  gradeYear: number
+  subject: string
   skillCodes: string[]
   count: number
   year?: number
   competencyNumbers?: readonly number[] | null
-}): Promise<{ selected: ReinforcementCandidate[]; perSkill: Record<string, number>; warnings: string[] }> {
+}): Promise<{ selected: ReinforcementCandidate[]; perSkill: Record<string, number>; warnings: string[]; decision: ReinforcementSelectionDecision }> {
   const bySkill = await fetchCandidatesBySkill(params.area, params.skillCodes, params.year, params.competencyNumbers)
-  return distributeAcrossSkills(bySkill, params.count)
+  const decisionSkills = params.skillCodes.map((code) => {
+    const candidates = bySkill.get(code) ?? []
+    return {
+      code,
+      description: candidates.find((candidate) => candidate.skillDescription)?.skillDescription ?? null,
+      candidateCount: candidates.length,
+      bloomLevels: [...new Set(candidates.map((candidate) => candidate.bloomLevel).filter((level): level is string => Boolean(level)))],
+    }
+  })
+  const decision = await decideReinforcementSelectionStrategy({
+    gradeYear: params.gradeYear,
+    subject: params.subject,
+    area: params.area,
+    questionCount: params.count,
+    requestedYear: params.year ?? null,
+    skills: decisionSkills,
+  })
+  const distributed = distributeAcrossSkills(bySkill, params.count, {
+    allocationWeights: reinforcementAllocationWeights(decision.strategy, decisionSkills),
+    bloomProfile: decision.strategy.bloomProfile,
+    yearMix: params.year ? 'amplo' : decision.strategy.yearMix,
+  })
+  return { ...distributed, decision }
 }
