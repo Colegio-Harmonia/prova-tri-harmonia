@@ -1,7 +1,7 @@
 export type SemanticOrganizationView = {
   source: 'provider' | 'cache' | 'fallback'
   evidence: 'none' | 'limited' | 'sufficient'
-  completeness: 'complete' | 'pending'
+  completeness: 'complete' | 'minor_pending' | 'material_pending'
   heading: string
   interpretation: string
   nextAction: string
@@ -12,8 +12,11 @@ type Coverage = { evaluatedCorrections: number; incompleteCorrections: number; u
 export default function SemanticOrganizationCard({ organization, coverage }: { organization: SemanticOrganizationView | null; coverage: Coverage }) {
   if (!organization) return null
   const origin = organization.source === 'fallback' ? 'Jev indisponível · orientação automática aplicada' : 'Leitura organizada pelo Jev'
+  const incompleteShare = Math.round((coverage.incompleteCorrections / Math.max(1, coverage.evaluatedCorrections + coverage.incompleteCorrections)) * 1000) / 10
   const evidenceNote = coverage.incompleteCorrections
-    ? `Conclua as ${coverage.incompleteCorrections} participação(ões) incompleta(s) antes de fechar uma intervenção.`
+    ? organization.completeness === 'material_pending'
+      ? `As ${coverage.incompleteCorrections} pendências representam ${incompleteShare}% do recorte; conclua-as antes de comparar resultados.`
+      : `As ${coverage.incompleteCorrections} pendências representam ${incompleteShare}% do recorte e não impedem a leitura geral; considere-as antes de fechar intervenções nos grupos afetados.`
     : organization.evidence === 'limited'
       ? 'A amostra ainda é pequena; use esta orientação como hipótese de acompanhamento, sem comparar grupos.'
       : 'A amostra deste recorte permite a leitura pedagógica.'

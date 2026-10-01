@@ -249,6 +249,8 @@ Em 01/10, a orientação passou a separar explicitamente amostra pequena,
 participações incompletas e indisponibilidade do Jev, mostrando os denominadores
 reais do recorte. O fallback agora usa lacunas BNCC ou exigência cognitiva
 quando a evidência é suficiente, em vez de sempre recomendar ampliar amostra.
+Pendências de até 5% são informadas sem bloquear a leitura geral; acima desse
+limiar, a cobertura volta a ser a prioridade antes de comparar resultados.
 
 ### Etapa 7 — observabilidade e calibração do Jev
 O painel administrativo `/ia` agrega as decisões por operação e período:

@@ -10,7 +10,7 @@ export type ResultOrganizationStrategy = {
 export type ResultOrganizationDecisionInput = {
   scope: ResultOrganizationScope
   evidence: 'none' | 'limited' | 'sufficient'
-  completeness: 'complete' | 'pending'
+  completeness: 'complete' | 'minor_pending' | 'material_pending'
   skills: Array<{
     code: string
     description: string | null
@@ -97,13 +97,17 @@ export function describeResultOrganization(strategy: ResultOrganizationStrategy,
     consolidation: 'Consolide o que já aparece com evidência consistente',
   }[strategy.primaryLens]
   const interpretation = {
-    coverage: input.completeness === 'pending' ? 'Há evidências pendentes; complete a revisão antes de comparar resultados.' : 'A cobertura permite avançar para a leitura pedagógica das habilidades.',
+    coverage: input.completeness === 'material_pending' ? 'Há pendências relevantes; complete a revisão antes de comparar resultados.' : 'A cobertura permite avançar para a leitura pedagógica das habilidades.',
     skill_gap: 'Leia as habilidades na ordem de urgência e considere também a confiança da amostra.',
     cognitive_demand: 'Compare os níveis de Bloom e DOK para localizar onde a complexidade passa a exigir mais apoio.',
     consolidation: 'Use os resultados consistentes como base para ampliar a transferência para novos contextos.',
   }[strategy.primaryLens]
   const nextAction = {
-    complete_evidence: 'Revise as pendências e amplie a amostra antes de definir uma intervenção.',
+    complete_evidence: input.completeness === 'material_pending'
+      ? 'Conclua as revisões pendentes antes de definir uma intervenção.'
+      : input.evidence !== 'sufficient'
+        ? 'Amplie a amostra antes de definir uma intervenção.'
+        : 'Prossiga com a leitura das habilidades e registre as pendências separadamente.',
     reteach_then_reassess: 'Retome a habilidade prioritária e verifique novamente com itens equivalentes.',
     scaffold_complexity: 'Organize uma progressão de apoio do nível atual para a próxima exigência cognitiva.',
     consolidate_and_transfer: 'Proponha uma aplicação em novo contexto e acompanhe se o desempenho se mantém.',
@@ -112,7 +116,7 @@ export function describeResultOrganization(strategy: ResultOrganizationStrategy,
 }
 
 export function deterministicResultStrategy(input: ResultOrganizationDecisionInput): ResultOrganizationStrategy {
-  if (input.completeness === 'pending' || input.evidence !== 'sufficient') {
+  if (input.completeness === 'material_pending' || input.evidence !== 'sufficient') {
     return { primaryLens: 'coverage', priorityOrder: 'coverage_first', actionFrame: 'complete_evidence' }
   }
   if (input.skills.some((skill) => skill.status === 'intervencao')) {
