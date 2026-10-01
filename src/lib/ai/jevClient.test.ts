@@ -40,6 +40,36 @@ describe('evaluateWithJev', () => {
     expect(telemetry).toHaveBeenCalledWith(expect.objectContaining({ provider: 'typesafe', status: 'succeeded' }))
   })
 
+  it('envia escolhas no contrato atual da API TypeSafe', async () => {
+    const choiceQuestions: JevQuestions = {
+      action: {
+        type: 'choice',
+        instructions: 'Qual ação deve ser aplicada?',
+        criteria: { revisar: 'Revisar evidências.', intervir: 'Criar intervenção.' },
+      },
+    }
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        questions: {
+          action: {
+            type: 'choice',
+            criteria: { revisar: 'Revisar evidências.', intervir: 'Criar intervenção.' },
+          },
+        },
+      })
+      expect(JSON.parse(String(init?.body)).questions.action).not.toHaveProperty('options')
+      return new Response(JSON.stringify({ answers: { action: { type: 'choice', choice: 'revisar', probabilities: { revisar: 0.9, intervir: 0.1 }, confidence: 0.8 } } }))
+    })
+
+    const result = await evaluateWithJev({
+      operation: 'jev/choice-contract', questionVersion: 'v1', state: {}, questions: choiceQuestions,
+      route: () => ({ route: 'automatic', outcome: 'selected' }), fallback,
+      apiKey: 'key', store: null, telemetry: null, reserveOperation: null, fetchImpl,
+    })
+
+    expect(result).toMatchObject({ source: 'provider', answers: { action: { choice: 'revisar' } } })
+  })
+
   it('reutiliza cache sem nova chamada ao provedor', async () => {
     const store = fakeStore()
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ answers: { aligned: { type: 'noul', noul: 0.91 } } })))

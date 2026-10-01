@@ -85,7 +85,7 @@ export async function decideActivityGenerationStrategy(
     approach: {
       type: 'choice' as const,
       instructions: 'Qual abordagem é mais adequada para a atividade trabalhar as habilidades selecionadas, considerando a intenção pedagógica e a faixa etária?',
-      options: {
+      criteria: {
         retomada_guiada: 'Retomar explicitamente o conceito essencial.',
         pratica_espacada: 'Consolidar por prática variada e distribuída.',
         aplicacao_contextualizada: 'Reconstruir a aprendizagem em situações próximas e significativas.',
@@ -94,17 +94,17 @@ export async function decideActivityGenerationStrategy(
     progression: {
       type: 'choice' as const,
       instructions: 'Qual progressão cognitiva deve organizar as questões sem alterar a matriz definida pelo professor?',
-      options: { passo_a_passo: 'Passos explícitos.', gradual: 'Do reconhecimento à aplicação.', desafio_progressivo: 'Desafios crescentes com apoio recuperável.' },
+      criteria: { passo_a_passo: 'Passos explícitos.', gradual: 'Do reconhecimento à aplicação.', desafio_progressivo: 'Desafios crescentes com apoio recuperável.' },
     },
     support: {
       type: 'choice' as const,
       instructions: 'Qual forma de apoio ajuda o estudante a reconstruir a habilidade sem entregar a resposta?',
-      options: { exemplo_modelado: 'Contexto que modele o raciocínio.', pistas_graduais: 'Pistas graduais.', autonomia_assistida: 'Autonomia com apoio pontual.' },
+      criteria: { exemplo_modelado: 'Contexto que modele o raciocínio.', pistas_graduais: 'Pistas graduais.', autonomia_assistida: 'Autonomia com apoio pontual.' },
     },
     evidence: {
       type: 'choice' as const,
       instructions: 'Que evidência deve predominar para verificar a aprendizagem ao final da atividade?',
-      options: { verificacao_direta: 'Verificação direta do componente-alvo.', transferencia_proxima: 'Transferência para situação próxima.', explicacao_do_raciocinio: 'Explicitação do raciocínio.' },
+      criteria: { verificacao_direta: 'Verificação direta do componente-alvo.', transferencia_proxima: 'Transferência para situação próxima.', explicacao_do_raciocinio: 'Explicitação do raciocínio.' },
     },
     ready: {
       type: 'noul' as const,

@@ -85,7 +85,7 @@ export async function decideReinforcementSelectionStrategy(
     allocation: {
       type: 'choice' as const,
       instructions: 'Como repartir as questões entre as habilidades selecionadas, considerando a quantidade pedida e a disponibilidade real do banco?',
-      options: {
+      criteria: {
         equilibrada: 'Distribuir igualmente entre as habilidades.',
         cobertura_habilidades: 'Proteger a presença das habilidades com menos itens elegíveis.',
         profundidade_banco: 'Usar mais itens das habilidades com maior oferta no banco.',
@@ -94,7 +94,7 @@ export async function decideReinforcementSelectionStrategy(
     bloom_profile: {
       type: 'choice' as const,
       instructions: 'Qual perfil cognitivo deve orientar a ordem de preferência entre itens elegíveis do banco?',
-      options: {
+      criteria: {
         fundamentos_aplicacao: 'Consolidar compreensão e aplicação essencial.',
         aplicacao_contextual: 'Priorizar aplicação em contextos típicos do ENEM.',
         analise_transferencia: 'Priorizar análise e transferência entre contextos.',
@@ -103,7 +103,7 @@ export async function decideReinforcementSelectionStrategy(
     year_mix: {
       type: 'choice' as const,
       instructions: 'Quando nenhum ano específico foi exigido, qual mistura de edições do ENEM é mais adequada?',
-      options: { amplo: 'Variar amplamente entre os anos disponíveis.', recente_variado: 'Favorecer anos recentes sem usar um único ano.' },
+      criteria: { amplo: 'Variar amplamente entre os anos disponíveis.', recente_variado: 'Favorecer anos recentes sem usar um único ano.' },
     },
     ready: {
       type: 'noul' as const,

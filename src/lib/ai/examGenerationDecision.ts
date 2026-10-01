@@ -98,7 +98,7 @@ export async function decideExamGenerationStrategy(
     cognitive_emphasis: {
       type: 'choice' as const,
       instructions: 'Qual ênfase cognitiva é mais adequada para esta avaliação, considerando série, disciplina, objetivos, habilidades e distribuição definida pelo professor?',
-      options: {
+      criteria: {
         fundamentos: 'Consolidar compreensão essencial e pré-requisitos.',
         equilibrada: 'Equilibrar compreensão, aplicação e transferência.',
         transferencia: 'Priorizar aplicação e transferência para situações novas.',
@@ -107,17 +107,17 @@ export async function decideExamGenerationStrategy(
     contextualization: {
       type: 'choice' as const,
       instructions: 'Qual grau de contextualização é mais adequado para os conteúdos e a faixa etária?',
-      options: { direta: 'Predominantemente direta.', mista: 'Combinação de direta e contextualizada.', autentica: 'Predominantemente situações autênticas.' },
+      criteria: { direta: 'Predominantemente direta.', mista: 'Combinação de direta e contextualizada.', autentica: 'Predominantemente situações autênticas.' },
     },
     difficulty_profile: {
       type: 'choice' as const,
       instructions: 'Qual perfil global de dificuldade melhor mede os objetivos informados sem extrapolar o planejamento?',
-      options: { acessivel: 'Progressão acessível.', equilibrado: 'Distribuição equilibrada.', desafiador: 'Maior demanda de transferência.' },
+      criteria: { acessivel: 'Progressão acessível.', equilibrado: 'Distribuição equilibrada.', desafiador: 'Maior demanda de transferência.' },
     },
     visual_support: {
       type: 'choice' as const,
       instructions: 'Qual intensidade de apoio visual é pedagogicamente adequada, respeitando as escolhas explícitas do professor em cada capítulo?',
-      options: { contido: 'Somente quando indispensável.', equilibrado: 'Quando acrescentar compreensão.', intensivo: 'Com maior frequência quando pertinente.' },
+      criteria: { contido: 'Somente quando indispensável.', equilibrado: 'Quando acrescentar compreensão.', intensivo: 'Com maior frequência quando pertinente.' },
     },
     ready: {
       type: 'noul' as const,
