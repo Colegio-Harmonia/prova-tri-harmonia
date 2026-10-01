@@ -137,7 +137,7 @@ export async function decideResultOrganization(
     primary_lens: {
       type: 'choice' as const,
       instructions: 'Qual lente deve abrir a leitura pedagógica destes resultados anônimos e categóricos?',
-      options: {
+      criteria: {
         coverage: 'Qualidade e suficiência das evidências.', skill_gap: 'Habilidades que pedem intervenção.',
         cognitive_demand: 'Mudança conforme a exigência cognitiva.', consolidation: 'Aprendizagens consistentes a consolidar e transferir.',
       },
@@ -145,7 +145,7 @@ export async function decideResultOrganization(
     priority_order: {
       type: 'choice' as const,
       instructions: 'Como ordenar as habilidades sem recalcular nem alterar os resultados?',
-      options: {
+      criteria: {
         coverage_first: 'Evidência insuficiente antes da comparação.', urgent_gap_first: 'Intervenções mais urgentes primeiro.',
         confidence_first: 'Resultados com maior confiança primeiro.', balanced: 'Equilibrar urgência e confiança.',
       },
@@ -153,7 +153,7 @@ export async function decideResultOrganization(
     action_frame: {
       type: 'choice' as const,
       instructions: 'Qual próximo passo pedagógico é coerente com o conjunto de sinais?',
-      options: {
+      criteria: {
         complete_evidence: 'Completar ou ampliar evidências.', reteach_then_reassess: 'Retomar e verificar novamente.',
         scaffold_complexity: 'Apoiar uma progressão de complexidade.', consolidate_and_transfer: 'Consolidar e aplicar em novo contexto.',
       },

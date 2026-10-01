@@ -12,8 +12,8 @@ type JsonPrimitive = string | number | boolean | null
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue }
 
 export type JevNoulQuestion = { type: 'noul'; instructions: JsonValue; criteria?: JsonValue }
-export type JevChoiceQuestion = { type: 'choice'; instructions: JsonValue; options: JsonValue }
-export type JevScoreQuestion = { type: 'score'; instructions: JsonValue; levels: JsonValue }
+export type JevChoiceQuestion = { type: 'choice'; instructions: JsonValue; criteria: JsonValue }
+export type JevScoreQuestion = { type: 'score'; instructions: JsonValue; criteria: JsonValue }
 export type JevQuestion = JevNoulQuestion | JevChoiceQuestion | JevScoreQuestion
 export type JevQuestions = Record<string, JevQuestion>
 
