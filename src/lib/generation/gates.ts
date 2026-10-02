@@ -17,6 +17,25 @@ export function defaultShuffle<T>(items: T[]): T[] {
   return copy
 }
 
+/**
+ * A resposta-modelo escrita pela IA numa descritiva calculável precisa conter o
+ * resultado recalculado por código (mesma precisão ou arredondado, tolerância
+ * de 1%). Lê números em formato pt-BR ("1.234,5") e
+ * respeita o sinal quando o menos está colado ao número ("-2", não "5 - 2");
+ * sem isso, uma prosa com número errado passaria.
+ */
+export function answerProseContainsResult(prose: string, numeric: number): boolean {
+  const tolerance = Math.max(0.01, Math.abs(numeric) * 0.01)
+  for (const match of prose.matchAll(/(?<![\d)\w])([-−–]?)(\d[\d.,]*)/g)) {
+    let token = match[2].replace(/[.,]+$/, '')
+    token = /^\d{1,3}(\.\d{3})+(,\d+)?$/.test(token) ? token.replace(/\./g, '').replace(',', '.') : token.replace(',', '.')
+    const value = Number(token)
+    if (!Number.isFinite(value)) continue
+    if (Math.abs((match[1] ? -value : value) - numeric) <= tolerance) return true
+  }
+  return false
+}
+
 function normalize(value: string): string {
   return value
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')

@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 02/10/2026 (gabarito e rubrica das descritivas calculáveis de Matemática).
+> Última atualização: 02/10/2026 (resposta-modelo das descritivas calculáveis e reparo de formato das alternativas).
 
 ## 1. Fonte da verdade
 
@@ -52,16 +52,28 @@ provas/atividades pendentes de revisão.
 
 ## 2.2 Correção (02/10/2026): descritivas de Matemática barradas pelo Jev
 
-Lote #268 (Matemática, 8º ano, 4º bim.) falhou na Questão 4 com "A resposta
-esperada não responde ao enunciado…". Causa: descritiva `calculavel` saía com
-gabarito = só o número e critério = texto padrão, e o Jev (`correcao_objetiva`
-0,13–0,17) barrava as 3 tentativas. Correção em `finalize.ts` (resolução
-recalculada + rubrica por etapas; ver `docs/GESTAO_QUALIDADE_QUESTOES_JEV.md`).
-Branch `fix/gabarito-descritivas-calculaveis` — depois do merge, rebuild de `web`
-e `worker` (a geração roda no worker). **Ainda aberto:** em Matemática objetiva o
-gate `alternative_ambiguity` (termos em comum entre alternativas) reprovou a
-Questão 2 do mesmo lote (B e D com 88% de termos em comum) — falso positivo
-provável em alternativas algébricas; não alterado aqui.
+Lote #268 (Matemática, 8º ano, 4º bim.) falhou na Questão 4 ("A resposta
+esperada não responde ao enunciado…") e, depois do PR #27, ainda falhou
+(Questão 2 em formato das alternativas; Questão 4 em `correcao_objetiva`).
+Causas, em duas camadas (detalhe em `docs/GESTAO_QUALIDADE_QUESTOES_JEV.md`):
+
+1. PR #27 (`finalize.ts`): o gabarito da descritiva `calculavel` era só o número
+   e o critério era o texto padrão. Passou a ter resolução recalculada + rubrica.
+2. Este PR (branch `fix/gabarito-descritivas-calculaveis-2`): o enunciado tem
+   vários itens e o código descartava a resposta-modelo da IA, deixando só o
+   número do domínio (cobria um item, às vezes outra coisa). Agora a resposta-modelo
+   da IA é mantida, o validador exige que ela contenha o resultado recalculado
+   (`answerProseContainsResult`), o prompt exige que o enunciado peça a grandeza
+   calculada, e o gate `alternative_shape` tenta o reparo local dos distratores
+   antes de reprovar a questão inteira.
+
+Validação com IA e Jev reais (container descartável, 02/10/2026): descritivas de
+Matemática 8º ano **5/5 aprovadas** (antes 0/4); `correcao_objetiva` 0,82–0,92.
+**Ainda aberto:** objetivas `calculavel` com domínio `point_distance` (resultado
+irracional exibido com 6 casas, enunciado pedindo expressão algébrica, gabarito
+com duas respostas) reprovaram 0/3 na amostra, por defeitos de geração que não
+são deste PR; o reparo local de formato não foi exercitado com IA real (só em teste
+unitário).
 
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 
