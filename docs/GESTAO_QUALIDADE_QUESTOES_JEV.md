@@ -98,6 +98,17 @@ código final: **10/10 ruins barradas, 0/10 controles barrados**. Limiares em
 `QUALITY_CRITERIA`. Reexecute a calibração ao trocar a versão do Jev ou os
 limiares (`QUESTION_QUALITY_VERSION` invalida o cache).
 
+**Lacuna encontrada em 02/10/2026:** descritivas de Matemática (estratégia
+`calculavel`) não estavam no conjunto de controle. O gabarito delas era só o
+número recalculado e o critério era o texto padrão "Critérios definidos na
+revisão docente.", então `correcao_objetiva` ficava em 0,13–0,17 (bloqueio < 0,4)
+e a prova travava na Questão 4 do lote #268 (Matemática, 8º ano). Correção em
+`src/lib/generation/finalize.ts`: a resposta esperada passa a trazer a resolução
+recalculada por código (`truth.derivation`) + a resposta final, e, sem critérios
+da IA, entra uma rubrica por etapas (30/40/30). Medido com o Jev real em
+2 descritivas calculáveis: `correcao_objetiva` 0,16→0,89 e 0,17→0,82. Os limiares
+**não** foram alterados.
+
 ## Limites conhecidos
 - Jev é um juiz probabilístico: julga, não gera. A geração continua no LLM de
   texto configurado em `ai_model_profiles`.

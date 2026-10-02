@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 01/10/2026 (Etapa 7: observabilidade e calibração do Jev).
+> Última atualização: 02/10/2026 (gabarito e rubrica das descritivas calculáveis de Matemática).
 
 ## 1. Fonte da verdade
 
@@ -49,6 +49,19 @@ gate anti-vazamento determinístico e juiz de qualidade Jev no lugar do auditor
 LLM. Branch `fix/qualidade-geracao-jev-juiz` — **ainda não promovido**; depois do
 merge, rebuild de `web` e `worker` e reexecutar o teste de qualidade nas
 provas/atividades pendentes de revisão.
+
+## 2.2 Correção (02/10/2026): descritivas de Matemática barradas pelo Jev
+
+Lote #268 (Matemática, 8º ano, 4º bim.) falhou na Questão 4 com "A resposta
+esperada não responde ao enunciado…". Causa: descritiva `calculavel` saía com
+gabarito = só o número e critério = texto padrão, e o Jev (`correcao_objetiva`
+0,13–0,17) barrava as 3 tentativas. Correção em `finalize.ts` (resolução
+recalculada + rubrica por etapas; ver `docs/GESTAO_QUALIDADE_QUESTOES_JEV.md`).
+Branch `fix/gabarito-descritivas-calculaveis` — depois do merge, rebuild de `web`
+e `worker` (a geração roda no worker). **Ainda aberto:** em Matemática objetiva o
+gate `alternative_ambiguity` (termos em comum entre alternativas) reprovou a
+Questão 2 do mesmo lote (B e D com 88% de termos em comum) — falso positivo
+provável em alternativas algébricas; não alterado aqui.
 
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 
