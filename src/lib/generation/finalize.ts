@@ -1,10 +1,28 @@
 import type { ExamQuestion } from '@/lib/gemini/examSchema'
-import type { AssembledQuestion, PipelineContext } from './types'
+import type { AssembledQuestion, PipelineContext, TruthObject } from './types'
+
+/** Rubrica padrão de descritiva calculável quando a IA não devolve critérios próprios. */
+export const CALCULABLE_GRADING_CRITERIA =
+  '1) Identifica os dados do problema e a estratégia de resolução adequada (30%). 2) Desenvolve os cálculos de forma organizada e sem erros (40%). 3) Apresenta a resposta final correta, com unidade ou representação adequada (30%).'
+
+/**
+ * Resposta-modelo de descritiva calculável. Os passos e o resultado vêm do
+ * recálculo por código (nunca da prosa do modelo); antes, o gabarito era só o
+ * número, sem resolução, e o juiz de qualidade barrava a questão por "resposta
+ * esperada que não responde ao enunciado".
+ */
+function calculableExpectedAnswer(truth: TruthObject): string | null {
+  const answer = truth.derivedAnswer?.trim()
+  if (!answer) return null
+  const derivation = truth.derivation?.trim().replace(/[.;]\s*$/, '')
+  return derivation ? `Resolução: ${derivation}. Resposta final: ${answer}.` : `Resposta final: ${answer}.`
+}
 
 /** Estágio 6 — monta o `ExamQuestion` final apenas quando a cadeia passou. */
 export function assembleExamQuestion(ctx: PipelineContext, assembled: AssembledQuestion): ExamQuestion {
   const { plan, truth, alternatives, correctLetter, visualPlan, statement, supportText, metadata } = assembled
   const isObjective = ctx.questionType === 'objetiva'
+  const calculable = plan.truthStrategy === 'calculavel'
   const steps = truth.derivation.split(/;\s*/).map((step) => step.trim()).filter(Boolean)
   const visualSpec = visualPlan.visualType === 'coordinate_plane'
     ? 'coordinate_plane'
@@ -21,8 +39,14 @@ export function assembleExamQuestion(ctx: PipelineContext, assembled: AssembledQ
     supportText,
     alternatives: isObjective ? alternatives : null,
     correctLetter: isObjective ? correctLetter : null,
-    expectedAnswer: isObjective ? null : (assembled.expectedAnswer?.trim() || truth.derivedAnswer || truth.claim || null),
-    gradingCriteria: isObjective ? null : (assembled.gradingCriteria?.trim() || 'Critérios definidos na revisão docente.'),
+    expectedAnswer: isObjective
+      ? null
+      : calculable
+        ? (calculableExpectedAnswer(truth) ?? truth.claim ?? null)
+        : (assembled.expectedAnswer?.trim() || truth.derivedAnswer || truth.claim || null),
+    gradingCriteria: isObjective
+      ? null
+      : (assembled.gradingCriteria?.trim() || (calculable ? CALCULABLE_GRADING_CRITERIA : 'Critérios definidos na revisão docente.')),
     solutionBlueprint: plan.truthStrategy === 'calculavel' && plan.domain
       ? {
           domain: plan.domain,
