@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { StructuredGenerationError } from '@/lib/gemini/structuredRepair'
-import { isEvidenceValidationFailure } from './unifiedRunner'
+import { buildSkillBlock, isEvidenceValidationFailure } from './unifiedRunner'
 
 describe('isEvidenceValidationFailure', () => {
   it('reconhece o diagnóstico dos gates em português com acentos', () => {
@@ -25,5 +25,21 @@ describe('isEvidenceValidationFailure', () => {
     )
 
     expect(isEvidenceValidationFailure(error)).toBe(false)
+  })
+})
+
+describe('buildSkillBlock', () => {
+  const ctx = { questionNumber: 1, subject: 'Ciências', gradeYear: 7, segment: 'anos-finais', curriculumContent: 'x', questionType: 'objetiva' as const }
+
+  it('entrega código, descrição, nível de Bloom do verbo e objetivos ao gerador', () => {
+    const block = buildSkillBlock({ ...ctx, targetSkills: [{ code: 'EF07CI05', description: 'Discutir o uso de combustíveis para avaliar avanços.' }], objectives: ['Avaliar impactos socioambientais.'] })
+    expect(block).toContain('EF07CI05')
+    expect(block).toContain('Discutir o uso de combustíveis')
+    expect(block).toContain('Objetivos de aprendizagem do capítulo: Avaliar impactos')
+    expect(block).toMatch(/Bloom esperado/)
+  })
+
+  it('não gera bloco quando o capítulo não tem habilidade BNCC', () => {
+    expect(buildSkillBlock(ctx)).toBe('')
   })
 })

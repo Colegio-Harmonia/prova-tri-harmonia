@@ -1,6 +1,8 @@
 import type { ExamQuestion } from '@/lib/gemini/examSchema'
 import { correctSingleQuestion } from '@/lib/gemini/examValidator'
 import { generateExamBlueprint, generateUnifiedQuestion } from '@/lib/generation'
+import { cognitiveObjectives, pickTargetSkills } from '@/lib/exams/targetSkills'
+import { resolveBnccDescriptions } from '@/lib/curriculum/bnccDescriptions'
 import type { CurriculumSelection, CurricularUnit } from '@/types/exam'
 
 type Params = {
@@ -10,6 +12,8 @@ type Params = {
   instruction?: string
   forceNoVisual?: boolean
   unit?: CurricularUnit
+  /** Habilidades BNCC que a questão substituta deve continuar medindo. */
+  targetSkillCodes?: string[]
 }
 
 /**
@@ -45,7 +49,11 @@ export async function generateQuestionWithUnifiedFlow(params: Params): Promise<{
   const slot = blueprint.slots[0]
   if (!slot) throw new Error('O plano de geração não cobriu a questão solicitada.')
 
+  const missingCodes = unit.habilidades.status === 'mapeado' ? unit.habilidades.skills.filter((skill) => !skill.description?.trim()).map((skill) => skill.code) : []
+  const descriptions = missingCodes.length ? await resolveBnccDescriptions(missingCodes) : new Map<string, string>()
   const generated = await generateUnifiedQuestion({
+    targetSkills: pickTargetSkills({ unit, slotIndexInUnit: params.questionNumber - 1, forcedCodes: params.targetSkillCodes, descriptions }),
+    objectives: cognitiveObjectives(unit),
     questionNumber: params.questionNumber,
     subject: params.curriculum.subject,
     gradeYear: params.curriculum.gradeYear,

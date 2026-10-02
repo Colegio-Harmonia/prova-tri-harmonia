@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assembleAlternatives, gateAlternativePresentation, gateAlternativeShape, gateDistractors, gateInterpretiveSupport, gateStatement, gateStrategy, gateTruth } from './gates'
+import { assembleAlternatives, gateAnchoredClaim, gateAlternativePresentation, gateAlternativeShape, gateDistractors, gateInterpretiveSupport, gateStatement, gateStrategy, gateTruth } from './gates'
 import { StageGateError } from './types'
 import type { PipelineContext, QuestionPlan, TruthObject } from './types'
 
@@ -102,5 +102,26 @@ describe('gates determinísticos', () => {
     const truth: TruthObject = { strategy: 'interpretativa', values: {}, derivation: 'x', textEvidence: 'O personagem decidiu partir ao amanhecer.', derivedAnswer: 'Ele decide ir embora cedo.' }
     expect(() => gateInterpretiveSupport(plan, truth, ['A cidade ficou silenciosa por muitos dias', 'Ele permanece na cidade'])).toThrow(/trecho literal/i)
     expect(() => gateInterpretiveSupport(plan, truth, ['Ele permanece na cidade', 'O personagem ganha dinheiro'])).not.toThrow()
+  })
+})
+
+describe('gateAnchoredClaim', () => {
+  const support = 'Veículos elétricos não queimam combustível no próprio motor, mas a eletricidade que consomem pode vir de usinas hidrelétricas ou térmicas.'
+  const truth = (overrides: Partial<TruthObject>): TruthObject => ({ strategy: 'fonte_ancorada', values: {}, derivation: 'x', claim: 'A origem da eletricidade define a redução das emissões.', ...overrides })
+
+  it('aceita evidência literal do texto de apoio', () => {
+    expect(() => gateAnchoredClaim(support, truth({ sourceEvidence: 'a eletricidade que consomem pode vir de usinas hidrelétricas ou térmicas' }))).not.toThrow()
+  })
+
+  it('rejeita evidência que não está no texto de apoio, mesmo que esteja no currículo', () => {
+    expect(() => gateAnchoredClaim(support, truth({ sourceEvidence: 'Inovações tecnológicas e qualidade de vida' }))).toThrow(StageGateError)
+  })
+
+  it('não exige evidência quando a questão não tem texto de apoio', () => {
+    expect(() => gateAnchoredClaim(null, truth({ sourceEvidence: undefined }))).not.toThrow()
+  })
+
+  it('rejeita resposta (claim) vazia', () => {
+    expect(() => gateAnchoredClaim(null, truth({ claim: ' ' }))).toThrow(StageGateError)
   })
 })

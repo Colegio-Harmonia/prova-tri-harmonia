@@ -117,6 +117,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
             curriculum,
             questionNumber: original.number,
             type: original.type,
+            targetSkillCodes: original.bnccStatus === 'mapeado' && replacement?.strategy !== 'outro_tema_planejamento' ? original.bnccCodes : undefined,
             instruction: [
               `substituir a questão ${original.number}; tipo ${original.type}`,
               attempt > 1 ? 'a tentativa anterior não gerou um JSON válido; gere uma nova questão completa, autocontida e conforme o contrato' : null,

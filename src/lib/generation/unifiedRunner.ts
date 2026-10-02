@@ -4,16 +4,18 @@ import type { ExamQuestion } from '@/lib/gemini/examSchema'
 import { canonicalDomainsForSubject, getCanonicalDomain, computeCanonicalDomain, comparableNumber } from './domains'
 import { buildDeterministicMathStatement } from './deterministicMathStatement'
 import { getRuleEngine, registeredRuleEngineIds } from './rules'
-import { defaultShuffle, assembleAlternatives, gateAlternativePresentation, gateAlternativeShape, gateDistractors, gateInterpretiveSupport, gateMetadata, gateStatement, gateStrategy, gateTruth, gateVisualPlan, gateVisualReference } from './gates'
+import { defaultShuffle, assembleAlternatives, gateAnchoredClaim, gateAlternativePresentation, gateAlternativeShape, gateDistractors, gateInterpretiveSupport, gateMetadata, gateStatement, gateStrategy, gateTruth, gateVisualPlan, gateVisualReference } from './gates'
 import { detectAlternativeAmbiguities } from './alternatives'
 import { assembleExamQuestion } from './finalize'
 import { runLocalQualityGate } from './localQualityGate'
-import { unavailableAuditWarning } from './runners'
+import { curriculumLeakageIssues, normalizeQuestionPresentation } from './curriculumLeakage'
+import { judgeQuestionQuality } from '@/lib/ai/questionQualityDecision'
 import { recordUnifiedAttempt, recordUnifiedSuccess, recordUnifiedRejection, recordAuditSkipped, recordAuditTriggered } from './metrics'
 import { StageGateError } from './types'
 import type { AssembledQuestion, MetadataDraft, PipelineContext, QuestionPlan, TruthObject, VisualPlan } from './types'
 import { TRUTH_STRATEGIES } from './types'
 import type { BlueprintSlot } from './blueprint'
+import { inferBloomFromVerb } from '@/config/bloomVerbs'
 
 // ---------------------------------------------------------------------------
 // Schema unificado de saída (1 chamada IA por questão)
@@ -31,6 +33,9 @@ const unifiedSchema = z.object({
   sourceEvidence: z.string().optional(),
   claim: z.string().optional(),
   derivation: z.string().min(1),
+  // Só descritivas: resposta-modelo e critérios escritos pela IA (nunca o título do capítulo).
+  expectedAnswer: z.string().optional(),
+  gradingCriteria: z.array(z.string().min(5)).optional(),
   ruleInput: z.record(z.string(), z.unknown()).optional(),
 
   // Questão completa
@@ -88,6 +93,8 @@ const UNIFIED_RESPONSE_SCHEMA = {
     sourceEvidence: { type: 'string' },
     claim: { type: 'string' },
     derivation: { type: 'string' },
+    expectedAnswer: { type: 'string' },
+    gradingCriteria: { type: 'array', items: { type: 'string' } },
     ruleInput: { type: 'object' },
     supportText: { type: 'string', nullable: true },
     statement: { type: 'string' },
@@ -148,87 +155,39 @@ const DISTRACTOR_REPAIR_RESPONSE_SCHEMA = {
 }
 
 // ---------------------------------------------------------------------------
-// Auditoria IA seletiva (stage5 do pipeline antigo, agora condicional)
-// ---------------------------------------------------------------------------
-
-const AUDIT_CONFIDENCE_THRESHOLD = 0.7
-const AUDIT_SAMPLE_RATE = 0.15
-
-function shouldAudit(slot: BlueprintSlot, selfConfidence: number): boolean {
-  // Questões com fonte determinística (cálculo/regra) têm gabarito já
-  // conferido por código — só a amostragem justifica gastar IA.
-  if (slot.truthStrategy === 'calculavel' || slot.truthStrategy === 'regra_deterministica') {
-    return Math.random() < AUDIT_SAMPLE_RATE
-  }
-  // Questões interpretativas/ancoradas sempre passam por auditoria
-  // quando a confiança é baixa.
-  if (selfConfidence < AUDIT_CONFIDENCE_THRESHOLD) return true
-  // Caso contrário, amostragem.
-  return Math.random() < AUDIT_SAMPLE_RATE
-}
-
-const auditSchema = z.object({
-  issues: z.array(z.object({
-    severity: z.enum(['bloqueante', 'alerta']),
-    criterion: z.enum(['gabarito', 'unicidade', 'calculo_ou_dados', 'linguagem', 'alinhamento']),
-    reason: z.string().min(1),
-  })).default([]),
-})
-
-const AUDIT_RESPONSE_SCHEMA = {
-  type: 'object',
-  properties: {
-    issues: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          severity: { type: 'string', enum: ['bloqueante', 'alerta'] },
-          criterion: { type: 'string', enum: ['gabarito', 'unicidade', 'calculo_ou_dados', 'linguagem', 'alinhamento'] },
-          reason: { type: 'string' },
-        },
-        required: ['severity', 'criterion', 'reason'],
-      },
-    },
-  },
-  required: ['issues'],
-}
-
-async function runSelectiveAudit(
-  ctx: PipelineContext,
-  assembled: AssembledQuestion,
-): Promise<Array<{ severity: 'bloqueante' | 'alerta'; reason: string }>> {
-  const prompt = `Você faz a AUDITORIA FINAL de uma questão escolar já construída. O fato/cálculo e o gabarito já foram garantidos por validação determinística; NÃO os recalcule. Foque apenas em ambiguidade de linguagem e alinhamento curricular real.
-
-Disciplina: ${ctx.subject}. Série: ${ctx.gradeYear}º ano (${ctx.segment}).
-Enunciado: ${assembled.statement}
-${assembled.supportText ? `Apoio: ${assembled.supportText}` : ''}
-Alternativas: ${(assembled.alternatives ?? []).map(a => `${a.letter}) ${a.text}`).join(' | ') || '(questão descritiva)'}
-Gabarito definido por código: ${assembled.correctLetter ?? '—'}
-
-Devolva issues (bloqueante somente com evidência concreta). Não inclua bloqueio sobre cálculo ou gabarito.`
-
-  try {
-    const result = await generateValidatedStructuredContent({
-      context: `generation/unified-audit-${ctx.questionNumber}`,
-      prompt,
-      responseSchema: AUDIT_RESPONSE_SCHEMA,
-      zodSchema: auditSchema,
-      maxAttempts: 2,
-    })
-    return result.value.issues.map(i => ({ severity: i.severity, reason: `[${i.criterion}] ${i.reason}` }))
-  } catch (error) {
-    const warning = unavailableAuditWarning(error)
-    if (warning) return warning
-    throw error
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Geração unificada (1 chamada IA por questão)
 // ---------------------------------------------------------------------------
 
-function buildUnifiedPrompt(ctx: PipelineContext, slot: BlueprintSlot, forcedEvidence?: string): string {
+/** Habilidade BNCC-alvo: o gerador precisa saber o que a questão deve MEDIR, não só o assunto. */
+export function buildSkillBlock(ctx: PipelineContext): string {
+  const skills = ctx.targetSkills ?? []
+  if (!skills.length) return ''
+  const lines = skills.map((skill) => {
+    const bloom = skill.description ? inferBloomFromVerb(skill.description) : null
+    return `- ${skill.code}${skill.description ? ` — ${skill.description}` : ''}${bloom ? ` (verbo da habilidade → nível de Bloom esperado: ${bloom})` : ''}`
+  })
+  const objectives = (ctx.objectives ?? []).filter(Boolean).slice(0, 4)
+  return `HABILIDADE BNCC-ALVO (obrigatória — é o que a questão deve MEDIR; o assunto do capítulo é só o contexto):
+${lines.join('\n')}
+${skills.length > 1 ? 'Escolha UMA delas e devolva exatamente esse código em "bnccCodes" com bnccStatus "mapeado".' : 'Devolva este código em "bnccCodes" com bnccStatus "mapeado".'}
+A questão deve exigir a operação cognitiva do VERBO da habilidade aplicada ao objeto de conhecimento dela (ex.: "discutir/avaliar" pede julgar vantagens e limitações com base em dados do texto; "comparar" pede relacionar duas situações; "identificar" pode ser direto). Lembrar um fato isolado do assunto NÃO atende a uma habilidade de nível superior. Ajuste "bloomLevel" ao verbo.${objectives.length ? `\nObjetivos de aprendizagem do capítulo: ${objectives.join(' | ')}` : ''}
+`
+}
+
+/** Regras que o juiz de qualidade aplica; o gerador as recebe antes de escrever. */
+const QUALITY_RULES = `REGRAS DE QUALIDADE (o juiz de qualidade barra a questão se violar qualquer uma):
+1. A questão mede a habilidade BNCC-alvo (quando informada), não apenas o assunto.
+2. A resposta correta responde de fato à pergunta, com conteúdo da disciplina; nunca repete os termos da pergunta nem é um título/tópico.
+3. Nada de linguagem de planejamento ("o estudo de...", "o capítulo...", "o currículo..."). Escreva para o aluno.
+4. Objetiva: a alternativa correta tem o mesmo tamanho, formato e especificidade dos distratores — não pode ser a única longa nem a única que repete palavras do enunciado. Distratores são erros conceituais plausíveis de um aluno da série.
+5. Exatamente uma alternativa é defensável.
+6. Fatos corretos para a série. Em dúvida factual, use uma formulação mais simples e certa.
+7. O enunciado NÃO repete o texto de apoio (o aluno já o vê em caixa própria) nem duplica instruções; apenas pergunta.
+8. Descritiva: resposta esperada que realmente responde ao enunciado e critérios observáveis com pesos.
+Exemplo RUIM: "Qual é um combustível renovável?" com alternativa correta "Combustíveis renováveis". Exemplo BOM: "Uma cidade troca ônibus a diesel por elétricos. Com base nos dados, qual argumento avalia a vantagem e a limitação da troca?" com alternativas de mesmo formato.
+`
+
+function buildUnifiedPrompt(ctx: PipelineContext, slot: BlueprintSlot): string {
   const domains = canonicalDomainsForSubject(ctx.subject)
   const domain = slot.domain ? getCanonicalDomain(slot.domain) : null
   const engine = slot.ruleId ? getRuleEngine(slot.ruleId) : null
@@ -250,13 +209,15 @@ Entrada esperada em "ruleInput": ${engine.inputHint}
 Preencha ruleInput EXATAMENTE com os campos que o motor espera. A forma correta será calculada por CÓDIGO a partir de ruleInput. NÃO decida a resposta gramatical.
 PROIBIÇÃO: NÃO varie o tempo verbal dos distratores se a regra avalia apenas concordância.`
   } else if (slot.truthStrategy === 'fonte_ancorada') {
-    strategyInstructions = `ESTRATÉGIA: FONTE ANCORADA.
-Copie LITERALMENTE um trecho curto (1–2 frases) do currículo abaixo em "sourceEvidence".
-Escreva a alegação factual em "claim". A cópia PRECISA existir palavra por palavra no material.`
+    strategyInstructions = `ESTRATÉGIA: FATO ANCORADO NO TEXTO DE APOIO.
+O "Trecho curricular" acima é só o ESCOPO (lista de assuntos do capítulo). Ele NÃO é fonte de fatos nem de redação: nunca copie para a questão títulos, numeração de capítulo, tópicos ou frases dele, nem escreva "o estudo de...", "o capítulo...", "o currículo...".
+1) Escreva você mesmo, em "supportText", um texto, situação ou dado autocontido (3–8 frases, tecnicamente correto para a série) sobre o assunto. Em questão objetiva conceitual curta, supportText pode ser null.
+2) "sourceEvidence": copie palavra por palavra 1–2 frases do SEU supportText que sustentam a resposta (se supportText for null, escreva em uma frase a regra científica que justifica a resposta).
+3) "claim": a resposta correta pronta para ser alternativa — concreta, com conteúdo da disciplina, no mesmo formato e tamanho dos distratores, sem repetir os termos da pergunta.`
   } else {
     strategyInstructions = `ESTRATÉGIA: INTERPRETATIVA.
-Selecione um trecho literal do material que sustente UMA única leitura em "sourceEvidence".
-Escreva a leitura (resposta) em "claim". Não use trecho que admita duas leituras.`
+O "Trecho curricular" acima é só o ESCOPO: nunca o copie. Escreva em "supportText" o texto a ser lido e, em "sourceEvidence", copie palavra por palavra a frase dele que sustenta UMA única leitura.
+Escreva a leitura (resposta) em "claim", sem repetir os termos da pergunta.`
   }
 
   const distCount = ctx.questionType === 'objetiva'
@@ -279,15 +240,12 @@ ${ctx.curriculumContent.slice(0, 3000)}
 
 REGRA DE FONTE TEXTUAL (OBRIGATÓRIA): só mencione texto, trecho, artigo, poema, capítulo ou “material didático” se o campo "supportText" trouxer integralmente a fonte que o estudante precisa ler. Esse campo deve conter um texto/dado autocontido, nunca apenas título, número de capítulo, lista de tópicos ou resumo inventado. Os tópicos curriculares acima não são um texto de leitura. Se não houver fonte textual suficiente, formule uma questão autocontida e não faça referência a leitura, capítulo ou material externo.
 
+${buildSkillBlock(ctx)}
+${QUALITY_RULES}
 ${strategyInstructions}
-${forcedEvidence ? `
-EVIDÊNCIA LITERAL OBRIGATÓRIA:
-Use EXATAMENTE este trecho em "sourceEvidence": ${JSON.stringify(forcedEvidence)}
-Não o parafraseie, não o complete e não cite outro trecho. Reescreva enunciado, apoio e alegação somente para que sejam sustentados por essa evidência.` : ''}
-
 ${ctx.contentPlanInstruction ? `Instrução adicional: ${ctx.contentPlanInstruction}` : ''}
 
-${ctx.questionType === 'objetiva' ? `Gere exatamente ${distCount} distratores em "distractors". Cada distrator deve representar um erro típico plausível, NUNCA a resposta correta. Use o MESMO formato/tamanho da resposta: se a resposta correta for uma palavra ou expressão curta, todos devem ser formas curtas; se for uma frase, todos devem ser frases completas. NÃO repita distratores.` : 'Questão descritiva: não gere distratores.'}
+${ctx.questionType === 'objetiva' ? `Gere exatamente ${distCount} distratores em "distractors". Cada distrator deve representar um erro típico plausível, NUNCA a resposta correta. Use o MESMO formato/tamanho da resposta: se a resposta correta for uma palavra ou expressão curta, todos devem ser formas curtas; se for uma frase, todos devem ser frases completas. NÃO repita distratores.` : 'Questão descritiva: não gere distratores. Preencha OBRIGATORIAMENTE "expectedAnswer" (resposta-modelo de 3–6 frases que um aluno nota 10 escreveria, respondendo ao enunciado) e "gradingCriteria" (3–5 critérios observáveis, cada um com seu peso em %, somando 100%).'}
 
 O nome supportText é interno ao sistema e NUNCA pode aparecer no enunciado. Se houver texto de apoio, escreva "Leia o texto a seguir" ou "Considere o trecho abaixo"; nunca escreva nomes de campos, payload ou JSON para o estudante.
 
@@ -405,24 +363,26 @@ export function isEvidenceValidationFailure(error: StructuredGenerationError): b
     && error.issues.some((issue) => /evidencia .*nao existe|evidencia .*vazia|evidence_(not_found|missing)/.test(normalize(issue)))
 }
 
-function literalEvidenceFallback(curriculumContent: string): string | null {
-  const fragments = curriculumContent
-    .split(/(?<=[.!?])\s+|\n+/)
-    .map((fragment) => fragment.trim())
-    .filter((fragment) => fragment.length >= 12)
-  return fragments.sort((left, right) => right.length - left.length)[0] ?? null
+/** Calculável/regra seguem o recálculo por código; ancorada/interpretativa ancoram no texto de apoio. */
+function verifyTruth(ctx: PipelineContext, plan: QuestionPlan, truth: TruthObject, supportText: string | null): void {
+  if (plan.truthStrategy === 'calculavel' || plan.truthStrategy === 'regra_deterministica') {
+    gateStrategy(ctx, plan)
+    gateTruth(ctx, plan, truth)
+    return
+  }
+  gateAnchoredClaim(supportText, truth)
 }
 
 export async function generateUnifiedQuestion(
   ctx: PipelineContext,
   slot: BlueprintSlot,
-  options?: { shuffle?: <T>(items: T[]) => T[]; forcedEvidence?: string },
+  options?: { shuffle?: <T>(items: T[]) => T[] },
 ): Promise<UnifiedGenerationResult> {
   const startMs = Date.now()
   const shuffle = options?.shuffle ?? defaultShuffle
   recordUnifiedAttempt(ctx.subject, slot.truthStrategy)
 
-  const prompt = buildUnifiedPrompt(ctx, slot, options?.forcedEvidence)
+  const prompt = buildUnifiedPrompt(ctx, slot)
 
   let result: Awaited<ReturnType<typeof generateValidatedStructuredContent<typeof unifiedSchema._output>>>
   try {
@@ -431,7 +391,7 @@ export async function generateUnifiedQuestion(
       prompt,
       responseSchema: UNIFIED_RESPONSE_SCHEMA,
       zodSchema: unifiedSchema,
-      maxAttempts: options?.forcedEvidence ? 2 : 3,
+      maxAttempts: 3,
       validate: (parsed) => {
         const plan: QuestionPlan = {
           truthStrategy: slot.truthStrategy,
@@ -452,8 +412,24 @@ export async function generateUnifiedQuestion(
         }
 
         try {
-          gateStrategy(ctx, plan)
-          gateTruth(ctx, plan, truth)
+          verifyTruth(ctx, plan, truth, parsed.supportText)
+          const targetCodes = (ctx.targetSkills ?? []).map((skill) => skill.code.toUpperCase())
+          if (targetCodes.length && !parsed.bnccCodes.some((code) => targetCodes.includes(code.trim().toUpperCase()))) {
+            return {
+              value: parsed,
+              issues: [`bnccCodes deve conter uma das habilidades-alvo (${targetCodes.join(', ')}).`],
+              repairInstructions: [{ code: 'BNCC_TARGET_MISSING', fields: ['bnccCodes', 'bnccStatus'], message: `Devolva em bnccCodes exatamente uma destas habilidades: ${targetCodes.join(', ')}, com bnccStatus "mapeado", e garanta que a questão a avalia.`, protectedFields: ['statement', 'supportText'] }],
+            }
+          }
+          const missingDiscursive = ctx.questionType === 'descritiva' && slot.truthStrategy !== 'calculavel'
+            && (!parsed.expectedAnswer || parsed.expectedAnswer.trim().length < 20 || !parsed.gradingCriteria?.length)
+          if (missingDiscursive) {
+            return {
+              value: parsed,
+              issues: ['Questão descritiva sem resposta esperada ou critérios de correção próprios.'],
+              repairInstructions: [{ code: 'DISCURSIVE_KEY_MISSING', fields: ['expectedAnswer', 'gradingCriteria'], message: 'Escreva expectedAnswer (resposta-modelo de 3–6 frases) e gradingCriteria (3–5 critérios com pesos em %).', protectedFields: ['statement', 'supportText', 'bnccCodes'] }],
+            }
+          }
           return { value: parsed, issues: [] }
         } catch (error) {
           if (!(error instanceof StageGateError)) throw error
@@ -496,29 +472,6 @@ export async function generateUnifiedQuestion(
         ],
       }
     }
-    if (!options?.forcedEvidence && error instanceof StructuredGenerationError && isEvidenceValidationFailure(error)) {
-      const evidence = literalEvidenceFallback(ctx.curriculumContent)
-      if (evidence) {
-        const fallbackSlot: BlueprintSlot = {
-          ...slot,
-          truthStrategy: 'fonte_ancorada',
-          domain: undefined,
-          ruleId: undefined,
-          needsSupportText: true,
-        }
-        const fallback = await generateUnifiedQuestion(ctx, fallbackSlot, { ...options, forcedEvidence: evidence })
-        return {
-          ...fallback,
-          issues: [
-            {
-              severity: 'alerta',
-              reason: '[truth] A evidência anterior era inválida; a questão foi refeita com um trecho literal selecionado do currículo.',
-            },
-            ...fallback.issues,
-          ],
-        }
-      }
-    }
     throw error
   }
 
@@ -548,16 +501,8 @@ export async function generateUnifiedQuestion(
 
   // --- Aplicar gates determinísticos sobre a fonte de verdade ---
   try {
-    gateStrategy(ctx, plan)
-  } catch (error) {
-    if (error instanceof StageGateError) {
-      issues.push({ severity: 'bloqueante', reason: `[strategy] ${error.message}` })
-    } else throw error
-  }
-
-  try {
-    gateTruth(ctx, plan, truth)
-    // gateTruth muta truth com valores recalculados
+    verifyTruth(ctx, plan, truth, parsed.supportText)
+    // verifyTruth muta truth com valores recalculados (calculável/regra)
   } catch (error) {
     if (error instanceof StageGateError) {
       issues.push({ severity: 'bloqueante', reason: `[truth] ${error.message}` })
@@ -682,6 +627,9 @@ export async function generateUnifiedQuestion(
     visualPlan,
     statement: parsed.statement,
     supportText: parsed.supportText,
+    // Em questão calculável a resposta vem do recálculo por código, nunca da prosa do modelo.
+    expectedAnswer: plan.truthStrategy === 'calculavel' ? null : parsed.expectedAnswer ?? null,
+    gradingCriteria: parsed.gradingCriteria?.length ? parsed.gradingCriteria.map((item, index) => `${index + 1}) ${item.replace(/^\d+[.)]\s*/, '')}`).join(' ') : null,
     metadata,
   }
 
@@ -692,28 +640,37 @@ export async function generateUnifiedQuestion(
     throw new StageGateError('stage0', 'unified_gate', issues.filter(i => i.severity === 'bloqueante').map(i => i.reason).join(' | '))
   }
 
-  // --- Auditoria seletiva ---
-  const needsAudit = shouldAudit(slot, parsed.selfConfidence)
-  if (needsAudit) {
-    recordAuditTriggered(ctx.subject, slot.truthStrategy)
-    try {
-      const auditIssues = await runSelectiveAudit(ctx, assembled)
-      issues.push(...auditIssues)
-      const blocking = auditIssues.filter(i => i.severity === 'bloqueante')
-      if (blocking.length) {
-        throw new StageGateError('stage5', 'audit', blocking.map(i => i.reason).join(' '))
-      }
-    } catch (error) {
-      if (error instanceof StageGateError) throw error
-      // Auditoria indisponível não bloqueia questão já validada deterministicamente
-      const warning = unavailableAuditWarning(error)
-      if (warning) issues.push(...warning)
-    }
-  } else {
-    recordAuditSkipped(ctx.subject, `${slot.truthStrategy}_confidence_${parsed.selfConfidence.toFixed(2)}`)
+  const built = assembleExamQuestion(ctx, assembled)
+  // O aluno já vê o texto de apoio na caixa própria: o enunciado não o repete.
+  const question = normalizeQuestionPresentation(built)
+
+  // --- Gate determinístico contra vazamento do escopo curricular ---
+  const leakage = curriculumLeakageIssues(question, ctx.curriculumContent)
+  issues.push(...leakage)
+  const blockingLeak = leakage.filter((issue) => issue.severity === 'bloqueante')
+  if (blockingLeak.length) {
+    recordUnifiedRejection(ctx.subject, 'curriculum_leak', blockingLeak.map((issue) => issue.reason).join('; '))
+    throw new StageGateError('stage3', 'curriculum_leak', blockingLeak.map((issue) => issue.reason).join(' | '))
   }
 
-  const question = assembleExamQuestion(ctx, assembled)
+  // --- Juiz de qualidade (Jev): toda questão, não só amostra ---
+  recordAuditTriggered(ctx.subject, slot.truthStrategy)
+  const verdict = await judgeQuestionQuality({
+    subject: ctx.subject,
+    gradeYear: ctx.gradeYear,
+    segment: ctx.segment,
+    question,
+    curriculumScope: ctx.curriculumContent,
+    skills: (ctx.targetSkills ?? []).flatMap((skill) => skill.description ? [{ code: skill.code, description: skill.description }] : []),
+  })
+  issues.push(...verdict.issues.map((issue) => ({ severity: issue.severity, reason: `[jev:${issue.criterion}] ${issue.reason}` })))
+  if (verdict.blocked) {
+    const reasons = verdict.issues.filter((issue) => issue.severity === 'bloqueante').map((issue) => issue.reason)
+    recordUnifiedRejection(ctx.subject, 'jev_quality', reasons.join('; '))
+    throw new StageGateError('stage5', 'jev_quality', reasons.join(' | '))
+  }
+  const needsAudit = verdict.available
+
   const durationMs = Date.now() - startMs
   recordUnifiedSuccess(ctx.subject, slot.truthStrategy, durationMs)
 

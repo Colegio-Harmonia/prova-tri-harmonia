@@ -5,7 +5,7 @@ import { diagnosticFromIssue } from './qualityDiagnostics'
 
 // Versão canônica do relatório persistido. Ao subir a versão, provas antigas
 // passam a ser reauditadas automaticamente na próxima aprovação (auto-cura).
-export const QUALITY_REPORT_VERSION = 'quality-test-v4'
+export const QUALITY_REPORT_VERSION = 'quality-test-v5'
 
 export function latestQualityReport(payload: ExamGenerationResult) {
   return payload.metadata.qualityTest?.reports?.at(-1)

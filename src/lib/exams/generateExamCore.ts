@@ -15,6 +15,8 @@ import { persistGeneratedQuestionClassifications } from '@/lib/pedagogical/gener
 import { buildPlannedQuestionSlots, shouldRequireVisualAid, validateCurriculumPlan, type PlannedQuestionSlot } from '@/lib/exams/contentPlan'
 import { assembleBestExamCandidates, compactQuestionContext, validateExamAssembly, type QuestionCandidate } from '@/lib/exams/examQualityAssembly'
 import { runQuestionQualityTest } from '@/lib/exams/questionQualityTest'
+import { cognitiveObjectives, pickTargetSkills } from '@/lib/exams/targetSkills'
+import { resolveBnccDescriptions } from '@/lib/curriculum/bnccDescriptions'
 import { buildActivityBnccSlots, type ActivityBnccPlanItem, type ActivityBnccSlot } from '@/lib/exams/activityBnccPlan'
 import { QUALITY_REPORT_VERSION } from '@/lib/exams/qualityReport'
 import { repairQuestionFromDiagnostics } from '@/lib/exams/repairQuestion'
@@ -310,6 +312,15 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
       }
       if (params.generationJobId) await initializeJobItems(params.generationJobId, slots.map((slot) => slot.number))
 
+      // BNCC como eixo: descrições oficiais ausentes na planilha são resolvidas
+      // uma vez antes de gerar, para que toda questão receba a habilidade-alvo completa.
+      const skillDescriptions = new Map(selectedBnccDescriptions)
+      const missingDescriptionCodes = selectedUnitIndexes.flatMap((unitRowIndex) => {
+        const unit = byRowIndex.get(unitRowIndex)
+        return unit?.habilidades.status === 'mapeado' ? unit.habilidades.skills.filter((skill) => !skill.description?.trim() && !skillDescriptions.has(skill.code.toUpperCase())).map((skill) => skill.code) : []
+      })
+      if (missingDescriptionCodes.length) for (const [code, text] of await resolveBnccDescriptions(missingDescriptionCodes)) skillDescriptions.set(code, text)
+
       const generateUnifiedCandidate = async (slot: PlannedQuestionSlot, candidateNumber: number, previousStatement = '', feedback = '', forceNoVisual = false): Promise<QuestionCandidate> => {
         const unit = byRowIndex.get(slot.unitRowIndex)
         const blueprintSlot = blueprint.slots.find((candidate) => candidate.slotNumber === slot.number)
@@ -333,6 +344,13 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
               gradeYear: params.gradeYear,
               segment: params.segment,
               curriculumContent: blueprintSlot.curriculumContent,
+              targetSkills: pickTargetSkills({
+                unit,
+                slotIndexInUnit: slots.filter((other) => other.unitRowIndex === slot.unitRowIndex && other.number < slot.number).length,
+                forcedCodes: activityBnccSlots[slot.number - 1] ? [activityBnccSlots[slot.number - 1]!.code] : undefined,
+                descriptions: skillDescriptions,
+              }),
+              objectives: cognitiveObjectives(unit),
               contentPlanInstruction: [
                 `capítulo "${unit.tituloCapitulo}"; tipo ${slot.type}; candidata ${candidateNumber}.${attempt}`,
                 previousStatement ? `Não repita este enunciado rejeitado: ${previousStatement.slice(0, 500)}.` : '',
