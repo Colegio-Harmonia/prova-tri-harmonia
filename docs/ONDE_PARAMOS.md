@@ -40,6 +40,16 @@ commitado que existia no Mac foi preservado no branch
 8. `.env.local` nunca vai para o git nem viaja entre máquinas. Chave nova em
    produção exige recriar o container.
 
+## 2.1 Em andamento (02/10/2026): qualidade das questões geradas
+
+Prova #391 saiu inviável (texto da planilha vazando para alternativas,
+gabaritos e textos de apoio). Causa e correção em
+`docs/GESTAO_QUALIDADE_QUESTOES_JEV.md`: contrato de ancoragem corrigido,
+gate anti-vazamento determinístico e juiz de qualidade Jev no lugar do auditor
+LLM. Branch `fix/qualidade-geracao-jev-juiz` — **ainda não promovido**; depois do
+merge, rebuild de `web` e `worker` e reexecutar o teste de qualidade nas
+provas/atividades pendentes de revisão.
+
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 
 - `main` = `45c0b12` (PR #14), sincronizado com produção. O PR #13 atualizou

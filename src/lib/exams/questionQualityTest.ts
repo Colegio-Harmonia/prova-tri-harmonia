@@ -1,7 +1,7 @@
-import { z } from 'zod'
 import type { ExamGenerationResult, ExamQuestion } from '@/lib/gemini/examSchema'
 import type { CurriculumSelection } from '@/types/exam'
-import { generateValidatedStructuredContent, StructuredGenerationError } from '@/lib/gemini/structuredRepair'
+import { judgeQuestionQuality, type QualityJudgeVerdict } from '@/lib/ai/questionQualityDecision'
+import { curriculumLeakageIssues } from '@/lib/generation/curriculumLeakage'
 import { detectAlternativeAmbiguities } from '@/lib/generation/alternatives'
 import { diversityIssues } from '@/lib/generation/coherence'
 import { hasMissingRequiredVisual } from '@/lib/illustrations/recommendations'
@@ -9,37 +9,13 @@ import type { ExamQualityIssue } from './examQualityAssembly'
 import { diagnosticFromIssue, humanReviewApprovalBlocks, unsupportedMathDiagnostics, type QualityDiagnostic } from './qualityDiagnostics'
 import { missingRequiredSupportTextReason } from './supportTextIntegrity'
 
-const QUALITY_CRITERIA = ['gabarito', 'unicidade', 'cálculo_ou_dados', 'linguagem', 'alinhamento'] as const
-
-const qualitySchema = z.object({
-  questionNumber: z.number().int().positive(),
-  approved: z.boolean(),
-  verdictReason: z.string().min(1).default('Sem justificativa detalhada retornada pelo teste.'),
-  checks: z.array(z.object({
-    criterion: z.enum(QUALITY_CRITERIA),
-    // Alguns provedores devolvem "não_aprovado" apesar do enum solicitado.
-    // Normalizamos essa variação sem desperdiçar uma geração válida.
-    status: z.preprocess((value) => value === 'não_aprovado' ? 'reprovado' : value, z.enum(['aprovado', 'reprovado', 'não_aplicável'])),
-    evidence: z.string().min(1),
-  })).default([]),
-  // Para itens objetivos, esta é a evidência estruturada que impede que um
-  // texto contraditório seja exibido como "aprovado" no relatório.
-  answerKeyAudit: z.object({
-    declaredLetter: z.string().nullable(),
-    independentlyDerivedLetter: z.string().nullable(),
-    matchesDeclared: z.boolean(),
-    evidence: z.string().min(1),
-  }).nullable().optional(),
-  issues: z.array(z.object({ reason: z.string().min(1), severity: z.enum(['bloqueante', 'alerta']), criterion: z.enum(QUALITY_CRITERIA).optional() })).default([]),
-})
-
-const QUALITY_RESPONSE_SCHEMA = {
-  type: 'object', properties: {
-    questionNumber: { type: 'integer' }, approved: { type: 'boolean' }, verdictReason: { type: 'string' },
-    checks: { type: 'array', items: { type: 'object', properties: { criterion: { type: 'string', enum: QUALITY_CRITERIA }, status: { type: 'string', enum: ['aprovado', 'reprovado', 'não_aplicável'] }, evidence: { type: 'string' } }, required: ['criterion', 'status', 'evidence'] } },
-    answerKeyAudit: { type: 'object', nullable: true, properties: { declaredLetter: { type: 'string', nullable: true }, independentlyDerivedLetter: { type: 'string', nullable: true }, matchesDeclared: { type: 'boolean' }, evidence: { type: 'string' } }, required: ['declaredLetter', 'independentlyDerivedLetter', 'matchesDeclared', 'evidence'] },
-    issues: { type: 'array', items: { type: 'object', properties: { reason: { type: 'string' }, severity: { type: 'string', enum: ['bloqueante', 'alerta'] }, criterion: { type: 'string', enum: QUALITY_CRITERIA } }, required: ['reason', 'severity', 'criterion'] } },
-  }, required: ['questionNumber', 'approved', 'verdictReason', 'checks', 'issues'],
+type JudgeReport = {
+  questionNumber: number
+  approved: boolean
+  verdictReason: string
+  checks: QualityCheck[]
+  answerKeyAudit?: { declaredLetter: string | null; independentlyDerivedLetter: string | null; matchesDeclared: boolean; evidence: string } | null
+  issues: Array<{ reason: string; severity: 'bloqueante' | 'alerta'; criterion?: string }>
 }
 
 function normalized(value: string) { return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLocaleLowerCase('pt-BR').replace(/\s+/g, ' ') }
@@ -58,10 +34,10 @@ export type QualityReportResult = {
   diagnostics?: QualityDiagnostic[]
 }
 
-// Só estes critérios têm evidência objetiva suficiente para vetar a questão
-// automaticamente. Linguagem e alinhamento continuam no relatório, mas
-// chegam à revisão como alerta — nunca como julgamento livre da IA.
-const AI_BLOCKING_CRITERIA = new Set(['gabarito', 'unicidade', 'cálculo_ou_dados'])
+// Critérios que vetam a questão. Os critérios do juiz Jev (probabilidade com
+// limiar calibrado) entram aqui; `linguagem`/`alinhamento` são os critérios
+// legados do auditor LLM e continuam só como alerta em relatórios antigos.
+const AI_BLOCKING_CRITERIA = new Set(['gabarito', 'unicidade', 'cálculo_ou_dados', 'resposta_substantiva', 'copia_escopo_curricular', 'apoio_autossuficiente', 'alternativas_homogeneas', 'resposta_unica', 'fatos_corretos', 'correcao_objetiva'])
 
 // O modelo às vezes devolve status "reprovado" com uma evidência que, na
 // prática, diz que o critério NÃO se aplica (ex.: cálculo_ou_dados numa
@@ -105,9 +81,14 @@ function compoundInterestIssue(question: ExamQuestion): ExamQualityIssue | null 
 }
 
 /** Regras locais baratas; não substituem a revisão semântica da IA. */
-export function deterministicQuestionQualityIssues(questions: ExamQuestion[]): ExamQualityIssue[] {
+export function deterministicQuestionQualityIssues(questions: ExamQuestion[], curriculum?: CurriculumSelection): ExamQualityIssue[] {
   const issues: ExamQualityIssue[] = diversityIssues(questions)
   for (const question of questions) {
+    if (curriculum && question.source === 'ia') {
+      for (const leak of curriculumLeakageIssues(question, curriculumScopeFor(curriculum, question))) {
+        issues.push({ questionNumbers: [question.number], severity: leak.severity, reason: leak.reason })
+      }
+    }
     const supportTextIssue = missingRequiredSupportTextReason(question)
     if (supportTextIssue) issues.push({ questionNumbers: [question.number], severity: 'bloqueante', reason: supportTextIssue })
     if (hasMissingRequiredVisual(question)) {
@@ -125,96 +106,96 @@ export function deterministicQuestionQualityIssues(questions: ExamQuestion[]): E
   return issues
 }
 
-function card(question: ExamQuestion) {
-  const alternatives = question.alternatives?.map((alternative) => `${alternative.letter}) ${alternative.text}`).join('\n') ?? '(questão descritiva)'
-  const solutionBlueprint = question.solutionBlueprint
-  const blueprint = solutionBlueprint
-    ? `\nFICHA TÉCNICA INTERNA (confira o cálculo; não a trate como prova por si só): domínio ${solutionBlueprint.domain}; equações ${solutionBlueprint.equations.join(' | ') || '(não se aplica)'}; valores ${JSON.stringify(solutionBlueprint.values)}; resposta derivada ${solutionBlueprint.derivedAnswer}.`
-    : ''
-  return `QUESTÃO ${question.number}\nTipo: ${question.type}\nGabarito declarado: ${question.correctLetter ?? question.expectedAnswer ?? '(não se aplica)'}\nEnunciado: ${question.statement}\n${question.supportText ? `Apoio: ${question.supportText}\n` : ''}Alternativas:\n${alternatives}${blueprint}`
+export function curriculumScopeFor(curriculum: CurriculumSelection, question: Pick<ExamQuestion, 'curriculumUnitRowIndex'>): string {
+  const unit = curriculum.units.find((candidate) => candidate.rowIndex === question.curriculumUnitRowIndex) ?? (curriculum.units.length === 1 ? curriculum.units[0] : undefined)
+  const units = unit ? [unit] : curriculum.units
+  return units.flatMap((item) => [item.tituloCapitulo, item.conteudo, item.enrichedContent]).filter(Boolean).join('\n')
 }
 
-function auditConsistencyIssues(question: ExamQuestion, result: z.infer<typeof qualitySchema>): ExamQualityIssue[] {
-  const issues: ExamQualityIssue[] = []
-  const blocking = (reason: string) => issues.push({ questionNumbers: [question.number], severity: 'bloqueante', reason })
-  const checks = normalizeQualityChecks(result.checks)
-  const rejectedChecks = checks.filter((check) => check.status === 'reprovado' && AI_BLOCKING_CRITERIA.has(check.criterion))
-
-  for (const check of rejectedChecks) {
-    blocking(`Teste de qualidade — ${check.criterion}: ${check.evidence}`)
+/** Converte o parecer do Jev no formato de relatório que a UI e a barreira de aprovação já consomem. */
+export function reportFromJudgeVerdict(question: ExamQuestion, verdict: QualityJudgeVerdict): JudgeReport {
+  const checks: QualityCheck[] = []
+  const issueByCriterion = new Map(verdict.issues.map((issue) => [issue.criterion, issue]))
+  for (const [criterion, score] of Object.entries(verdict.scores)) {
+    const issue = issueByCriterion.get(criterion as never)
+    checks.push({
+      criterion,
+      status: issue?.severity === 'bloqueante' ? 'reprovado' : 'aprovado',
+      evidence: issue ? `Jev (${Math.round(score * 100)}%): ${issue.reason}` : `Jev (${Math.round(score * 100)}%): sem indício de problema.`,
+    })
   }
-  // Não bloqueamos só porque o campo `approved` do modelo veio `false`: a
-  // barreira exige evidência concreta (critério reprovado ou issue
-  // bloqueante). Sem isso, um veredito contraditório do modelo (texto
-  // positivo + approved:false) travava questões válidas.
-
-  if (question.type !== 'objetiva') return issues
-
-  const answerKeyChecks = checks.filter((check) => check.criterion === 'gabarito')
-  if (answerKeyChecks.length !== 1 || answerKeyChecks[0]?.status !== 'aprovado') {
-    blocking('Teste de qualidade não confirmou o gabarito como correto e único.')
+  let answerKeyAudit: JudgeReport['answerKeyAudit'] = null
+  if (verdict.answerKey) {
+    const key = verdict.answerKey
+    const confidence = key.confidence === null ? '' : ` com confiança de ${Math.round(key.confidence * 100)}%`
+    const evidence = key.matches
+      ? `O Jev resolveu a questão de forma independente e chegou à alternativa ${key.independentLetter}${confidence}.`
+      : `O Jev resolveu a questão de forma independente e chegou à alternativa ${key.independentLetter}${confidence}, não à ${key.declaredLetter ?? 'declarada'}.`
+    answerKeyAudit = { declaredLetter: key.declaredLetter, independentlyDerivedLetter: key.independentLetter, matchesDeclared: key.matches, evidence }
+    checks.push({ criterion: 'gabarito', status: key.matches ? 'aprovado' : 'reprovado', evidence })
   }
-  const audit = result.answerKeyAudit
-  if (!audit) {
-    blocking('Teste de qualidade não apresentou a conferência independente do gabarito.')
-  } else if (
-    audit.declaredLetter !== question.correctLetter ||
-    audit.independentlyDerivedLetter !== question.correctLetter ||
-    !audit.matchesDeclared
-  ) {
-    blocking(`Conferência independente do gabarito diverge: declarado ${question.correctLetter ?? 'ausente'}, calculado ${audit.independentlyDerivedLetter ?? 'sem alternativa única'}. ${audit.evidence}`)
+  const blocked = verdict.issues.filter((issue) => issue.severity === 'bloqueante')
+  return {
+    questionNumber: question.number,
+    approved: !blocked.length,
+    verdictReason: blocked.length
+      ? `Reprovada pelo juiz Jev: ${blocked.map((issue) => issue.criterion).join(', ')}.`
+      : verdict.issues.length ? 'Aprovada pelo juiz Jev com pontos de atenção para a revisão docente.' : 'Aprovada pelo juiz Jev, sem indícios de problema.',
+    checks,
+    answerKeyAudit,
+    issues: verdict.issues.map((issue) => ({ severity: issue.severity, criterion: issue.criterion, reason: issue.reason })),
   }
-  return issues
 }
 
 /**
- * Gate semântico independente do gerador. Ele recalcula mentalmente a
- * resposta e só reprova por evidência concreta, para evitar que uma crítica
- * especulativa da IA interrompa uma prova válida.
+ * Gate semântico independente do gerador, decidido pelo Jev (probabilidades e
+ * escolha tipadas com limiares calibrados) e não por um LLM em texto livre.
+ * Ele resolve a questão por conta própria para conferir o gabarito e mede
+ * cópia do escopo curricular, resposta tautológica, alternativas desiguais,
+ * fatos incorretos e critérios de correção inúteis.
  */
 export async function runQuestionQualityTest(curriculum: CurriculumSelection, questions: ExamQuestion[]) {
-  const deterministic = deterministicQuestionQualityIssues(questions)
-  const subjectRule = /^(matemática|matematica)$/i.test(curriculum.subject.trim())
-    ? 'MATEMÁTICA: refaça o cálculo passo a passo, compare o resultado numérico com TODAS as alternativas e só então confira o gabarito.'
-    : /^(língua portuguesa|lingua portuguesa|português|portugues)$/i.test(curriculum.subject.trim())
-      ? 'LÍNGUA PORTUGUESA: em questões de som, ortografia ou gramática, avalie cada palavra/alternativa individualmente; duas respostas defensáveis tornam a questão bloqueante.'
-      : 'Confira conceito, dados, gabarito e se existe somente uma resposta defensável.'
-  const reports: Array<z.infer<typeof qualitySchema>> = []
+  const deterministic = deterministicQuestionQualityIssues(questions, curriculum)
+  const reports: JudgeReport[] = []
   const warnings: string[] = []
-  const auditQuestion = async (question: ExamQuestion): Promise<{ report: z.infer<typeof qualitySchema>; warnings: string[] }> => {
-    const prompt = `Você executa o TESTE DE QUALIDADE de UMA questão escolar. Não reescreva a questão e não mostre raciocínio interno.
-
-Contexto: ${curriculum.subject}, ${curriculum.gradeYear}º ano, ${curriculum.segment}. ${subjectRule}
-
-    Produza uma JUSTIFICATIVA VERIFICÁVEL, não um raciocínio interno livre: informe um veredito curto e os critérios gabarito, unicidade, cálculo_ou_dados, linguagem e alinhamento. Cada critério deve trazer status e evidência objetiva; quando não se aplicar, use não_aplicável e explique brevemente. SOMENTE gabarito, unicidade e cálculo_ou_dados podem reprovar. Linguagem e alinhamento são sempre alertas para revisão humana, nunca bloqueio. Todo bloqueio precisa citar o dado, cálculo ou alternativa específica que prova o erro.
-
-    PARA QUESTÃO OBJETIVA, answerKeyAudit É OBRIGATÓRIO: primeiro determine independentemente a letra correta a partir do enunciado e das alternativas; depois compare-a com o "Gabarito declarado". Preencha declaredLetter, independentlyDerivedLetter, matchesDeclared e uma evidência curta. Se as letras diferirem, matchesDeclared deve ser false, o critério gabarito deve ser reprovado e approved deve ser false. Não aprove uma questão cujo texto de evidência indique discrepância no gabarito.
-
-    QUESTÕES DISCURSIVAS: expectedAnswer e gradingCriteria podem ser nulos nesta fase porque a aprovação humana confere a resposta esperada. Isso NÃO é falha nem bloqueio. Só reprove se o próprio enunciado for impossível, ambíguo ou não permitir uma correção pedagógica.
-
-${card(question)}`
-    try {
-      const audited = await generateValidatedStructuredContent({
-        context: `exams/question-quality-test-${question.number}`, prompt, responseSchema: QUALITY_RESPONSE_SCHEMA, zodSchema: qualitySchema, maxAttempts: 2,
-        // A consistência entre veredito, critérios e issues é normalizada
-        // abaixo. Não transformamos uma contradição textual da auditoria em
-        // falha da geração da prova.
-        validate: (value) => ({ value: { ...value, questionNumber: question.number }, issues: [] }),
-      })
-      return { report: audited.value, warnings: audited.warnings }
-    } catch (error) {
-      const detail = error instanceof StructuredGenerationError ? error.issues.join(' ') : 'falha operacional inesperada'
-      return { report: {
-        questionNumber: question.number,
-        approved: true,
-        verdictReason: 'O teste automático não concluiu esta análise; a questão foi encaminhada para revisão humana.',
-        checks: [],
-        issues: [{ severity: 'alerta', reason: 'Auditoria automática indisponível nesta tentativa; revisar manualmente antes da aprovação.' }],
-      }, warnings: [`Questão ${question.number}: teste de qualidade não pôde concluir a auditoria (${detail}).` ] }
+  const auditQuestion = async (question: ExamQuestion): Promise<{ report: JudgeReport; warnings: string[] }> => {
+    // Questões reais do banco ENEM já têm gabarito oficial; não há o que julgar aqui.
+    if (question.source === 'enem_bank') {
+      const evidence = 'Gabarito oficial do ENEM; não é reavaliado.'
+      return {
+        report: {
+          questionNumber: question.number,
+          approved: true,
+          verdictReason: 'Questão oficial do banco ENEM.',
+          checks: [{ criterion: 'gabarito', status: 'aprovado', evidence }],
+          answerKeyAudit: { declaredLetter: question.correctLetter ?? null, independentlyDerivedLetter: question.correctLetter ?? null, matchesDeclared: true, evidence },
+          issues: [],
+        },
+        warnings: [],
+      }
     }
+    const verdict = await judgeQuestionQuality({
+      subject: curriculum.subject,
+      gradeYear: curriculum.gradeYear,
+      segment: curriculum.segment,
+      question,
+      curriculumScope: curriculumScopeFor(curriculum, question),
+    })
+    if (!verdict.available) {
+      return {
+        report: {
+          questionNumber: question.number,
+          approved: true,
+          verdictReason: 'O juiz Jev não concluiu esta análise; a questão foi encaminhada para revisão humana.',
+          checks: [],
+          issues: verdict.issues.map((issue) => ({ severity: issue.severity, reason: issue.reason })),
+        },
+        warnings: [`Questão ${question.number}: o juiz de qualidade (Jev) não respondeu nesta tentativa.`],
+      }
+    }
+    return { report: reportFromJudgeVerdict(question, verdict), warnings: [] }
   }
-  // As questões são independentes. Três auditorias em paralelo preservam o
-  // limite seguro do provedor e eliminam a espera serial de uma prova inteira.
+  // As questões são independentes; três julgamentos em paralelo respeitam o limite do provedor.
   const concurrency = Math.max(1, Math.min(3, questions.length))
   for (let offset = 0; offset < questions.length; offset += concurrency) {
     const group = await Promise.all(questions.slice(offset, offset + concurrency).map(auditQuestion))
@@ -223,17 +204,11 @@ ${card(question)}`
       warnings.push(...item.warnings)
     }
   }
-  const semantic: ExamQualityIssue[] = reports.flatMap((result) => {
-    const question = questions.find((candidate) => candidate.number === result.questionNumber)
-    // Um "bloqueante" cuja justificativa é "não aplicável" é rebaixado a
-    // alerta, nunca bloqueio, para não repetir a contradição do modelo.
-    const declared = result.issues.map((issue) => ({
-      questionNumbers: [result.questionNumber],
-      severity: issue.severity === 'bloqueante' && !isNotApplicableEvidence(issue.reason) && issue.criterion && AI_BLOCKING_CRITERIA.has(issue.criterion) ? 'bloqueante' : 'alerta',
-      reason: `Teste de qualidade: ${issue.reason}`,
-    } satisfies ExamQualityIssue))
-    return question ? [...declared, ...auditConsistencyIssues(question, result)] : declared
-  })
+  const semantic: ExamQualityIssue[] = reports.flatMap((result) => result.issues.map((issue) => ({
+    questionNumbers: [result.questionNumber],
+    severity: issue.severity,
+    reason: `Teste de qualidade${issue.criterion ? ` — ${issue.criterion}` : ''}: ${issue.reason}`,
+  } satisfies ExamQualityIssue)))
   const rejected = [...new Set([...deterministic, ...semantic].filter((issue) => issue.severity === 'bloqueante').flatMap((issue) => issue.questionNumbers))]
   const report = questions.map((question) => {
     const semanticResult = reports.find((result) => result.questionNumber === question.number)
@@ -247,13 +222,9 @@ ${card(question)}`
       questionNumber: question.number,
       approved: ![...localIssues, ...semanticIssues].some((issue) => issue.severity === 'bloqueante'),
       verdictReason: semanticResult?.verdictReason,
-      // Persistimos os critérios já normalizados: sem isso a tela e a
-      // barreira de aprovação voltariam a ver um "reprovado" que na verdade
-      // é "não aplicável".
       checks: semanticResult ? normalizeQualityChecks(semanticResult.checks) : undefined,
-      // A aprovação final precisa desta evidência estruturada. Não a omita
-      // do relatório persistido: sem ela a tela pode mostrar "Aprovada",
-      // mas a barreira de aprovação não tem como comprovar o gabarito.
+      // A aprovação final precisa desta evidência estruturada: sem ela a tela
+      // pode mostrar "Aprovada", mas a barreira não tem como comprovar o gabarito.
       answerKeyAudit: semanticResult?.answerKeyAudit,
       issues: [...localIssues, ...semanticIssues],
       diagnostics,

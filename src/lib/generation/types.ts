@@ -111,6 +111,9 @@ export type AssembledQuestion = {
   visualPlan: VisualPlan
   statement: string
   supportText: string | null
+  /** Descritivas: resposta-modelo e critérios escritos pela IA. */
+  expectedAnswer?: string | null
+  gradingCriteria?: string | null
   metadata: MetadataDraft
 }
 

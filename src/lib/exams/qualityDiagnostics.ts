@@ -19,6 +19,7 @@ export const QUALITY_DIAGNOSTIC_CODES = [
   'UNSUPPORTED_MATH_DOMAIN',
   'CALCULATION_UNVERIFIED',
   'CURRICULUM_MISMATCH',
+  'CURRICULUM_LEAK',
   'REGENERATE_QUESTION',
 ] as const
 
@@ -55,6 +56,9 @@ export function diagnosticFromIssue(issue: RawIssue): QualityDiagnostic {
   const normalized = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
   const blocking = issue.severity === 'bloqueante'
 
+  if (/vazamento-curricular|copia_escopo_curricular|resposta_substantiva/.test(normalized)) {
+    return diagnostic({ code: 'CURRICULUM_LEAK', severity: issue.severity, repairAction: 'regenerar_questao', fields: ['statement', 'supportText', 'alternatives', 'expectedAnswer'], message: 'A questão reproduz o escopo curricular (título ou tópico) em vez de uma resposta própria.', evidence: text, blocksApproval: blocking })
+  }
   if (/resposta da ia invalida|json invalido|campo obrigatorio|schema|output truncated|resposta vazia/.test(normalized)) {
     return diagnostic({ code: 'INVALID_AI_RESPONSE', severity: issue.severity, repairAction: 'regenerar_questao', fields: [], message: 'A IA não retornou uma resposta estruturada utilizável.', evidence: text, blocksApproval: blocking })
   }

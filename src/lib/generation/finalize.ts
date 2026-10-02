@@ -21,8 +21,8 @@ export function assembleExamQuestion(ctx: PipelineContext, assembled: AssembledQ
     supportText,
     alternatives: isObjective ? alternatives : null,
     correctLetter: isObjective ? correctLetter : null,
-    expectedAnswer: isObjective ? null : (truth.derivedAnswer ?? truth.claim ?? null),
-    gradingCriteria: isObjective ? null : 'Critérios definidos na revisão docente.',
+    expectedAnswer: isObjective ? null : (assembled.expectedAnswer?.trim() || truth.derivedAnswer || truth.claim || null),
+    gradingCriteria: isObjective ? null : (assembled.gradingCriteria?.trim() || 'Critérios definidos na revisão docente.'),
     solutionBlueprint: plan.truthStrategy === 'calculavel' && plan.domain
       ? {
           domain: plan.domain,

@@ -114,6 +114,26 @@ export function gateTruth(ctx: PipelineContext, plan: QuestionPlan, truth: Truth
   }
 }
 
+/**
+ * Gate 1 (fonte ancorada/interpretativa) — a evidência vem do TEXTO DE APOIO
+ * que o aluno lê, nunca da planilha curricular. A planilha só lista assuntos;
+ * exigir citação literal dela fazia a IA copiar títulos de capítulo para
+ * alternativas e gabaritos (prova #391, 02/10/2026).
+ */
+export function gateAnchoredClaim(supportText: string | null | undefined, truth: TruthObject): void {
+  const claim = (truth.claim ?? '').trim()
+  if (claim.length < 2) throw new StageGateError('stage1', 'claim_missing', 'A resposta correta ("claim") está vazia.')
+  const support = normalize(supportText ?? '')
+  if (support.split(' ').filter(Boolean).length < 8) return // sem apoio textual: nada a ancorar
+  const evidence = normalize(truth.sourceEvidence ?? truth.textEvidence ?? '')
+  if (evidence.length < 8) {
+    throw new StageGateError('stage1', 'evidence_missing', 'A evidência ancorada está vazia ou curta demais; cite 1–2 frases do texto de apoio que sustentam a resposta.')
+  }
+  if (!support.includes(evidence)) {
+    throw new StageGateError('stage1', 'evidence_not_found', 'A evidência citada não existe literalmente no texto de apoio escrito para a questão; copie palavra por palavra uma frase do próprio texto de apoio.')
+  }
+}
+
 function numericTokens(text: string): number[] {
   const cleaned = text.replace(/\b\d{1,2}\s*[ºªoa]\b/gi, ' ') // remove ordinais (1º, 2ª)
   const matches = cleaned.match(/-?\d+(?:[.,]\d+)*/g) ?? []
