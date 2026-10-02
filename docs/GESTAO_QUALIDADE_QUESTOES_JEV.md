@@ -48,8 +48,8 @@ não de "IA burra":
 ### Juiz de qualidade = Jev (`src/lib/ai/questionQualityDecision.ts`)
 Substitui o auditor LLM (`runSelectiveAudit` e o teste de qualidade em texto
 livre). Roda em **toda** questão, no pipeline e na aprovação/regeneração/troca.
-- 8 perguntas Noul (probabilidade) com limiar por critério: resposta
-  substantiva, cópia do escopo curricular, apoio autossuficiente, alternativas
+- 9 perguntas Noul (probabilidade) com limiar por critério: alinhamento à
+  habilidade BNCC, resposta substantiva, cópia do escopo curricular, apoio autossuficiente, alternativas
   homogêneas, resposta única, fatos corretos, enunciado coerente, correção objetiva.
 - 1 pergunta Choice: o Jev resolve a questão sozinho (sem ver o gabarito) e a
   letra tem de bater — alimenta o `answerKeyAudit` que a aprovação já exige.
@@ -61,6 +61,36 @@ livre). Roda em **toda** questão, no pipeline e na aprovação/regeneração/tr
   — reexecute o teste de qualidade.
 - Relatório: `QUALITY_REPORT_VERSION` → `quality-test-v5`; novos critérios entram
   no conjunto bloqueante; novo diagnóstico `CURRICULUM_LEAK`.
+
+## BNCC como eixo da geração (02/10/2026, 2ª etapa)
+
+**Antes:** a BNCC não influenciava nem a geração nem o juiz. O gerador recebia só
+título + conteúdos-foco do capítulo (sem habilidades nem objetivos); o código era
+**carimbado depois** na questão (`bnccCodes = [slot.code]` em atividades). Na #391,
+a Q1 "qual combustível é renovável?" (memorizar) saiu rotulada com a EF07CI05,
+cujo verbo é "discutir… para avaliar avanços".
+
+**Agora:**
+- Cada questão nasce para medir **uma** habilidade (`src/lib/exams/targetSkills.ts`):
+  em atividades, o código do plano; em provas, rodízio determinístico entre as
+  habilidades mapeadas do capítulo (cobertura garantida por código, não por sorte
+  do modelo). Descrição ausente na planilha é resolvida pelo texto oficial
+  (`bnccDescriptions.ts`). Capítulo sem BNCC mapeada segue sem inventar código.
+- O prompt traz a habilidade (código + descrição), o nível de Bloom do verbo e os
+  objetivos cognitivos do capítulo, e exige a operação cognitiva do verbo.
+- O gerador devolve o código-alvo (`bnccCodes`), validado; se faltar, reparo.
+- Trocar uma questão preserva a habilidade (exceto na estratégia "outro tema").
+- O prompt passou a incluir as **regras do juiz** e um exemplo ruim/bom, para
+  o gerador escrever já dentro do padrão (meta: o juiz barrar menos).
+- Novo critério do juiz `alinhamento_bncc` (Noul; bloqueia < 0,30, alerta < 0,60).
+  Calibração: questões alinhadas 0,84–0,95; memorização/outro assunto 0,03–0,08;
+  #391 Q1–Q3: 0,11–0,16.
+
+**Não medido:** a redução da taxa de bloqueio depende do LLM de produção
+(DeepSeek/`ai_model_profiles`), indisponível localmente. Para medir após o deploy
+em DEV: gerar uma atividade e comparar rejeições por motivo
+(`recordUnifiedRejection`: `curriculum_leak`, `jev_quality`) e os avisos
+`[jev:*]` da prova.
 
 ## Calibração (02/10/2026, Jev `jev-latest`)
 16 questões: as 10 da #391 e 10 controles bons (6 disciplinas), medido com o

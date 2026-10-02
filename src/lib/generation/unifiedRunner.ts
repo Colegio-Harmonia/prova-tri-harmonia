@@ -15,6 +15,7 @@ import { StageGateError } from './types'
 import type { AssembledQuestion, MetadataDraft, PipelineContext, QuestionPlan, TruthObject, VisualPlan } from './types'
 import { TRUTH_STRATEGIES } from './types'
 import type { BlueprintSlot } from './blueprint'
+import { inferBloomFromVerb } from '@/config/bloomVerbs'
 
 // ---------------------------------------------------------------------------
 // Schema unificado de saída (1 chamada IA por questão)
@@ -157,6 +158,35 @@ const DISTRACTOR_REPAIR_RESPONSE_SCHEMA = {
 // Geração unificada (1 chamada IA por questão)
 // ---------------------------------------------------------------------------
 
+/** Habilidade BNCC-alvo: o gerador precisa saber o que a questão deve MEDIR, não só o assunto. */
+export function buildSkillBlock(ctx: PipelineContext): string {
+  const skills = ctx.targetSkills ?? []
+  if (!skills.length) return ''
+  const lines = skills.map((skill) => {
+    const bloom = skill.description ? inferBloomFromVerb(skill.description) : null
+    return `- ${skill.code}${skill.description ? ` — ${skill.description}` : ''}${bloom ? ` (verbo da habilidade → nível de Bloom esperado: ${bloom})` : ''}`
+  })
+  const objectives = (ctx.objectives ?? []).filter(Boolean).slice(0, 4)
+  return `HABILIDADE BNCC-ALVO (obrigatória — é o que a questão deve MEDIR; o assunto do capítulo é só o contexto):
+${lines.join('\n')}
+${skills.length > 1 ? 'Escolha UMA delas e devolva exatamente esse código em "bnccCodes" com bnccStatus "mapeado".' : 'Devolva este código em "bnccCodes" com bnccStatus "mapeado".'}
+A questão deve exigir a operação cognitiva do VERBO da habilidade aplicada ao objeto de conhecimento dela (ex.: "discutir/avaliar" pede julgar vantagens e limitações com base em dados do texto; "comparar" pede relacionar duas situações; "identificar" pode ser direto). Lembrar um fato isolado do assunto NÃO atende a uma habilidade de nível superior. Ajuste "bloomLevel" ao verbo.${objectives.length ? `\nObjetivos de aprendizagem do capítulo: ${objectives.join(' | ')}` : ''}
+`
+}
+
+/** Regras que o juiz de qualidade aplica; o gerador as recebe antes de escrever. */
+const QUALITY_RULES = `REGRAS DE QUALIDADE (o juiz de qualidade barra a questão se violar qualquer uma):
+1. A questão mede a habilidade BNCC-alvo (quando informada), não apenas o assunto.
+2. A resposta correta responde de fato à pergunta, com conteúdo da disciplina; nunca repete os termos da pergunta nem é um título/tópico.
+3. Nada de linguagem de planejamento ("o estudo de...", "o capítulo...", "o currículo..."). Escreva para o aluno.
+4. Objetiva: a alternativa correta tem o mesmo tamanho, formato e especificidade dos distratores — não pode ser a única longa nem a única que repete palavras do enunciado. Distratores são erros conceituais plausíveis de um aluno da série.
+5. Exatamente uma alternativa é defensável.
+6. Fatos corretos para a série. Em dúvida factual, use uma formulação mais simples e certa.
+7. O enunciado NÃO repete o texto de apoio (o aluno já o vê em caixa própria) nem duplica instruções; apenas pergunta.
+8. Descritiva: resposta esperada que realmente responde ao enunciado e critérios observáveis com pesos.
+Exemplo RUIM: "Qual é um combustível renovável?" com alternativa correta "Combustíveis renováveis". Exemplo BOM: "Uma cidade troca ônibus a diesel por elétricos. Com base nos dados, qual argumento avalia a vantagem e a limitação da troca?" com alternativas de mesmo formato.
+`
+
 function buildUnifiedPrompt(ctx: PipelineContext, slot: BlueprintSlot): string {
   const domains = canonicalDomainsForSubject(ctx.subject)
   const domain = slot.domain ? getCanonicalDomain(slot.domain) : null
@@ -210,6 +240,8 @@ ${ctx.curriculumContent.slice(0, 3000)}
 
 REGRA DE FONTE TEXTUAL (OBRIGATÓRIA): só mencione texto, trecho, artigo, poema, capítulo ou “material didático” se o campo "supportText" trouxer integralmente a fonte que o estudante precisa ler. Esse campo deve conter um texto/dado autocontido, nunca apenas título, número de capítulo, lista de tópicos ou resumo inventado. Os tópicos curriculares acima não são um texto de leitura. Se não houver fonte textual suficiente, formule uma questão autocontida e não faça referência a leitura, capítulo ou material externo.
 
+${buildSkillBlock(ctx)}
+${QUALITY_RULES}
 ${strategyInstructions}
 ${ctx.contentPlanInstruction ? `Instrução adicional: ${ctx.contentPlanInstruction}` : ''}
 
@@ -381,6 +413,14 @@ export async function generateUnifiedQuestion(
 
         try {
           verifyTruth(ctx, plan, truth, parsed.supportText)
+          const targetCodes = (ctx.targetSkills ?? []).map((skill) => skill.code.toUpperCase())
+          if (targetCodes.length && !parsed.bnccCodes.some((code) => targetCodes.includes(code.trim().toUpperCase()))) {
+            return {
+              value: parsed,
+              issues: [`bnccCodes deve conter uma das habilidades-alvo (${targetCodes.join(', ')}).`],
+              repairInstructions: [{ code: 'BNCC_TARGET_MISSING', fields: ['bnccCodes', 'bnccStatus'], message: `Devolva em bnccCodes exatamente uma destas habilidades: ${targetCodes.join(', ')}, com bnccStatus "mapeado", e garanta que a questão a avalia.`, protectedFields: ['statement', 'supportText'] }],
+            }
+          }
           const missingDiscursive = ctx.questionType === 'descritiva' && slot.truthStrategy !== 'calculavel'
             && (!parsed.expectedAnswer || parsed.expectedAnswer.trim().length < 20 || !parsed.gradingCriteria?.length)
           if (missingDiscursive) {
@@ -621,6 +661,7 @@ export async function generateUnifiedQuestion(
     segment: ctx.segment,
     question,
     curriculumScope: ctx.curriculumContent,
+    skills: (ctx.targetSkills ?? []).flatMap((skill) => skill.description ? [{ code: skill.code, description: skill.description }] : []),
   })
   issues.push(...verdict.issues.map((issue) => ({ severity: issue.severity, reason: `[jev:${issue.criterion}] ${issue.reason}` })))
   if (verdict.blocked) {

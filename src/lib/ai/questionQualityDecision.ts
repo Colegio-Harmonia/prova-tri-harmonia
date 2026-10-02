@@ -22,6 +22,7 @@ const TIMEOUT_MS = 15_000
 const COMPOSITE_WARNING_BLOCK = 3
 
 export const QUALITY_CRITERIA_IDS = [
+  'alinhamento_bncc',
   'resposta_substantiva',
   'copia_escopo_curricular',
   'apoio_autossuficiente',
@@ -37,6 +38,8 @@ type QuestionKind = ExamQuestion['type']
 
 type CriterionSpec = {
   id: QualityCriterionId
+  /** Só é perguntado quando a questão declara uma habilidade BNCC com descrição. */
+  requiresSkill?: boolean
   applies: readonly QuestionKind[]
   /** `good`: probabilidade alta = qualidade. `defect`: probabilidade alta = defeito. */
   polarity: 'good' | 'defect'
@@ -49,6 +52,11 @@ type CriterionSpec = {
 }
 
 export const QUALITY_CRITERIA: readonly CriterionSpec[] = [
+  {
+    id: 'alinhamento_bncc', requiresSkill: true, applies: ['objetiva', 'descritiva'], polarity: 'good', block: 0.3, warn: 0.6,
+    instructions: 'A questão exige do aluno a operação cognitiva descrita na habilidadeBncc (o verbo e o objeto de conhecimento dela), e não apenas recordar um fato isolado do assunto?',
+    message: 'A questão não mede a habilidade BNCC declarada: exige só memorizar um fato ou trata de outro objeto de conhecimento. Reescreva para exigir a operação cognitiva do verbo da habilidade.',
+  },
   {
     id: 'resposta_substantiva', applies: ['objetiva', 'descritiva'], polarity: 'good', block: 0.4, warn: 0.7,
     instructions: 'A resposta correta (a alternativa indicada como correta, ou a respostaEsperada nas discursivas) responde de fato ao que o enunciado pergunta, com conteúdo próprio da disciplina, e NÃO se limita a repetir o título de um capítulo, um tópico do escopo curricular ou as palavras da própria pergunta?',
@@ -94,6 +102,8 @@ export const QUALITY_CRITERIA: readonly CriterionSpec[] = [
 export type QualityJudgeQuestion = Pick<ExamQuestion, 'type' | 'statement' | 'supportText' | 'alternatives' | 'correctLetter' | 'expectedAnswer' | 'gradingCriteria'>
 
 export type QualityJudgeInput = {
+  /** Habilidades BNCC declaradas pela questão (código + descrição oficial). */
+  skills?: Array<{ code: string; description: string }>
   subject: string
   gradeYear: number
   segment: string
@@ -127,8 +137,8 @@ export type QualityJudgeVerdict = {
 
 const ANSWER_KEY_MIN_CONFIDENCE = 0.6
 
-export function criteriaForType(type: QuestionKind): CriterionSpec[] {
-  return QUALITY_CRITERIA.filter((criterion) => criterion.applies.includes(type))
+export function criteriaForType(type: QuestionKind, hasSkill = true): CriterionSpec[] {
+  return QUALITY_CRITERIA.filter((criterion) => criterion.applies.includes(type) && (hasSkill || !criterion.requiresSkill))
 }
 
 export function criterionSeverity(spec: CriterionSpec, score: number): 'bloqueante' | 'alerta' | null {
@@ -192,6 +202,7 @@ function buildState(input: QualityJudgeInput) {
     serie: `${input.gradeYear}º ano (${input.segment})`,
     tipo: question.type,
     escopoCurricular: input.curriculumScope.slice(0, 1500),
+    ...(input.skills?.length ? { habilidadeBncc: input.skills.map((skill) => ({ codigo: skill.code, descricao: skill.description })) } : {}),
     enunciado: question.statement,
     textoDeApoio: question.supportText?.trim() || null,
     alternativas: (question.alternatives ?? []).map((alternative) => ({ letra: alternative.letter, texto: alternative.text })),
@@ -203,7 +214,7 @@ function buildState(input: QualityJudgeInput) {
 
 function buildQuestions(input: QualityJudgeInput): JevQuestions {
   const questions: JevQuestions = {}
-  for (const spec of criteriaForType(input.question.type)) questions[spec.id] = { type: 'noul', instructions: spec.instructions }
+  for (const spec of criteriaForType(input.question.type, Boolean(input.skills?.length))) questions[spec.id] = { type: 'noul', instructions: spec.instructions }
   if (input.question.type === 'objetiva' && input.question.alternatives?.length) {
     questions.gabarito_independente = {
       type: 'choice',

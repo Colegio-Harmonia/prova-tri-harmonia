@@ -37,7 +37,7 @@ export type QualityReportResult = {
 // Critérios que vetam a questão. Os critérios do juiz Jev (probabilidade com
 // limiar calibrado) entram aqui; `linguagem`/`alinhamento` são os critérios
 // legados do auditor LLM e continuam só como alerta em relatórios antigos.
-const AI_BLOCKING_CRITERIA = new Set(['gabarito', 'unicidade', 'cálculo_ou_dados', 'resposta_substantiva', 'copia_escopo_curricular', 'apoio_autossuficiente', 'alternativas_homogeneas', 'resposta_unica', 'fatos_corretos', 'correcao_objetiva'])
+const AI_BLOCKING_CRITERIA = new Set(['gabarito', 'unicidade', 'cálculo_ou_dados', 'alinhamento_bncc', 'resposta_substantiva', 'copia_escopo_curricular', 'apoio_autossuficiente', 'alternativas_homogeneas', 'resposta_unica', 'fatos_corretos', 'correcao_objetiva'])
 
 // O modelo às vezes devolve status "reprovado" com uma evidência que, na
 // prática, diz que o critério NÃO se aplica (ex.: cálculo_ou_dados numa
@@ -104,6 +104,16 @@ export function deterministicQuestionQualityIssues(questions: ExamQuestion[], cu
     if (interest) issues.push(interest)
   }
   return issues
+}
+
+/** Habilidades BNCC declaradas pela questão, com a descrição oficial da planilha (ou o resumo salvo). */
+export function skillsFor(curriculum: CurriculumSelection, question: Pick<ExamQuestion, 'bnccCodes' | 'bnccStatus' | 'bnccSummary'>): Array<{ code: string; description: string }> {
+  if (question.bnccStatus !== 'mapeado') return []
+  const known = new Map(curriculum.units.flatMap((unit) => unit.habilidades.status === 'mapeado' ? unit.habilidades.skills : []).map((skill) => [skill.code.toUpperCase(), skill.description?.trim() ?? '']))
+  return question.bnccCodes.flatMap((code) => {
+    const description = known.get(code.toUpperCase()) || (question.bnccCodes.length === 1 ? question.bnccSummary?.trim() : '') || ''
+    return description ? [{ code: code.toUpperCase(), description }] : []
+  })
 }
 
 export function curriculumScopeFor(curriculum: CurriculumSelection, question: Pick<ExamQuestion, 'curriculumUnitRowIndex'>): string {
@@ -180,6 +190,7 @@ export async function runQuestionQualityTest(curriculum: CurriculumSelection, qu
       segment: curriculum.segment,
       question,
       curriculumScope: curriculumScopeFor(curriculum, question),
+      skills: skillsFor(curriculum, question),
     })
     if (!verdict.available) {
       return {

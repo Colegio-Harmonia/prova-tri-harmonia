@@ -36,6 +36,10 @@ export type PipelineContext = {
   curriculumContent: string
   /** Instrução da matriz (capítulo/tipo/recurso visual), quando houver. */
   contentPlanInstruction?: string
+  /** Habilidades BNCC-alvo da questão (código + descrição oficial da planilha). */
+  targetSkills?: Array<{ code: string; description: string | null }>
+  /** Objetivos cognitivos do capítulo, para calibrar o nível de exigência. */
+  objectives?: string[]
   /** Recuperação: a questão substituta não pode depender de imagem. */
   forceNoVisual?: boolean
   questionType: 'objetiva' | 'descritiva'

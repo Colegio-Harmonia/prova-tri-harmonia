@@ -49,6 +49,24 @@ describe('evaluateQualityAnswers', () => {
   })
 })
 
+describe('alinhamento_bncc', () => {
+  it('bloqueia questão de memorização para habilidade de nível superior (valores do Q1 do #391)', () => {
+    const result = evaluateQualityAnswers({ type: 'objetiva', correctLetter: 'A' }, { ...good, alinhamento_bncc: noul(0.11) })
+    expect(result.blocked).toBe(true)
+    expect(result.issues[0]).toMatchObject({ criterion: 'alinhamento_bncc', severity: 'bloqueante' })
+  })
+
+  it('só pergunta ao Jev quando há habilidade BNCC declarada, e envia a descrição', async () => {
+    const evaluate = vi.fn().mockResolvedValue({ source: 'provider', answers: good, routing: { route: 'automatic', outcome: 'ok' }, model: 'm', stateHash: 'h', cacheKey: 'k' })
+    const base = { subject: 'Ciências', gradeYear: 7, segment: 'anos-finais', curriculumScope: 'x', question: { type: 'objetiva' as const, statement: 'P?', supportText: null, correctLetter: 'A', expectedAnswer: null, gradingCriteria: null, alternatives: [{ letter: 'A', text: 'um' }, { letter: 'B', text: 'dois' }] } }
+    await judgeQuestionQuality(base, { evaluate })
+    expect(evaluate.mock.calls[0][0].questions.alinhamento_bncc).toBeUndefined()
+    await judgeQuestionQuality({ ...base, skills: [{ code: 'EF07CI05', description: 'Discutir combustíveis.' }] }, { evaluate })
+    expect(evaluate.mock.calls[1][0].questions.alinhamento_bncc).toBeDefined()
+    expect(evaluate.mock.calls[1][0].state.habilidadeBncc).toEqual([{ codigo: 'EF07CI05', descricao: 'Discutir combustíveis.' }])
+  })
+})
+
 describe('judgeQuestionQuality', () => {
   const input = {
     subject: 'Ciências', gradeYear: 7, segment: 'anos-finais', curriculumScope: 'Combustíveis renováveis',
