@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 03/10/2026 (domínio calculável fora do assunto do capítulo).
+> Última atualização: 03/10/2026 (gates que tratavam resposta matemática como prosa).
 
 ## 1. Fonte da verdade
 
@@ -96,6 +96,30 @@ Limite conhecido: as palavras-chave são heurística. Capítulo que trate do ass
 sem usar as palavras previstas perde a conferência por código e cai em
 `fonte_ancorada` (ainda conferida pelo Jev). Se isso aparecer, ampliar
 `DOMAIN_TOPICS`.
+
+## 2.4 Correção (03/10/2026): gates que tratavam resposta matemática como prosa
+
+Depois do PR #29 o lote #269 ainda travava na Questão 3 (capítulo "Gráfico e
+interpretação geométrica"). Amostras reais (IA e Jev) mostraram quatro falsos
+positivos de gates pensados para texto corrido, todos corrigidos sem afrouxar o
+que importa (testes em `numberParsing.test.ts` e `mathGates.test.ts`):
+
+1. `parseSingleNumber`/`comparableNumber` apagavam todo ponto: `0.5` virava 5 e
+   `2.5` virava 25. Um distrator "0.5" colidia com a resposta "5"
+   (`alternative_ambiguity`) e `2,5` ≡ `2.5` não era detectado. O ponto agora é
+   milhar só quando forma grupos de 3 dígitos (`1.200`), senão é decimal.
+2. `evidence_not_found`: a IA cita duas frases do apoio saltando a do meio. O gate
+   passa a aceitar evidência em que **cada frase** é literal no apoio; frase fora
+   do apoio (invenção) continua reprovando.
+3. `alternative_ambiguity` por vocabulário: "y = -x + 2…coef. -1" vs "y = x +
+   2…coef. 1" davam 82% de palavras em comum. Alternativas com dígitos cujo
+   "esqueleto" matemático difere deixam de ser tratadas como a mesma resposta;
+   prosa quase idêntica sem números continua barrada.
+4. `tautological_answer`: resposta com número ou equação ("y = 2x - 1") não é
+   "só repete os termos da pergunta".
+
+Limite conhecido: `comparableNumber` ainda lê só o primeiro número de um texto
+com vários; o juiz Jev segue sendo a barreira final de correção.
 
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 

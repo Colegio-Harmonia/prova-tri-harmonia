@@ -38,16 +38,38 @@ export function textSimilarity(first: string, second: string): number {
   return jaccard(tokenize(first), tokenize(second))
 }
 
+/** Um número com seus separadores: "1.210,00", "2,5", "0.5", "-3". */
+export const NUMBER_TOKEN = /-?\d+(?:[.,]\d+)*/g
+
+/**
+ * Lê UM número escrito em pt-BR ou com ponto decimal. O ponto é separador de
+ * milhar só quando forma grupos de 3 dígitos ("1.200", "1.210,00"); caso
+ * contrário é decimal ("0.5", "2.5", "3.14159"). Antes todo ponto era apagado e
+ * "0.5" virava 5, o que colidia com a resposta "5" (falso "mesmo valor") e
+ * escondia "2,5" ≡ "2.5". Token ambíguo ("1,2,3") devolve null.
+ */
+export function parseNumberToken(token: string): number | null {
+  const sign = token.startsWith('-') ? -1 : 1
+  const digits = token.replace(/^-/, '')
+  let normalized: string
+  if (/^\d{1,3}(?:\.\d{3})+(?:,\d+)?$/.test(digits) && !digits.startsWith('0.')) normalized = digits.replace(/\./g, '').replace(',', '.')
+  else if (/^\d+,\d+$/.test(digits)) normalized = digits.replace(',', '.')
+  else if (/^\d+\.\d+$/.test(digits)) normalized = digits
+  else if (/^\d+$/.test(digits)) normalized = digits
+  else return null
+  const parsed = Number(normalized)
+  return Number.isFinite(parsed) ? sign * parsed : null
+}
+
 /**
  * Só devolve número quando o texto representa UM único valor ("2,50 m",
- * "R$ 1.210,00", "x = 2,43"). Expressões com vários números ("a=2, b=-3")
+ * "R$ 1.210,00", "x = 2,43", "0.5"). Expressões com vários números ("a=2, b=-3")
  * devolvem null — comparar só o primeiro número gerava falsos positivos.
  */
 export function parseSingleNumber(value: string): number | null {
-  const matches = value.replace(/\./g, '').replace(',', '.').match(/-?\d+(?:\.\d+)?/g)
-  if (!matches || matches.length !== 1) return null
-  const parsed = Number(matches[0])
-  return Number.isFinite(parsed) ? parsed : null
+  const tokens = value.match(NUMBER_TOKEN)
+  if (!tokens || tokens.length !== 1) return null
+  return parseNumberToken(tokens[0])
 }
 
 /** Números equivalentes em texto pt-BR ("2,50" e "2,5"; "1.200" e "1200"). */
