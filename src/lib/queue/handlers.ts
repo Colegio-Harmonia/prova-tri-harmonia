@@ -243,6 +243,7 @@ async function executeGerarProva(job: ClaimedJob): Promise<JobExecutionResult> {
       assessmentKind: payload.assessmentKind,
       contentPlan: payload.contentPlan,
       assignedTo: payload.assignedTo,
+      curriculumPlanId: payload.curriculumPlanId,
       generationJobId: job.id,
     },
     job.requestedBy,

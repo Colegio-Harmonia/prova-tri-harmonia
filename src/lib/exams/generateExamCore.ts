@@ -4,6 +4,7 @@ import { isStaffSuperuser } from '@/lib/auth/roles'
 import { scoringMethodForQuestions } from '@/lib/scoring/scoringPolicy'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
 import { TabResolutionError } from '@/lib/sheets/tabResolver'
+import { CurriculumPlanError } from '@/lib/curriculum/planCurriculum'
 import { SheetNotConfiguredError } from '@/config/gradeSheets'
 import { computeQuestionSplit } from '@/lib/gemini/promptBuilder'
 import { type ExamQuestion } from '@/lib/gemini/examSchema'
@@ -80,6 +81,8 @@ export type GenerateExamCoreParams = {
   pedagogicalIntent?: ActivityPedagogicalIntent
   contentPlan?: CurriculumPlanItem[]
   assignedTo?: number
+  // Planejamento interno aprovado usado como currículo no lugar da planilha.
+  curriculumPlanId?: number
   /** Presente somente quando a geração vem da fila; habilita retomada por item. */
   generationJobId?: number
 }
@@ -145,6 +148,7 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
   try {
     curriculum = await getCurriculumForExam(params)
   } catch (err) {
+    if (err instanceof CurriculumPlanError) throw new ExamGenerationInputError(err.message)
     if (err instanceof TabResolutionError || err instanceof SheetNotConfiguredError) throw err
     console.error('[generateExamCore] erro ao ler currículo:', err)
     throw new CurriculumReadError(err)
@@ -839,6 +843,7 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
       objectiveCount: allQuestions.filter((q) => q.type === 'objetiva').length,
       discursiveCount: allQuestions.filter((q) => q.type === 'descritiva').length,
         alternativesCount,
+        ...(params.curriculumPlanId ? { curriculumPlanId: params.curriculumPlanId } : {}),
         qualityTest: { version: QUALITY_REPORT_VERSION, checkedAt: new Date().toISOString(), repairedQuestionNumbers: qualityTestRepairedNumbers, warnings: qualityTestWarnings, reports: qualityTestReports },
     },
     questions: allQuestions,

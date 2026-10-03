@@ -5,6 +5,7 @@ import { db } from '@/db/client'
 import { generatedExams } from '@/db/schema'
 import { auth } from '@/auth/auth'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
+import { planIdFromExamPayload } from '@/lib/curriculum/planCurriculum'
 import {
   type ExamGenerationResult,
   type ExamQuestion,
@@ -79,6 +80,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
       gradeYear: exam.gradeYear,
       subject: exam.subject,
       bimester: exam.bimester ?? undefined,
+      curriculumPlanId: planIdFromExamPayload(exam.generationPayload),
     })
     const replacement: ReplacementRequest | undefined = parsed.data.replacement
       ? {

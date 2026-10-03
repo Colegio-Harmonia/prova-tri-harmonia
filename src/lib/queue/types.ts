@@ -27,6 +27,8 @@ export const gerarProvaJobPayloadSchema = z
     assessmentKind: z.enum(ASSESSMENT_KINDS).optional().default('padrao'),
     contentPlan: z.array(curriculumPlanItemSchema).max(60).optional(),
     assignedTo: z.number().int().positive().optional(),
+    // Planejamento interno aprovado a usar no lugar da planilha (opcional).
+    curriculumPlanId: z.number().int().positive().optional(),
   })
   .refine((v) => v.questionCount + v.enemBankQuestionIds.length >= 10 && v.questionCount + v.enemBankQuestionIds.length <= 30, {
     message: 'O total de questões (geradas por IA + banco ENEM) precisa ficar entre 10 e 30.',

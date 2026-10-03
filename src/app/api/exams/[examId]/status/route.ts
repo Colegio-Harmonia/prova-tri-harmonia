@@ -14,6 +14,7 @@ import { enqueuePontuarProvaJob } from '@/lib/queue/enqueue'
 import { qualityApprovalBlocks, runQuestionQualityTest } from '@/lib/exams/questionQualityTest'
 import { latestQualityReport, normalizeStoredQualityReport, qualityReportNeedsNormalization, qualityReportNeedsRecompute, recomputeQualityReport } from '@/lib/exams/qualityReport'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
+import { planIdFromExamPayload } from '@/lib/curriculum/planCurriculum'
 import { buildSingleQuestionPrompt } from '@/lib/gemini/promptBuilder'
 import { generateValidatedStructuredContent, StructuredGenerationError } from '@/lib/gemini/structuredRepair'
 import { correctSingleQuestion } from '@/lib/gemini/examValidator'
@@ -65,6 +66,7 @@ async function replaceRejectedQuestionsAutomatically(exam: typeof generatedExams
     gradeYear: exam.gradeYear,
     subject: exam.subject,
     bimester: exam.bimester ?? undefined,
+    curriculumPlanId: planIdFromExamPayload(exam.generationPayload),
   })
   let questions = [...payload.questions]
   for (const questionNumber of rejected) {
@@ -220,6 +222,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
             gradeYear: exam.gradeYear,
             subject: exam.subject,
             bimester: exam.bimester ?? undefined,
+            curriculumPlanId: planIdFromExamPayload(exam.generationPayload),
           })
           const recomputed = await recomputeQualityReport({
             payload,
