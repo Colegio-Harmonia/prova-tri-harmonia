@@ -75,7 +75,10 @@ function completionOptionsFor(context: string): { temperature: number; maxTokens
   // O pipeline unificado pede um objeto grande e estrito. No DeepSeek, uma
   // temperatura menor reduz respostas parcialmente estruturadas e, portanto,
   // evita que uma falha de JSON encerre a questão antes da reparação local.
-  if (/generation\/unified(?:-|$)/.test(context)) return { temperature: 0.2, maxTokens: 5_000 }
+  // No gpt-5-mini os tokens de raciocínio contam contra max_completion_tokens:
+  // com 5.000, ~12% das chamadas voltavam vazias (empty_response) porque o
+  // raciocínio consumia o teto antes do JSON. É só um limite, não gasto.
+  if (/generation\/unified(?:-|$)/.test(context)) return { temperature: 0.2, maxTokens: 16_000 }
   if (/generation\/stage[01](?:-|$)|generation\/stage_visual/.test(context)) return { temperature: 0.15, maxTokens: 1_800 }
   if (/generation\/stage2/.test(context)) return { temperature: 0.45, maxTokens: 1_600 }
   if (/generation\/stage3/.test(context)) return { temperature: 0.72, maxTokens: 2_400 }
