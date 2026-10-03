@@ -121,6 +121,22 @@ que importa (testes em `numberParsing.test.ts` e `mathGates.test.ts`):
 Limite conhecido: `comparableNumber` ainda lê só o primeiro número de um texto
 com vários; o juiz Jev segue sendo a barreira final de correção.
 
+## 2.5 Correção (03/10/2026): barras da Análise SOLO mostravam nota, não participação
+
+Em `/desempenho` (Análise SOLO), o percentual e a barra de cada nível usavam
+`accuracyPercent` (nota média × 10) ao lado da contagem de itens. "Relacional
+53% · 26" era lido como "53% das respostas", mas queria dizer "essas 26
+respostas tiraram em média 53% da nota". Como o nível mais frequente
+(Multiestrutural, 89 de 147) tinha nota média menor que o menos frequente, a
+barra parecia contradizer a contagem.
+
+Correção só de apresentação (`SoloLevelBars`, `DesempenhoPanel.tsx`): barra e
+percentual passam a ser a participação do nível no total de itens do painel; a
+nota média (com % da nota máxima) vai para a linha de apoio, com legenda
+explicando a diferença. A API `/api/analytics/performance` não mudou. Bundle de
+`/desempenho`: 133,6 → 133,9 KiB (limite 134), sem folga para novos acréscimos
+nessa rota antes de resolver TD-018.
+
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 
 - `main` = `45c0b12` (PR #14), sincronizado com produção. O PR #13 atualizou
