@@ -4,6 +4,7 @@ import { db } from '@/db/client'
 import { generatedExams } from '@/db/schema'
 import { auth } from '@/auth/auth'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
+import { planIdFromExamPayload } from '@/lib/curriculum/planCurriculum'
 import { computeQuestionSplit } from '@/lib/gemini/promptBuilder'
 import type { ExamQuestion } from '@/lib/gemini/examSchema'
 import { attachImagesToExam, RequiredQuestionImageError } from '@/lib/images/questionImageService'
@@ -51,6 +52,7 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
         gradeYear: exam.gradeYear,
         subject: exam.subject,
         bimester: exam.bimester ?? undefined,
+        curriculumPlanId: planIdFromExamPayload(exam.generationPayload),
       })
       curriculum = activeCurriculum
 
@@ -119,6 +121,7 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
         gradeYear: exam.gradeYear,
         subject: exam.subject,
         bimester: exam.bimester ?? undefined,
+        curriculumPlanId: planIdFromExamPayload(exam.generationPayload),
       })
     }
     const quality = await runQuestionQualityTest(curriculum, allQuestions)
@@ -134,6 +137,7 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
         objectiveCount: allQuestions.filter((q) => q.type === 'objetiva').length,
         discursiveCount: allQuestions.filter((q) => q.type === 'descritiva').length,
         alternativesCount,
+        ...(planIdFromExamPayload(exam.generationPayload) ? { curriculumPlanId: planIdFromExamPayload(exam.generationPayload) } : {}),
         qualityTest: {
           version: QUALITY_REPORT_VERSION,
           checkedAt: new Date().toISOString(),

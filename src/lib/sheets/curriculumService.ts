@@ -7,12 +7,15 @@ import { db } from '@/db/client'
 import { curriculumEnrichment } from '@/db/schema'
 import { and, eq, or, sql } from 'drizzle-orm'
 import type { CurriculumSelection, Segment } from '@/types/exam'
+import { getCurriculumFromPlan } from '@/lib/curriculum/planCurriculum'
 
 export type GetCurriculumParams = {
   segment: Segment
   gradeYear: number
   subject: string
   bimester?: number
+  /** Usa o planejamento interno aprovado em vez da planilha. */
+  curriculumPlanId?: number
 }
 
 function matchesBimester(unitBimestre: string | null, bimester?: number): boolean {
@@ -88,6 +91,9 @@ async function attachEnrichment(
  */
 export async function getCurriculumForExam(params: GetCurriculumParams): Promise<CurriculumSelection> {
   const { segment, gradeYear, subject, bimester } = params
+  if (params.curriculumPlanId !== undefined) {
+    return getCurriculumFromPlan(params.curriculumPlanId, { segment, gradeYear, subject, bimester })
+  }
   const sheets = getSheetsClient()
   const config = getGradeSheetConfig(segment, gradeYear)
 

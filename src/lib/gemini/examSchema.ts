@@ -156,6 +156,8 @@ export const examGenerationResultSchema = z.object({
     objectiveCount: z.number().int(),
     discursiveCount: z.number().int(),
     alternativesCount: z.number().int(),
+    // Planejamento interno usado como currículo (ausente = planilha).
+    curriculumPlanId: z.number().int().positive().optional(),
     qualityTest: z.object({
       version: z.string(), checkedAt: z.string(), repairedQuestionNumbers: z.array(z.number().int()), warnings: z.array(z.string()),
       reports: z.array(z.object({ phase: z.string(), results: z.array(z.object({ questionNumber: z.number().int(), approved: z.boolean(), verdictReason: z.string().optional(), checks: z.array(z.object({ criterion: z.string(), status: z.enum(['aprovado', 'reprovado', 'não_aplicável']), evidence: z.string() })).optional(), answerKeyAudit: z.object({ declaredLetter: z.string().nullable(), independentlyDerivedLetter: z.string().nullable(), matchesDeclared: z.boolean(), evidence: z.string() }).nullable().optional(), issues: z.array(z.object({ severity: z.enum(['bloqueante', 'alerta']), reason: z.string() })), diagnostics: z.array(qualityDiagnosticSchema).optional() })) })).optional(),

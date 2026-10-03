@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 03/10/2026 (teto de tokens da geração `generation/unified-*`).
+> Última atualização: 03/10/2026 (geração a partir do planejamento interno, em teste).
 
 ## 1. Fonte da verdade
 
@@ -281,6 +281,41 @@ renderização: `npm run test:bloom-dok-matrix` (entra no `test:regression`).
 
 Não alterado: Bloom, DOK, BNCC e perfis ainda mostram a média única e contam "itens"
 como respostas; só a matriz Bloom × DOK foi separada por tipo.
+
+## 2.11 Novo (03/10/2026): gerar prova a partir do planejamento interno (teste)
+
+Motivação: o lote #269 (Matemática, 8º ano, 4º bim.) falhou duas vezes na questão
+9, do capítulo de circunferências. A planilha só traz uma lista de tópicos para
+ele (225 caracteres); o planejamento #9, criado em `/planejamento`, traz
+conteúdo maior e objetivos calculáveis ("calcular o comprimento da circunferência
+e a área do círculo em situações-problema") e habilidades BNCC com descrição.
+
+O que mudou: `curriculumPlanId` opcional no payload do job `gerar_prova`. Quando
+presente, o currículo vem da versão **aprovada** mais recente do planejamento
+(`src/lib/curriculum/planCurriculum.ts`) e não da planilha; o resto da geração
+recebe o mesmo `CurriculumSelection` e não sabe a diferença.
+
+- `rowIndex` de cada unidade = posição dela no planejamento (0, 1, 2...), então o
+  `contentPlan` do job usa essas posições, não as linhas da planilha.
+- Os objetivos do planejamento entram em `objetivos` (como na planilha, usados
+  nas metas de habilidade) e também em `enrichedContent`: o texto-base do
+  pipeline unificado (`unifiedQuestionGeneration.ts`) é só título + conteúdo +
+  `enrichedContent`, então sem isso os objetivos calculáveis não chegariam ao
+  prompt de cada questão.
+- O id fica em `generation_payload.metadata.curriculumPlanId`. Trocar só uma
+  questão, regenerar, reauditar e aprovar leem esse campo e usam o mesmo
+  planejamento (antes, todos releriam a planilha).
+- Falha com mensagem clara se o planejamento não existe, não tem versão
+  aprovada, não tem unidades ou é de outro recorte (série, disciplina, bimestre).
+
+Ainda **não** tem: seleção na tela de geração (hoje o job é enfileirado à mão), a
+rota síncrona `/api/exams/generate`, atividades (`gerar_atividade`) nem
+`scripts/repair-exam-text.ts`; todos continuam na planilha. Sem migration: o
+campo vive no JSON do payload.
+
+Como avaliar o teste: gerar com `curriculumPlanId` e comparar com os lotes
+anteriores do mesmo recorte (#268 e #269, ambos em erro), principalmente a taxa
+de reprovação do Jev e dos gates nas questões do capítulo de circunferências.
 
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 
