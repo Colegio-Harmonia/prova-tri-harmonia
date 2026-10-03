@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 03/10/2026 (seção 2.6 corrigida: o teto de tokens do PR #32 é inerte).
+> Última atualização: 03/10/2026 (teto de tokens da geração `generation/unified-*`).
 
 ## 1. Fonte da verdade
 
@@ -197,6 +197,42 @@ KiB, **no limite** de 134: nova mudança nessa rota exige code-splitting antes
 
 Pendente (não alterado aqui): os painéis de Bloom e DOK também somam respostas
 de alunos sob rótulos de "itens"; vale conferir se o rótulo é claro.
+
+## 2.8 Correção (03/10/2026): geração devolvia resposta vazia no gpt-5-mini (teto de 5.000 tokens)
+
+Sintoma: no lote #269 (Matemática, 8º ano, 4º bim.), a questão 6 falhou
+repetidamente com `empty_response` (~39 s cada): 5 falhas e nenhum sucesso na
+primeira consulta, e mais depois, enquanto as demais questões do mesmo job
+passavam.
+
+Dados (produção, `ai_operations`, `gpt-5-mini`, `generation/unified-*`, 14 dias):
+110 de 878 chamadas (12,5%) falharam com `empty_response`, em média 39,6 s contra
+31,5 s das que deram certo. Nas chamadas que retornaram conteúdo, os tokens de
+saída (raciocínio incluído) têm mediana 3.438, p90 4.362, p99 4.900 e máximo
+4.978: uma parede exata no teto de 5.000 (60 chamadas acima de 4.500).
+
+Causa provável: no `gpt-5-mini` os tokens de raciocínio contam contra
+`max_completion_tokens`; quando o raciocínio de uma questão passa do teto, o JSON
+nunca é emitido. É inferência: as chamadas que falham não registram tokens.
+Mesmo mecanismo da seção 2.6, em outro contexto.
+
+Correção: teto de `generation/unified-*` sobe de 5.000 para 16.000
+(`completionOptionsFor`, `structuredRepair.ts`). É só um limite, não um gasto
+fixo: chamadas que já cabiam em 5.000 não mudam, e as que estouravam o teto
+presumivelmente já consumiam ~5.000 tokens sem entregar resultado (o custo das
+chamadas que falham não é registrado). No DeepSeek o `max_tokens` continua
+limitado a 8.000 (`llmClient.ts`, PR #32).
+
+Como confirmar depois do deploy: a taxa de `empty_response` em
+`generation/unified-*` deve cair de ~12% para perto de zero, e `completion_tokens`
+das chamadas bem-sucedidas deve passar de 5.000 em alguns casos. Se continuar
+vazio, a causa é outra.
+
+Deploy: só depois de o lote em andamento terminar; reiniciar o `worker` derruba
+o job que estiver rodando.
+
+Fica de fora: os outros tetos baixos de `completionOptionsFor` (`generation/stage*`
+e o padrão de 4.000) não foram tocados; não há evidência de falha neles.
 
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 
