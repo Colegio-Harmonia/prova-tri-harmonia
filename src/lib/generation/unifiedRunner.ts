@@ -16,6 +16,7 @@ import type { AssembledQuestion, MetadataDraft, PipelineContext, QuestionPlan, T
 import { TRUTH_STRATEGIES } from './types'
 import type { BlueprintSlot } from './blueprint'
 import { inferBloomFromVerb } from '@/config/bloomVerbs'
+import { buildMathNotationInstruction } from '@/lib/math/notationInstruction'
 
 // ---------------------------------------------------------------------------
 // Schema unificado de saída (1 chamada IA por questão)
@@ -187,7 +188,7 @@ const QUALITY_RULES = `REGRAS DE QUALIDADE (o juiz de qualidade barra a questão
 Exemplo RUIM: "Qual é um combustível renovável?" com alternativa correta "Combustíveis renováveis". Exemplo BOM: "Uma cidade troca ônibus a diesel por elétricos. Com base nos dados, qual argumento avalia a vantagem e a limitação da troca?" com alternativas de mesmo formato.
 `
 
-function buildUnifiedPrompt(ctx: PipelineContext, slot: BlueprintSlot): string {
+export function buildUnifiedPrompt(ctx: PipelineContext, slot: BlueprintSlot): string {
   const domains = canonicalDomainsForSubject(ctx.subject)
   const domain = slot.domain ? getCanonicalDomain(slot.domain) : null
   const engine = slot.ruleId ? getRuleEngine(slot.ruleId) : null
@@ -240,6 +241,8 @@ Trecho curricular disponível:
 ${ctx.curriculumContent.slice(0, 3000)}
 
 REGRA DE FONTE TEXTUAL (OBRIGATÓRIA): só mencione texto, trecho, artigo, poema, capítulo ou “material didático” se o campo "supportText" trouxer integralmente a fonte que o estudante precisa ler. Esse campo deve conter um texto/dado autocontido, nunca apenas título, número de capítulo, lista de tópicos ou resumo inventado. Os tópicos curriculares acima não são um texto de leitura. Se não houver fonte textual suficiente, formule uma questão autocontida e não faça referência a leitura, capítulo ou material externo.
+
+NOTAÇÃO MATEMÁTICA (OBRIGATÓRIA): ${buildMathNotationInstruction()}
 
 ${buildSkillBlock(ctx)}
 ${QUALITY_RULES}
