@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assembleAlternatives, gateAnchoredClaim, gateAlternativePresentation, gateAlternativeShape, gateDistractors, gateInterpretiveSupport, gateStatement, gateStrategy, gateTruth } from './gates'
+import { answerProseContainsResult, assembleAlternatives, gateAnchoredClaim, gateAlternativePresentation, gateAlternativeShape, gateDistractors, gateInterpretiveSupport, gateStatement, gateStrategy, gateTruth } from './gates'
 import { StageGateError } from './types'
 import type { PipelineContext, QuestionPlan, TruthObject } from './types'
 
@@ -123,5 +123,24 @@ describe('gateAnchoredClaim', () => {
 
   it('rejeita resposta (claim) vazia', () => {
     expect(() => gateAnchoredClaim(null, truth({ claim: ' ' }))).toThrow(StageGateError)
+  })
+})
+
+describe('answerProseContainsResult', () => {
+  it('aceita o resultado por extenso, arredondado ou no formato pt-BR', () => {
+    expect(answerProseContainsResult('São 30 camisetas do tamanho G.', 30)).toBe(true)
+    expect(answerProseContainsResult('A distância vale √50 ≈ 7,07.', 7.071068)).toBe(true)
+    expect(answerProseContainsResult('O montante é R$ 1.234,50.', 1234.5)).toBe(true)
+  })
+
+  it('exige o resultado: número errado ou ausente é rejeitado', () => {
+    expect(answerProseContainsResult('São 99 camisetas do tamanho G.', 30)).toBe(false)
+    expect(answerProseContainsResult('Explica o conceito de porcentagem sem calcular.', 30)).toBe(false)
+  })
+
+  it('respeita o sinal, mas não confunde subtração com número negativo', () => {
+    expect(answerProseContainsResult('Portanto f(4) = -2.', -2)).toBe(true)
+    expect(answerProseContainsResult('Portanto f(4) = -2.', 2)).toBe(false)
+    expect(answerProseContainsResult('Como 5 - 3 = 2, o resultado é 2.', 2)).toBe(true)
   })
 })

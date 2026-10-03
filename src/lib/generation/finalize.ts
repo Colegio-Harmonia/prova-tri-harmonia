@@ -6,15 +6,18 @@ export const CALCULABLE_GRADING_CRITERIA =
   '1) Identifica os dados do problema e a estratégia de resolução adequada (30%). 2) Desenvolve os cálculos de forma organizada e sem erros (40%). 3) Apresenta a resposta final correta, com unidade ou representação adequada (30%).'
 
 /**
- * Resposta-modelo de descritiva calculável. Os passos e o resultado vêm do
- * recálculo por código (nunca da prosa do modelo); antes, o gabarito era só o
- * número, sem resolução, e o juiz de qualidade barrava a questão por "resposta
- * esperada que não responde ao enunciado".
+ * Resposta esperada de descritiva calculável. O enunciado costuma ter vários
+ * itens; o recálculo por código cobre só a grandeza do domínio. Por isso a
+ * resposta-modelo escrita pela IA (já conferida contra o recálculo no runner)
+ * é mantida e a conferência por código vai anexada. Sem resposta-modelo, o
+ * gabarito fica só com a resolução recalculada.
  */
-function calculableExpectedAnswer(truth: TruthObject): string | null {
+function calculableExpectedAnswer(truth: TruthObject, modelAnswer?: string | null): string | null {
   const answer = truth.derivedAnswer?.trim()
-  if (!answer) return null
+  if (!answer) return modelAnswer?.trim() || null
   const derivation = truth.derivation?.trim().replace(/[.;]\s*$/, '')
+  const prose = modelAnswer?.trim()
+  if (prose) return `${prose}\n\nConferência do cálculo (recalculada por código): ${derivation ? `${derivation}. ` : ''}Resultado: ${answer}.`
   return derivation ? `Resolução: ${derivation}. Resposta final: ${answer}.` : `Resposta final: ${answer}.`
 }
 
@@ -42,7 +45,7 @@ export function assembleExamQuestion(ctx: PipelineContext, assembled: AssembledQ
     expectedAnswer: isObjective
       ? null
       : calculable
-        ? (calculableExpectedAnswer(truth) ?? truth.claim ?? null)
+        ? (calculableExpectedAnswer(truth, assembled.expectedAnswer) ?? truth.claim ?? null)
         : (assembled.expectedAnswer?.trim() || truth.derivedAnswer || truth.claim || null),
     gradingCriteria: isObjective
       ? null

@@ -4,7 +4,7 @@ import type { ExamQuestion } from '@/lib/gemini/examSchema'
 import { canonicalDomainsForSubject, getCanonicalDomain, computeCanonicalDomain, comparableNumber } from './domains'
 import { buildDeterministicMathStatement } from './deterministicMathStatement'
 import { getRuleEngine, registeredRuleEngineIds } from './rules'
-import { defaultShuffle, assembleAlternatives, gateAnchoredClaim, gateAlternativePresentation, gateAlternativeShape, gateDistractors, gateInterpretiveSupport, gateMetadata, gateStatement, gateStrategy, gateTruth, gateVisualPlan, gateVisualReference } from './gates'
+import { answerProseContainsResult, defaultShuffle, assembleAlternatives, gateAnchoredClaim, gateAlternativePresentation, gateAlternativeShape, gateDistractors, gateInterpretiveSupport, gateMetadata, gateStatement, gateStrategy, gateTruth, gateVisualPlan, gateVisualReference } from './gates'
 import { detectAlternativeAmbiguities } from './alternatives'
 import { assembleExamQuestion } from './finalize'
 import { runLocalQualityGate } from './localQualityGate'
@@ -200,8 +200,9 @@ function buildUnifiedPrompt(ctx: PipelineContext, slot: BlueprintSlot): string {
 Domínio: ${domain.id} — ${domain.title}.
 Entradas obrigatórias em "values" (todas numéricas): ${keyList}.
 ${domain.inputDescription}
-Escolha valores plausíveis e devolva em "values". NÃO calcule o resultado — ele será recalculado por código.
-NÃO invente números no enunciado que não estejam nos values.`
+Escolha valores plausíveis e devolva em "values". O resultado oficial será recalculado por código.
+NÃO invente números no enunciado que não estejam nos values.${ctx.questionType === 'descritiva' ? `
+DESCRITIVA CALCULÁVEL: o enunciado DEVE pedir explicitamente a grandeza que o domínio calcula (${domain.title}) a partir dos valores de "values"; itens adicionais (justificar, interpretar, representar) são permitidos, mas esse item é obrigatório e não pode ser trocado por outra tarefa. Em "expectedAnswer", responda a TODOS os itens do enunciado, na ordem, e escreva o resultado numérico do cálculo; ele será conferido contra o recálculo por código e a questão é rejeitada se divergir.` : ''}`
   } else if (slot.truthStrategy === 'regra_deterministica' && engine) {
     strategyInstructions = `ESTRATÉGIA: REGRA DETERMINÍSTICA.
 Motor de regras: ${engine.id} — ${engine.title}.
@@ -297,7 +298,8 @@ DEVOLVA APENAS JSON: {"distractors":[...]}
 - Gere exatamente ${expectedCount} distratores novos.
 - Eles precisam ser todos distintos mesmo ignorando acentos, maiúsculas e espaços.
 - Nenhum pode reproduzir, equivaler ou conter a resposta correta.
-- Preserve o tema, o nível e o formato das respostas. Não altere enunciado, texto de apoio, BNCC ou gabarito.`
+- Preserve o tema, o nível e o formato das respostas. Não altere enunciado, texto de apoio, BNCC ou gabarito.
+- Cada distrator deve ter forma e extensão comparáveis às da resposta correta ("${params.correctAnswerText}"): se ela é um valor ou expressão curta, use somente valores ou expressões curtas, sem frases explicativas.`
 
   const generated = await generateValidatedStructuredContent({
     context: `generation/unified-distractor-repair-${params.ctx.questionNumber}`,
@@ -314,6 +316,7 @@ DEVOLVA APENAS JSON: {"distractors":[...]}
         }
       }
       try {
+        gateAlternativeShape(params.correctAnswerText, candidate.distractors)
         gateDistractors(params.plan, params.truth, candidate.distractors, params.correctAnswerText)
         gateInterpretiveSupport(params.plan, params.truth, candidate.distractors)
         return { value: candidate, issues: [] }
@@ -421,13 +424,26 @@ export async function generateUnifiedQuestion(
               repairInstructions: [{ code: 'BNCC_TARGET_MISSING', fields: ['bnccCodes', 'bnccStatus'], message: `Devolva em bnccCodes exatamente uma destas habilidades: ${targetCodes.join(', ')}, com bnccStatus "mapeado", e garanta que a questão a avalia.`, protectedFields: ['statement', 'supportText'] }],
             }
           }
-          const missingDiscursive = ctx.questionType === 'descritiva' && slot.truthStrategy !== 'calculavel'
+          const missingDiscursive = ctx.questionType === 'descritiva'
             && (!parsed.expectedAnswer || parsed.expectedAnswer.trim().length < 20 || !parsed.gradingCriteria?.length)
           if (missingDiscursive) {
             return {
               value: parsed,
               issues: ['Questão descritiva sem resposta esperada ou critérios de correção próprios.'],
-              repairInstructions: [{ code: 'DISCURSIVE_KEY_MISSING', fields: ['expectedAnswer', 'gradingCriteria'], message: 'Escreva expectedAnswer (resposta-modelo de 3–6 frases) e gradingCriteria (3–5 critérios com pesos em %).', protectedFields: ['statement', 'supportText', 'bnccCodes'] }],
+              repairInstructions: [{ code: 'DISCURSIVE_KEY_MISSING', fields: ['expectedAnswer', 'gradingCriteria'], message: 'Escreva expectedAnswer (resposta-modelo que responda a TODOS os itens do enunciado, 3–6 frases) e gradingCriteria (3–5 critérios com pesos em %).', protectedFields: ['statement', 'supportText', 'bnccCodes'] }],
+            }
+          }
+          // Descritiva calculável: a resposta-modelo da IA é mantida (cobre todos os
+          // itens do enunciado), mas o resultado numérico dela precisa bater com o recálculo.
+          if (ctx.questionType === 'descritiva' && plan.truthStrategy === 'calculavel' && plan.domain) {
+            const computation = computeCanonicalDomain(plan.domain, truth.values)
+            if (!computation.answer.category && Number.isFinite(computation.answer.numeric)
+              && !answerProseContainsResult(parsed.expectedAnswer ?? '', computation.answer.numeric)) {
+              return {
+                value: parsed,
+                issues: [`A resposta-modelo não contém o resultado recalculado (${computation.answer.display}).`],
+                repairInstructions: [{ code: 'EXPECTED_ANSWER_RESULT_MISMATCH', fields: ['expectedAnswer'], message: `A resposta-modelo precisa incluir o resultado do cálculo conferido por código: ${computation.answer.display}. Refaça a resolução com os valores de "values" e responda a todos os itens do enunciado.`, protectedFields: ['statement', 'supportText', 'values', 'bnccCodes'] }],
+              }
             }
           }
           return { value: parsed, issues: [] }
@@ -536,23 +552,47 @@ export async function generateUnifiedQuestion(
     : (truth.derivedAnswer ?? truth.claim ?? '')
 
   if (ctx.questionType === 'objetiva' && parsed.distractors) {
+    let distractors = parsed.distractors
     try {
       gateAlternativePresentation(correctAnswerText)
-      gateAlternativeShape(correctAnswerText, parsed.distractors)
+      gateAlternativeShape(correctAnswerText, distractors)
     } catch (error) {
       if (error instanceof StageGateError) {
-        issues.push({ severity: 'bloqueante', reason: `[alternativas] ${error.message}` })
+        // Forma diferente da resposta é um defeito só dos distratores (ex.: resposta
+        // numérica curta com distratores em frase): tenta o reparo local antes de
+        // reprovar a questão inteira.
+        let shapeRepaired = false
+        if (error.gate === 'alternative_shape') {
+          try {
+            const repaired = await repairDistractorsLocally({
+              ctx, slot, plan, truth,
+              statement: parsed.statement,
+              supportText: parsed.supportText,
+              bnccCodes: parsed.bnccCodes,
+              correctAnswerText,
+              distractors,
+              failure: error,
+            })
+            distractors = repaired.distractors
+            shapeRepaired = true
+            issues.push({ severity: 'alerta', reason: `[distratores] Reparo local aplicado: ${error.message}` })
+            issues.push(...repaired.warnings.map((warning) => ({ severity: 'alerta' as const, reason: `[distratores] ${warning}` })))
+          } catch (repairError) {
+            if (!(repairError instanceof StructuredGenerationError)) throw repairError
+          }
+        }
+        if (!shapeRepaired) issues.push({ severity: 'bloqueante', reason: `[alternativas] ${error.message}` })
       }
     }
 
     try {
       const expectedCount = (ctx.segment === 'anos-iniciais' ? 4 : 5) - 1
-      if (parsed.distractors.length !== expectedCount) {
-        issues.push({ severity: 'bloqueante', reason: `Esperados ${expectedCount} distratores, recebidos ${parsed.distractors.length}.` })
+      if (distractors.length !== expectedCount) {
+        issues.push({ severity: 'bloqueante', reason: `Esperados ${expectedCount} distratores, recebidos ${distractors.length}.` })
       } else {
-        gateDistractors(plan, truth, parsed.distractors, correctAnswerText)
-        gateInterpretiveSupport(plan, truth, parsed.distractors)
-        const assembled = assembleAlternatives(parsed.distractors, correctAnswerText, shuffle)
+        gateDistractors(plan, truth, distractors, correctAnswerText)
+        gateInterpretiveSupport(plan, truth, distractors)
+        const assembled = assembleAlternatives(distractors, correctAnswerText, shuffle)
         alternatives = assembled.alternatives
         correctLetter = assembled.correctLetter
       }
@@ -568,7 +608,7 @@ export async function generateUnifiedQuestion(
             supportText: parsed.supportText,
             bnccCodes: parsed.bnccCodes,
             correctAnswerText,
-            distractors: parsed.distractors,
+            distractors,
             failure: error,
           })
           const assembled = assembleAlternatives(repaired.distractors, correctAnswerText, shuffle)
@@ -627,8 +667,9 @@ export async function generateUnifiedQuestion(
     visualPlan,
     statement: parsed.statement,
     supportText: parsed.supportText,
-    // Em questão calculável a resposta vem do recálculo por código, nunca da prosa do modelo.
-    expectedAnswer: plan.truthStrategy === 'calculavel' ? null : parsed.expectedAnswer ?? null,
+    // Em calculável o resultado oficial vem do recálculo por código; a prosa do modelo
+    // (resposta-modelo de todos os itens) já foi conferida contra ele em `validate`.
+    expectedAnswer: parsed.expectedAnswer ?? null,
     gradingCriteria: parsed.gradingCriteria?.length ? parsed.gradingCriteria.map((item, index) => `${index + 1}) ${item.replace(/^\d+[.)]\s*/, '')}`).join(' ') : null,
     metadata,
   }

@@ -45,7 +45,7 @@ function assembled(overrides: Partial<AssembledQuestion> = {}): AssembledQuestio
 }
 
 describe('assembleExamQuestion — descritiva calculável', () => {
-  it('monta a resposta esperada com a resolução recalculada por código e o resultado final', () => {
+  it('sem resposta-modelo da IA, monta a resolução recalculada por código e o resultado final', () => {
     const question = assembleExamQuestion(ctx('descritiva'), assembled())
     expect(question.expectedAnswer).toBe('Resolução: 20% de 150 = 150 × 20 ÷ 100 = 30. Resposta final: 30.')
   })
@@ -62,15 +62,17 @@ describe('assembleExamQuestion — descritiva calculável', () => {
     expect(question.gradingCriteria).toBe(own)
   })
 
-  it('ignora a prosa de resposta da IA: o resultado vem sempre do recálculo', () => {
-    const question = assembleExamQuestion(ctx('descritiva'), assembled({ expectedAnswer: 'São 99 camisetas.' }))
-    expect(question.expectedAnswer).not.toContain('99')
-    expect(question.expectedAnswer).toContain('Resposta final: 30.')
+  it('mantém a resposta-modelo da IA (todos os itens) e anexa a conferência recalculada por código', () => {
+    const prose = 'a) Calcula 20% de 150 e obtém 30 camisetas. b) Explica que 20% equivale a 20/100.'
+    const question = assembleExamQuestion(ctx('descritiva'), assembled({ expectedAnswer: prose }))
+    expect(question.expectedAnswer?.startsWith(prose)).toBe(true)
+    expect(question.expectedAnswer).toContain('Conferência do cálculo (recalculada por código): 20% de 150 = 150 × 20 ÷ 100 = 30. Resultado: 30.')
   })
 
-  it('continua aprovada pela validação de ficha técnica de Matemática', () => {
-    const question = assembleExamQuestion(ctx('descritiva'), assembled())
-    expect(validateSolutionBlueprint(question)).toEqual([])
+  it('continua aprovada pela validação de ficha técnica de Matemática, com ou sem resposta-modelo', () => {
+    expect(validateSolutionBlueprint(assembleExamQuestion(ctx('descritiva'), assembled()))).toEqual([])
+    const withProse = assembleExamQuestion(ctx('descritiva'), assembled({ expectedAnswer: 'Calcula 20% de 150 e obtém 30 camisetas vendidas do tamanho G.' }))
+    expect(validateSolutionBlueprint(withProse)).toEqual([])
   })
 })
 

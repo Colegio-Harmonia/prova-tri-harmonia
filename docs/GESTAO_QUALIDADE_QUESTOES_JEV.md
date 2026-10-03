@@ -99,15 +99,21 @@ código final: **10/10 ruins barradas, 0/10 controles barrados**. Limiares em
 limiares (`QUESTION_QUALITY_VERSION` invalida o cache).
 
 **Lacuna encontrada em 02/10/2026:** descritivas de Matemática (estratégia
-`calculavel`) não estavam no conjunto de controle. O gabarito delas era só o
-número recalculado e o critério era o texto padrão "Critérios definidos na
-revisão docente.", então `correcao_objetiva` ficava em 0,13–0,17 (bloqueio < 0,4)
-e a prova travava na Questão 4 do lote #268 (Matemática, 8º ano). Correção em
-`src/lib/generation/finalize.ts`: a resposta esperada passa a trazer a resolução
-recalculada por código (`truth.derivation`) + a resposta final, e, sem critérios
-da IA, entra uma rubrica por etapas (30/40/30). Medido com o Jev real em
-2 descritivas calculáveis: `correcao_objetiva` 0,16→0,89 e 0,17→0,82. Os limiares
-**não** foram alterados.
+`calculavel`) não estavam no conjunto de controle e foram barradas em série
+(lote #268, Matemática 8º ano). Duas causas, corrigidas em sequência, **sem
+alterar limiares**:
+
+1. Gabarito = só o número recalculado e critério = texto padrão "Critérios
+   definidos na revisão docente." → `correcao_objetiva` 0,13–0,17 (bloqueio < 0,4).
+   `finalize.ts` passou a montar resolução recalculada + rubrica por etapas
+   (medido com o Jev real: 0,16→0,89 e 0,17→0,82 em 2 questões sintéticas).
+2. Com isso o juiz passou a enxergar o que o número escondia: o enunciado tinha
+   vários itens (a, b, c, d) e o gabarito cobria um só, ou outra tarefa
+   (`correcao_objetiva` 0,05–0,19, `fatos_corretos` até 0,04). A resposta-modelo
+   escrita pela IA estava sendo descartada. Agora ela é mantida, com a conferência
+   do cálculo por código anexada, e o validador exige que contenha o resultado
+   recalculado. Medido com IA e Jev reais: 5/5 descritivas aprovadas,
+   `correcao_objetiva` 0,82–0,92, `resposta_substantiva` 0,95–0,98.
 
 ## Limites conhecidos
 - Jev é um juiz probabilístico: julga, não gera. A geração continua no LLM de
