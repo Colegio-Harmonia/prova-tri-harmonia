@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 03/10/2026 (teto de tokens da auditoria de qualidade no gpt-5-mini).
+> Última atualização: 03/10/2026 (seção 2.6 corrigida: o teto de tokens do PR #32 é inerte).
 
 ## 1. Fonte da verdade
 
@@ -137,30 +137,45 @@ explicando a diferença. A API `/api/analytics/performance` não mudou. Bundle d
 `/desempenho`: 133,6 → 133,9 KiB (limite 134), sem folga para novos acréscimos
 nessa rota antes de resolver TD-018.
 
-## 2.6 Correção (03/10/2026): auditoria de qualidade devolvia resposta vazia no gpt-5-mini
+## 2.6 Registro (03/10/2026): prova #200 bloqueada na aprovação; o PR #32 não a resolve
 
-Sintoma: na aprovação, "Questão N: ausente do relatório final de qualidade" e
-auditorias `exams/question-quality-test-*` falhando com `empty_response`
-(prova #200, Inglês 2º ano; ~56% das chamadas desse tipo falharam em 3 dias,
-e a questão 3 falhou 100% das tentativas).
+A prova #200 (Inglês, 2º ano) não aprovava: "Questão N: ausente do relatório
+final de qualidade". Duas causas, apuradas em produção em 24/09, quando a
+auditoria por questão ainda era feita por um LLM (`gpt-5-mini`):
 
-Causa: `completionOptionsFor` (`structuredRepair.ts`) limitava a auditoria a
-2.400 tokens. No `gpt-5-mini` os tokens de raciocínio contam contra
-`max_completion_tokens`; essa auditoria gasta ~2,7 mil só raciocinando (~3,5 a
-4,5 mil no total), então o JSON nunca chegava. O modelo não era o problema:
-a mesma chamada com limite de 8.000 funcionou.
+1. **Relatório parcial** (segue válido no `main`). A prova nasceu sem relatório
+   porque `EXAM_AUTO_QUALITY_GATE_ENABLED=false` estava no `.env.local`. As
+   trocas manuais das questões 5 e 11 criaram um relatório só com essas duas, e
+   `qualityReportNeedsRecompute` só considera relatório *vazio*: a aprovação
+   nunca reauditava as outras dez.
+2. **Resposta vazia do auditor LLM.** 91 falhas contra 71 sucessos em
+   `exams/question-quality-test-*` em 3 dias, todas `empty_response`. O teto era
+   de 2.400 tokens e, no `gpt-5-mini`, os tokens de raciocínio contam contra
+   `max_completion_tokens` (~2,7 mil só raciocinando, ~3,5 a 4,5 mil no total).
+   A mesma chamada com 8.000 funcionou.
 
-Correção: teto de 16.000 tokens para `question-quality-test`/`exam-quality-audit`
-(é só um limite; o consumo real não muda). No DeepSeek o `max_tokens` fica
-limitado a 8.000 (`llmClient.ts`), que é o máximo já usado até hoje, para não
-quebrar se o perfil de `text_generation` voltar a ser DeepSeek.
+**O que o PR #32 fez e por que não resolve hoje.** Subiu o teto de
+`question-quality-test`/`exam-quality-audit` para 16.000 e limitou o `max_tokens`
+do DeepSeek a 8.000 (`llmClient.ts`). Mas, no `main` atual, `runQuestionQualityTest`
+é decidido pelo juiz Jev (`judgeQuestionQuality`) e nada em `src` emite esses
+contextos: o teto de 16.000 está **inerte**. O limite de 8.000 no DeepSeek segue
+valendo como proteção. A conclusão do PR de que o auditor LLM ainda estava em
+uso foi um erro de verificação (o arquivo existia, mas não foi lido no `main`).
 
-Fica de fora (não alterado): `qualityReportNeedsRecompute` só considera
-relatório *vazio*; uma prova com relatório parcial (só questões trocadas
-manualmente) nunca é reauditada na aprovação. Outros contextos de IA com teto
-baixo e que podem sofrer o mesmo problema em modelo de raciocínio:
-`generation/stage3-5` (2.400), `generation/stage2` (1.600) e o padrão de
-4.000 (inclui `exams/final-quality-audit`).
+**Estado da #200 em 03/10 (verificado só leitura).** A questão 3 está gravada com
+uma versão regenerada defeituosa (a alternativa C, o gabarito, é texto copiado do
+currículo) e o Jev a reprova. A questão 6 também é reprovada pelo Jev
+(`resposta_unica` e `gabarito`: declarado C, calculado A, confiança 73%). As
+outras dez constam no relatório gravado (do auditor antigo). Próximo passo:
+regenerar as questões 3 e 6 pela tela de revisão ("Recusar e gerar nova"), que já
+passa pelo Jev.
+
+**Pendente.**
+- Reauditar na aprovação quando o relatório existe mas não cobre todas as
+  questões (item 1 acima).
+- Remover a entrada inerte de `completionOptionsFor`, ou mantê-la caso um auditor
+  LLM volte. Se voltar num modelo de raciocínio, o teto precisa incluir os tokens
+  de raciocínio.
 
 ## 2.7 Correção (03/10/2026): "questões" da Análise SOLO eram respostas de alunos
 
