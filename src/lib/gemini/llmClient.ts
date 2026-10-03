@@ -121,7 +121,9 @@ export async function generateStructuredCompletion(prompt: string, schema: objec
             // modo de raciocínio do DeepSeek aumenta respostas vazias ou
             // incompletas nesse contrato, sem acrescentar garantia estrutural.
             thinking: { type: 'disabled' },
-            max_tokens: maxTokens,
+            // Nunca passamos de 8.000 no DeepSeek; o teto de saída dele pode
+            // ser menor que o dos modelos de raciocínio (16.000 na auditoria).
+            max_tokens: Math.min(maxTokens, 8_000),
             temperature,
           },
         }

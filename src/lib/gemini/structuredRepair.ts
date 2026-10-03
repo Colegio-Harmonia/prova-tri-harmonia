@@ -80,7 +80,10 @@ function completionOptionsFor(context: string): { temperature: number; maxTokens
   if (/generation\/stage2/.test(context)) return { temperature: 0.45, maxTokens: 1_600 }
   if (/generation\/stage3/.test(context)) return { temperature: 0.72, maxTokens: 2_400 }
   if (/generation\/stage[45]/.test(context)) return { temperature: 0.25, maxTokens: 2_400 }
-  if (/question-quality-test|exam-quality-audit/.test(context)) return { temperature: 0.15, maxTokens: 2_400 }
+  // No gpt-5-mini os tokens de raciocínio contam contra max_completion_tokens:
+  // a auditoria gasta ~2,7 mil só raciocinando (~3,5-4,5 mil no total), e com
+  // 2.400 o JSON nunca era emitido (empty_response). É só um teto, não gasto.
+  if (/question-quality-test|exam-quality-audit/.test(context)) return { temperature: 0.15, maxTokens: 16_000 }
   return { temperature: 0.5, maxTokens: 4_000 }
 }
 
