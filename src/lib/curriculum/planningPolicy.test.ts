@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canEditPlan, canReceiveNewDraft, canStartNewVersion, canTransitionPlan, canViewPlan, normalizePlanUnits, officialVersion, openVersion, planCopyDraft, validatePlanScope } from './planningPolicy'
+import { BNCC_CODE_PATTERN, canEditPlan, canReceiveNewDraft, canStartNewVersion, canTransitionPlan, canViewPlan, normalizePlanUnits, officialVersion, openVersion, planCopyDraft, validatePlanScope } from './planningPolicy'
 
 const professor = { role: 'professor' as const, userId: 7, assignedUserIds: [7] }
 const otherProfessor = { role: 'professor' as const, userId: 8, assignedUserIds: [7] }
@@ -69,5 +69,25 @@ describe('versões e conteúdo do planejamento (Bloco 7)', () => {
       'Unidade 1: meta de EF05MA03 deve ser de 0 a 100.',
       'Unidade 1: habilidade EF05MA03 repetida.',
     ])
+  })
+})
+
+describe('padrão de código BNCC', () => {
+  it('aceita os formatos do Fundamental, da Educação Infantil e das áreas do Ensino Médio', () => {
+    for (const code of ['EF08MA19', 'EF15AR01', 'EF35LP08', 'EI03EO01', 'EM13MAT301', 'EM13CNT101', 'EM13LGG101', 'EM13CHS201']) {
+      expect(BNCC_CODE_PATTERN.test(code), code).toBe(true)
+    }
+  })
+
+  it('aceita Língua Portuguesa do Ensino Médio (EM13LP + 2 dígitos), que a planilha traz', () => {
+    for (const code of ['EM13LP01', 'EM13LP03', 'EM13LP47', 'EM13LP54']) {
+      expect(BNCC_CODE_PATTERN.test(code), code).toBe(true)
+    }
+  })
+
+  it('continua recusando formatos que não são código BNCC', () => {
+    for (const code of ['EM13LP1', 'EM13LP123', 'EM13XX01', 'EM13MAT30', 'EF8MA19', 'ef08ma19', 'EM13LP03 ', 'SAE +', '']) {
+      expect(BNCC_CODE_PATTERN.test(code), JSON.stringify(code)).toBe(false)
+    }
   })
 })
