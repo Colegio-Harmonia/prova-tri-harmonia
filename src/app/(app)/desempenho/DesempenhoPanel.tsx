@@ -95,6 +95,8 @@ type BloomDokMatrixData = {
 type SoloLevelStats = {
   level: string
   itemCount: number
+  /** Questões distintas no nível; só existe no SOLO esperado (itemCount conta respostas). */
+  questionCount: number | null
   equivalentCorrect: number
   accuracyPercent: number | null
   averageScore: number | null
@@ -103,7 +105,7 @@ type SoloLevelStats = {
   insufficientSample: boolean
 }
 type SoloDashboardData = {
-  expected: { summary: { classifiedItemCount: number; unclassifiedItemCount: number }; levels: SoloLevelStats[] }
+  expected: { summary: { classifiedItemCount: number; unclassifiedItemCount: number; classifiedQuestionCount: number; unclassifiedQuestionCount: number }; levels: SoloLevelStats[] }
   observed: { summary: { classifiedAnswerCount: number; unclassifiedDiscursiveAnswerCount: number }; levels: SoloLevelStats[] }
 }
 type CognitiveProfile = {
@@ -877,10 +879,11 @@ function BloomDokMatrix({ data }: { data: BloomDokMatrixData }) {
   )
 }
 
-function SoloLevelBars({ title, subtitle, levels, order }: { title: string; subtitle: string; levels: SoloLevelStats[]; order: string[] }) {
+function SoloLevelBars({ title, subtitle, levels, order, unit }: { title: string; subtitle: string; levels: SoloLevelStats[]; order: string[]; unit: 'questao' | 'resposta' }) {
   const orderedLevels = order.map((level) => levels.find((stat) => stat.level === level) ?? {
     level,
     itemCount: 0,
+    questionCount: null,
     equivalentCorrect: 0,
     accuracyPercent: null,
     averageScore: null,
@@ -889,24 +892,29 @@ function SoloLevelBars({ title, subtitle, levels, order }: { title: string; subt
     insufficientSample: true,
   })
 
-  const totalItems = orderedLevels.reduce((sum, stat) => sum + stat.itemCount, 0)
+  // "questao" conta questões distintas (cada uma uma vez, mesmo respondida por
+  // vários alunos); "resposta" conta respostas de alunos.
+  const countOf = (stat: SoloLevelStats) => (unit === 'questao' ? stat.questionCount ?? stat.itemCount : stat.itemCount)
+  const noun = (count: number) => (unit === 'questao' ? (count === 1 ? 'questão' : 'questões') : (count === 1 ? 'resposta' : 'respostas'))
+  const total = orderedLevels.reduce((sum, stat) => sum + countOf(stat), 0)
 
   return (
     <div className="rounded-lg border border-border bg-surface-subtle p-3">
       <p className="text-sm font-semibold text-content-primary">{title}</p>
       <p className="mt-1 text-xs text-content-muted">{subtitle}</p>
       <p className="mt-1 text-[11px] text-content-muted">
-        A barra mostra a participação do nível no total ({totalItems} {totalItems === 1 ? 'item' : 'itens'}); a nota média aparece abaixo de cada nível.
+        A barra mostra a participação do nível no total ({total} {noun(total)}); a nota média dos alunos aparece abaixo de cada nível.
       </p>
       <div className="mt-3 space-y-3">
         {orderedLevels.map((stat) => {
-          const sharePercent = totalItems > 0 ? Math.round((stat.itemCount / totalItems) * 100) : 0
+          const count = countOf(stat)
+          const sharePercent = total > 0 ? Math.round((count / total) * 100) : 0
           return (
             <div key={stat.level}>
               <div className="flex items-center justify-between gap-3 text-xs">
                 <span className="truncate text-content-secondary">{SOLO_LABELS[stat.level] ?? stat.level}</span>
                 <span className="shrink-0 text-content-muted">
-                  {sharePercent}% · {stat.itemCount} {stat.itemCount === 1 ? 'item' : 'itens'}
+                  {sharePercent}% · {count} {noun(count)}
                 </span>
               </div>
               <div className="mt-1 h-2 rounded-full bg-surface">
@@ -915,7 +923,9 @@ function SoloLevelBars({ title, subtitle, levels, order }: { title: string; subt
               {stat.itemCount > 0 && (
                 <p className="mt-1 text-[11px] text-content-muted">
                   Nota média {stat.averageScore?.toFixed(1) ?? '—'}
-                  {stat.accuracyPercent !== null ? ` (${stat.accuracyPercent}% da nota máxima)` : ''} · {stat.insufficientSample ? 'amostra baixa' : CONFIDENCE_LABELS[stat.confidence]}
+                  {stat.accuracyPercent !== null ? ` (${stat.accuracyPercent}% da nota máxima)` : ''}
+                  {unit === 'questao' ? ` · ${stat.itemCount} ${stat.itemCount === 1 ? 'resposta' : 'respostas'} de alunos` : ''}
+                  {' · '}{stat.insufficientSample ? 'amostra baixa' : CONFIDENCE_LABELS[stat.confidence]}
                 </p>
               )}
             </div>
@@ -927,7 +937,7 @@ function SoloLevelBars({ title, subtitle, levels, order }: { title: string; subt
 }
 
 function SoloDashboard({ data }: { data: SoloDashboardData }) {
-  const hasExpected = data.expected.summary.classifiedItemCount > 0
+  const hasExpected = data.expected.summary.classifiedQuestionCount > 0
   const hasObserved = data.observed.summary.classifiedAnswerCount > 0
 
   return (
@@ -949,8 +959,8 @@ function SoloDashboard({ data }: { data: SoloDashboardData }) {
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatTile label="Questões com nível planejado" value={data.expected.summary.classifiedItemCount} />
-        <StatTile label="Questões sem nível planejado" value={data.expected.summary.unclassifiedItemCount} />
+        <StatTile label="Questões com nível planejado" value={data.expected.summary.classifiedQuestionCount} />
+        <StatTile label="Questões sem nível planejado" value={data.expected.summary.unclassifiedQuestionCount} />
         <StatTile label="Respostas discursivas analisadas" value={data.observed.summary.classifiedAnswerCount} />
         <StatTile label="Respostas discursivas sem análise" value={data.observed.summary.unclassifiedDiscursiveAnswerCount} />
       </div>
@@ -962,6 +972,7 @@ function SoloDashboard({ data }: { data: SoloDashboardData }) {
             subtitle="Mostra o nível de organização do conhecimento exigido pela questão, tanto objetiva quanto discursiva."
             levels={data.expected.levels}
             order={SOLO_EXPECTED_ORDER}
+            unit="questao"
           />
         ) : (
           <p className="rounded bg-surface-subtle px-3 py-2 text-xs text-content-muted">Nenhuma questão possui nível de complexidade planejado nesta amostra.</p>
@@ -973,6 +984,7 @@ function SoloDashboard({ data }: { data: SoloDashboardData }) {
             subtitle="Mostra como o aluno organizou o conhecimento nas respostas discursivas; questões objetivas não entram nesta leitura."
             levels={data.observed.levels}
             order={SOLO_OBSERVED_ORDER}
+            unit="resposta"
           />
         ) : (
           <p className="rounded bg-surface-subtle px-3 py-2 text-xs text-content-muted">Nenhuma resposta discursiva possui análise de complexidade nesta amostra.</p>
