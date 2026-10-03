@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 03/10/2026 (teto de tokens da auditoria de qualidade no gpt-5-mini).
+> Última atualização: 03/10/2026 (teto de tokens da geração `generation/unified-*`).
 
 ## 1. Fonte da verdade
 
@@ -137,30 +137,45 @@ explicando a diferença. A API `/api/analytics/performance` não mudou. Bundle d
 `/desempenho`: 133,6 → 133,9 KiB (limite 134), sem folga para novos acréscimos
 nessa rota antes de resolver TD-018.
 
-## 2.6 Correção (03/10/2026): auditoria de qualidade devolvia resposta vazia no gpt-5-mini
+## 2.6 Registro (03/10/2026): prova #200 bloqueada na aprovação; o PR #32 não a resolve
 
-Sintoma: na aprovação, "Questão N: ausente do relatório final de qualidade" e
-auditorias `exams/question-quality-test-*` falhando com `empty_response`
-(prova #200, Inglês 2º ano; ~56% das chamadas desse tipo falharam em 3 dias,
-e a questão 3 falhou 100% das tentativas).
+A prova #200 (Inglês, 2º ano) não aprovava: "Questão N: ausente do relatório
+final de qualidade". Duas causas, apuradas em produção em 24/09, quando a
+auditoria por questão ainda era feita por um LLM (`gpt-5-mini`):
 
-Causa: `completionOptionsFor` (`structuredRepair.ts`) limitava a auditoria a
-2.400 tokens. No `gpt-5-mini` os tokens de raciocínio contam contra
-`max_completion_tokens`; essa auditoria gasta ~2,7 mil só raciocinando (~3,5 a
-4,5 mil no total), então o JSON nunca chegava. O modelo não era o problema:
-a mesma chamada com limite de 8.000 funcionou.
+1. **Relatório parcial** (segue válido no `main`). A prova nasceu sem relatório
+   porque `EXAM_AUTO_QUALITY_GATE_ENABLED=false` estava no `.env.local`. As
+   trocas manuais das questões 5 e 11 criaram um relatório só com essas duas, e
+   `qualityReportNeedsRecompute` só considera relatório *vazio*: a aprovação
+   nunca reauditava as outras dez.
+2. **Resposta vazia do auditor LLM.** 91 falhas contra 71 sucessos em
+   `exams/question-quality-test-*` em 3 dias, todas `empty_response`. O teto era
+   de 2.400 tokens e, no `gpt-5-mini`, os tokens de raciocínio contam contra
+   `max_completion_tokens` (~2,7 mil só raciocinando, ~3,5 a 4,5 mil no total).
+   A mesma chamada com 8.000 funcionou.
 
-Correção: teto de 16.000 tokens para `question-quality-test`/`exam-quality-audit`
-(é só um limite; o consumo real não muda). No DeepSeek o `max_tokens` fica
-limitado a 8.000 (`llmClient.ts`), que é o máximo já usado até hoje, para não
-quebrar se o perfil de `text_generation` voltar a ser DeepSeek.
+**O que o PR #32 fez e por que não resolve hoje.** Subiu o teto de
+`question-quality-test`/`exam-quality-audit` para 16.000 e limitou o `max_tokens`
+do DeepSeek a 8.000 (`llmClient.ts`). Mas, no `main` atual, `runQuestionQualityTest`
+é decidido pelo juiz Jev (`judgeQuestionQuality`) e nada em `src` emite esses
+contextos: o teto de 16.000 está **inerte**. O limite de 8.000 no DeepSeek segue
+valendo como proteção. A conclusão do PR de que o auditor LLM ainda estava em
+uso foi um erro de verificação (o arquivo existia, mas não foi lido no `main`).
 
-Fica de fora (não alterado): `qualityReportNeedsRecompute` só considera
-relatório *vazio*; uma prova com relatório parcial (só questões trocadas
-manualmente) nunca é reauditada na aprovação. Outros contextos de IA com teto
-baixo e que podem sofrer o mesmo problema em modelo de raciocínio:
-`generation/stage3-5` (2.400), `generation/stage2` (1.600) e o padrão de
-4.000 (inclui `exams/final-quality-audit`).
+**Estado da #200 em 03/10 (verificado só leitura).** A questão 3 está gravada com
+uma versão regenerada defeituosa (a alternativa C, o gabarito, é texto copiado do
+currículo) e o Jev a reprova. A questão 6 também é reprovada pelo Jev
+(`resposta_unica` e `gabarito`: declarado C, calculado A, confiança 73%). As
+outras dez constam no relatório gravado (do auditor antigo). Próximo passo:
+regenerar as questões 3 e 6 pela tela de revisão ("Recusar e gerar nova"), que já
+passa pelo Jev.
+
+**Pendente.**
+- Reauditar na aprovação quando o relatório existe mas não cobre todas as
+  questões (item 1 acima).
+- Remover a entrada inerte de `completionOptionsFor`, ou mantê-la caso um auditor
+  LLM volte. Se voltar num modelo de raciocínio, o teto precisa incluir os tokens
+  de raciocínio.
 
 ## 2.7 Correção (03/10/2026): "questões" da Análise SOLO eram respostas de alunos
 
@@ -183,7 +198,43 @@ KiB, **no limite** de 134: nova mudança nessa rota exige code-splitting antes
 Pendente (não alterado aqui): os painéis de Bloom e DOK também somam respostas
 de alunos sob rótulos de "itens"; vale conferir se o rótulo é claro.
 
-## 2.8 Novo (03/10/2026): filtro de tipo de questão em /desempenho
+## 2.8 Correção (03/10/2026): geração devolvia resposta vazia no gpt-5-mini (teto de 5.000 tokens)
+
+Sintoma: no lote #269 (Matemática, 8º ano, 4º bim.), a questão 6 falhou
+repetidamente com `empty_response` (~39 s cada): 5 falhas e nenhum sucesso na
+primeira consulta, e mais depois, enquanto as demais questões do mesmo job
+passavam.
+
+Dados (produção, `ai_operations`, `gpt-5-mini`, `generation/unified-*`, 14 dias):
+110 de 878 chamadas (12,5%) falharam com `empty_response`, em média 39,6 s contra
+31,5 s das que deram certo. Nas chamadas que retornaram conteúdo, os tokens de
+saída (raciocínio incluído) têm mediana 3.438, p90 4.362, p99 4.900 e máximo
+4.978: uma parede exata no teto de 5.000 (60 chamadas acima de 4.500).
+
+Causa provável: no `gpt-5-mini` os tokens de raciocínio contam contra
+`max_completion_tokens`; quando o raciocínio de uma questão passa do teto, o JSON
+nunca é emitido. É inferência: as chamadas que falham não registram tokens.
+Mesmo mecanismo da seção 2.6, em outro contexto.
+
+Correção: teto de `generation/unified-*` sobe de 5.000 para 16.000
+(`completionOptionsFor`, `structuredRepair.ts`). É só um limite, não um gasto
+fixo: chamadas que já cabiam em 5.000 não mudam, e as que estouravam o teto
+presumivelmente já consumiam ~5.000 tokens sem entregar resultado (o custo das
+chamadas que falham não é registrado). No DeepSeek o `max_tokens` continua
+limitado a 8.000 (`llmClient.ts`, PR #32).
+
+Como confirmar depois do deploy: a taxa de `empty_response` em
+`generation/unified-*` deve cair de ~12% para perto de zero, e `completion_tokens`
+das chamadas bem-sucedidas deve passar de 5.000 em alguns casos. Se continuar
+vazio, a causa é outra.
+
+Deploy: só depois de o lote em andamento terminar; reiniciar o `worker` derruba
+o job que estiver rodando.
+
+Fica de fora: os outros tetos baixos de `completionOptionsFor` (`generation/stage*`
+e o padrão de 4.000) não foram tocados; não há evidência de falha neles.
+
+## 2.9 Novo (03/10/2026): filtro de tipo de questão em /desempenho
 
 Na matriz Bloom × DOK de História do 7º ano, o 69% misturava 217 respostas
 objetivas (média 9,3 de 10; valem 0 ou 10) com 155 discursivas (média por volta
