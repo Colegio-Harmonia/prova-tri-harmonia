@@ -492,6 +492,10 @@ export async function GET(req: NextRequest) {
   const dokEvolution: Record<string, Record<string, { scoreSum: number; count: number }>> = {}
   const dokSubjectDistribution: Record<string, Record<string, number>> = {}
   const bloomDokMatrixStats: Record<string, ScoreCount> = {}
+  // Mesma matriz separada por tipo de resposta (objetiva 0/10 x discursiva com nota parcial):
+  // chaves `bloom:dok:tipo`. Os Sets contam questões distintas (prova:número), não respostas.
+  const bloomDokMatrixTypeStats: Record<string, ScoreCount> = {}
+  const bloomDokMatrixTypeQuestionKeys: Record<string, Set<string>> = {}
   const soloExpectedStats: Record<string, ScoreCount> = {}
   const soloObservedStats: Record<string, ScoreCount> = {}
   let soloExpectedClassifiedItemCount = 0
@@ -646,6 +650,9 @@ export async function GET(req: NextRequest) {
           bumpSubjectDistribution(dokSubjectDistribution, dokLevel, row.subject)
           if (BLOOM_LEVELS.includes(question.bloomLevel as BloomLevel)) {
             bumpScoreCount(bloomDokMatrixStats, `${question.bloomLevel}:${dokLevel}`, questionScore)
+            const matrixTypeKey = `${question.bloomLevel}:${dokLevel}:${answer.type}`
+            bumpScoreCount(bloomDokMatrixTypeStats, matrixTypeKey, questionScore)
+            ;(bloomDokMatrixTypeQuestionKeys[matrixTypeKey] ??= new Set()).add(`${row.examId}:${answer.questionNumber}`)
           }
 
           const dokByPeriod = (dokEvolution[dokLevel] ??= {})
@@ -885,9 +892,24 @@ export async function GET(req: NextRequest) {
       }
     }),
   }
+  const ANSWER_TYPES = ['objetiva', 'descritiva'] as const
+  const matrixTypeCell = (bloomLevel: string, dokLevel: string, type: (typeof ANSWER_TYPES)[number]) => {
+    const key = `${bloomLevel}:${dokLevel}:${type}`
+    const stat = bloomDokMatrixTypeStats[key] ?? { scoreSum: 0, count: 0 }
+    return {
+      itemCount: stat.count,
+      questionCount: bloomDokMatrixTypeQuestionKeys[key]?.size ?? 0,
+      accuracyPercent: percentFromScoreSum(stat.scoreSum, stat.count),
+      averageScore: stat.count ? Math.round((stat.scoreSum / stat.count) * 10) / 10 : null,
+      confidence: confidenceLevel(stat.count),
+      insufficientSample: stat.count < 3,
+    }
+  }
+  const bloomDokMatrixQuestionKeys = new Set(Object.values(bloomDokMatrixTypeQuestionKeys).flatMap((keys) => [...keys]))
   const bloomDokMatrix = {
     summary: {
       itemCount: Object.values(bloomDokMatrixStats).reduce((sum, stat) => sum + stat.count, 0),
+      questionCount: bloomDokMatrixQuestionKeys.size,
     },
     rows: BLOOM_LEVELS.map((bloomLevel) => ({
       bloomLevel,
@@ -902,6 +924,10 @@ export async function GET(req: NextRequest) {
           sampleSize: stat.count,
           confidence: confidenceLevel(stat.count),
           insufficientSample: stat.count < 3,
+          byType: {
+            objetiva: matrixTypeCell(bloomLevel, dokLevel, 'objetiva'),
+            descritiva: matrixTypeCell(bloomLevel, dokLevel, 'descritiva'),
+          },
         }
       }),
     })),

@@ -12,7 +12,8 @@ const ROUTE_BUDGETS_KIB: Record<string, number> = {
   // 03/10/2026: painel SOLO virou chunk sob demanda (/desempenho 134,0 -> 133,1 KiB, limite
   // baixado); o chunk novo entra no runtime do webpack (+16 bytes em toda rota), por isso
   // /desempenho/relatorio, que não tinha folga, sobe 0,1 KiB. Ver TD-018.
-  '/(app)/desempenho/page': 133.2,
+  // 03/10/2026 (2): matriz Bloom x DOK também virou chunk sob demanda, no mesmo chunk do SOLO.
+  '/(app)/desempenho/page': 132.7,
   '/(app)/desempenho/relatorio/page': 125.1,
   '/(app)/desempenho/simulado-enem/page': 240,
   '/(app)/desempenho/simulado-enem/sae/page': 240,

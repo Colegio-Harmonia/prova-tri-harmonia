@@ -1,21 +1,6 @@
 'use client'
 
-// Cópias locais de StatTile/CONFIDENCE_LABELS: evitam um módulo compartilhado novo, que
-// altera a divisão de chunks e estoura o orçamento de /desempenho/relatorio (125 KiB, sem folga).
-function StatTile({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="rounded border border-border bg-surface p-4">
-      <p className="text-sm text-content-muted">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-content-primary">{value}</p>
-    </div>
-  )
-}
-
-const CONFIDENCE_LABELS: Record<'baixa' | 'media' | 'alta', string> = {
-  baixa: 'Confiança baixa',
-  media: 'Confiança média',
-  alta: 'Confiança alta',
-}
+import { CONFIDENCE_LABELS, StatTile } from './reportPrimitives'
 
 export type SoloLevelStats = {
   level: string
