@@ -6,11 +6,13 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createColumnHelper } from '@tanstack/react-table'
 import { DataTable, type DataTableFeatures } from '@/components/ui/data-table'
 import type { SemanticOrganizationView } from '@/components/reports/SemanticOrganizationCard'
+import { BLOOM_LABELS, BLOOM_ORDER, CONFIDENCE_LABELS, DOK_LABELS, DOK_ORDER, StatTile } from './reportPrimitives'
+import type { BloomDokMatrixData } from './BloomDokMatrix'
 import type { SoloDashboardData } from './SoloDashboard'
 
 const SemanticOrganizationCard = lazy(() => import('@/components/reports/SemanticOrganizationCard'))
-// Painel SOLO só aparece na visão Bloom: carregado sob demanda para manter o bundle de /desempenho dentro do orçamento.
-const SoloDashboard = lazy(() => import('./SoloDashboard'))
+// Matriz Bloom × DOK e painel SOLO só aparecem na visão Bloom: carregados sob demanda para manter o bundle de /desempenho dentro do orçamento.
+const BloomLowerPanels = lazy(() => import('./BloomLowerPanels'))
 
 type GroupStats = Record<string, { avg: number | null; count: number }>
 type BloomStats = {
@@ -81,20 +83,6 @@ type InepAxisDashboardData = {
   summary: { classifiedItemCount: number; unclassifiedEnemItemCount: number; officialQuestionCount: number; officialClassifiedQuestionCount: number; alignedGeneratedQuestionCount: number; evaluatedAnswerCount: number }
   axes: InepAxisStats[]
 }
-type BloomDokCell = {
-  bloomLevel: string
-  dokLevel: string
-  itemCount: number
-  equivalentCorrect: number
-  accuracyPercent: number | null
-  sampleSize: number
-  confidence: 'baixa' | 'media' | 'alta'
-  insufficientSample: boolean
-}
-type BloomDokMatrixData = {
-  summary: { itemCount: number }
-  rows: Array<{ bloomLevel: string; cells: BloomDokCell[] }>
-}
 type CognitiveProfile = {
   studentId: string | null
   studentName: string
@@ -146,23 +134,7 @@ function SemanticCard({ data }: { data: Performance }) {
   return <Suspense fallback={null}><SemanticOrganizationCard organization={data.semanticOrganization} coverage={data.coverage} /></Suspense>
 }
 
-const BLOOM_ORDER = ['lembrar', 'compreender', 'aplicar', 'analisar', 'avaliar', 'criar']
-const DOK_ORDER = ['DOK_1', 'DOK_2', 'DOK_3', 'DOK_4']
 const INEP_AXIS_ORDER = ['DL', 'CF', 'SP', 'CA', 'EP']
-const CONFIDENCE_LABELS: Record<BloomStats['confidence'], string> = {
-  baixa: 'Confiança baixa',
-  media: 'Confiança média',
-  alta: 'Confiança alta',
-}
-const BLOOM_LABELS: Record<string, string> = {
-  lembrar: 'Lembrar', compreender: 'Compreender', aplicar: 'Aplicar', analisar: 'Analisar', avaliar: 'Avaliar', criar: 'Criar',
-}
-const DOK_LABELS: Record<string, string> = {
-  DOK_1: 'DOK 1',
-  DOK_2: 'DOK 2',
-  DOK_3: 'DOK 3',
-  DOK_4: 'DOK 4',
-}
 const INEP_AXIS_FALLBACK: Record<string, { name: string; description: string }> = {
   DL: { name: 'Dominar Linguagens', description: 'Dominar linguagens, códigos e sistemas simbólicos.' },
   CF: { name: 'Compreender Fenômenos', description: 'Compreender fenômenos naturais, sociais, produtivos ou culturais.' },
@@ -242,15 +214,6 @@ function statusBadgeClass(status: BnccStatus) {
   if (status === 'desenvolvimento') return 'bg-status-info-surface text-status-info-content'
   if (status === 'intervencao') return 'bg-status-danger-surface text-status-danger-content'
   return 'bg-status-warning-surface text-status-warning-content'
-}
-
-function StatTile({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="rounded border border-border bg-surface p-4">
-      <p className="text-sm text-content-muted">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-content-primary">{value}</p>
-    </div>
-  )
 }
 
 function ReportReading({ overall, bySubject }: { overall: Performance['overall']; bySubject: GroupStats }) {
@@ -763,100 +726,6 @@ function InepAxisDashboard({ data }: { data: InepAxisDashboardData }) {
   )
 }
 
-function matrixCellClass(accuracyPercent: number | null, insufficientSample: boolean) {
-  if (accuracyPercent === null) return 'bg-surface text-content-muted'
-  if (insufficientSample) return 'bg-status-warning-surface text-status-warning-content'
-  if (accuracyPercent >= 80) return 'bg-status-success-surface text-status-success-content'
-  if (accuracyPercent >= 60) return 'bg-status-info-surface text-status-info-content'
-  return 'bg-status-danger-surface text-status-danger-content'
-}
-
-function BloomDokMatrix({ data }: { data: BloomDokMatrixData }) {
-  const rows = BLOOM_ORDER.map((level) => data.rows.find((row) => row.bloomLevel === level) ?? {
-    bloomLevel: level,
-    cells: DOK_ORDER.map((dokLevel) => ({
-      bloomLevel: level,
-      dokLevel,
-      itemCount: 0,
-      equivalentCorrect: 0,
-      accuracyPercent: null,
-      sampleSize: 0,
-      confidence: 'baixa' as const,
-      insufficientSample: true,
-    })),
-  })
-
-  return (
-    <div className="rounded border border-border bg-surface p-4">
-      <div className="flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <p className="text-sm font-medium text-content-primary">Matriz Bloom × DOK</p>
-          <p className="mt-1 text-xs text-content-muted">
-            Cruza processo cognitivo da questão com profundidade DOK; células com menos de 3 itens não geram conclusão.
-          </p>
-        </div>
-        <span className="text-xs text-content-muted">{data.summary.itemCount} itens classificados na matriz</span>
-      </div>
-
-      {data.summary.itemCount === 0 ? (
-        <p className="mt-4 rounded bg-surface-subtle px-3 py-2 text-xs text-content-muted">
-          Nenhum item com Bloom e DOK disponível nas correções revisadas desta amostra.
-        </p>
-      ) : (
-        <div className="mt-4 overflow-x-auto">
-          <table className="min-w-full border-separate border-spacing-1 text-left text-xs">
-            <thead>
-              <tr>
-                <th className="w-32 px-2 py-1 text-content-muted">Bloom</th>
-                {DOK_ORDER.map((dokLevel) => (
-                  <th key={dokLevel} className="px-2 py-1 text-center font-medium text-content-secondary">{DOK_LABELS[dokLevel]}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.bloomLevel}>
-                  <th className="rounded bg-surface-subtle px-2 py-2 font-medium text-content-secondary">{BLOOM_LABELS[row.bloomLevel] ?? row.bloomLevel}</th>
-                  {DOK_ORDER.map((dokLevel) => {
-                    const cell = row.cells.find((candidate) => candidate.dokLevel === dokLevel) ?? {
-                      bloomLevel: row.bloomLevel,
-                      dokLevel,
-                      itemCount: 0,
-                      equivalentCorrect: 0,
-                      accuracyPercent: null,
-                      sampleSize: 0,
-                      confidence: 'baixa' as const,
-                      insufficientSample: true,
-                    }
-
-                    return (
-                      <td key={`${row.bloomLevel}-${dokLevel}`} className={`min-w-28 rounded px-2 py-2 text-center ${matrixCellClass(cell.accuracyPercent, cell.insufficientSample)}`}>
-                        <p className="text-sm font-semibold">
-                          {cell.accuracyPercent ?? '—'}{cell.accuracyPercent !== null ? '%' : ''}
-                        </p>
-                        <p className="mt-0.5 text-[11px] opacity-80">{cell.itemCount} item(ns)</p>
-                        {cell.itemCount > 0 && (
-                          <p className="mt-0.5 text-[11px] opacity-70">
-                            {cell.insufficientSample ? 'amostra baixa' : CONFIDENCE_LABELS[cell.confidence]}
-                          </p>
-                        )}
-                      </td>
-                    )
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <p className="mt-3 text-xs text-content-muted">
-        Leitura prática: compare uma mesma linha entre DOKs. Se “Aplicar” cai de DOK 2 para DOK 3 com amostra suficiente, há sinal de dificuldade quando a profundidade aumenta.
-      </p>
-    </div>
-  )
-}
-
 function CognitiveProfiles({ profiles, studentSearch, reportQuery }: { profiles: CognitiveProfile[]; studentSearch: string; reportQuery: string }) {
   const normalizedSearch = studentSearch.trim().toLocaleLowerCase('pt-BR')
   const visibleProfiles = normalizedSearch
@@ -1303,8 +1172,7 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
 
       {activeView === 'bloom' && <>
         <BloomDashboard data={data.bloomDashboard} />
-        <BloomDokMatrix data={data.bloomDokMatrix} />
-        <Suspense fallback={null}><SoloDashboard data={data.soloDashboard} /></Suspense>
+        <Suspense fallback={null}><BloomLowerPanels matrix={data.bloomDokMatrix} solo={data.soloDashboard} /></Suspense>
       </>}
       {activeView === 'dok' && <DokDashboard data={data.dokDashboard} />}
       {activeView === 'bncc' && <>

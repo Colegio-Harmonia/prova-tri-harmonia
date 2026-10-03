@@ -259,6 +259,29 @@ soma 16 bytes ao runtime do webpack de toda rota; `/desempenho/relatorio`, que
 estava sem folga em 125,0, teve o limite elevado para 125,1 (registrado em
 TD-018).
 
+## 2.10 Mudança (03/10/2026): matriz Bloom × DOK com objetivas e discursivas lado a lado
+
+O filtro de tipo (2.9) exige que a pessoa escolha; o padrão continuava mostrando a
+média única misturada (69% · 372 itens em História 7º ano, onde objetivas fecham em
+93% e discursivas em ~35%). Agora a matriz abre **sempre separada**: cada DOK tem duas
+colunas (Objetivas | Discursivas) e cada metade mostra seu próprio percentual, número
+de **questões distintas**, número de **respostas** e confiança; metade sem resposta
+mostra "sem respostas". O cabeçalho passa a dizer "N questões · M respostas".
+
+API: cada célula de `bloomDokMatrix` ganha `byType.{objetiva,descritiva}` (itemCount =
+respostas, questionCount = questões distintas, accuracyPercent, averageScore,
+confidence, insufficientSample) e o resumo ganha `questionCount`. Os campos combinados
+antigos foram mantidos por compatibilidade, mas a tela não os exibe mais. O filtro de
+tipo continua valendo: com ele ativo, a metade do outro tipo fica vazia.
+
+Código: `BloomDokMatrix.tsx` (novo) vai no mesmo chunk sob demanda do SOLO
+(`BloomLowerPanels.tsx`), sem chunk adicional; constantes e `StatTile` compartilhados em
+`reportPrimitives.tsx`. `/desempenho` 133,1 → 132,6 KiB (limite 132,7). Teste de
+renderização: `npm run test:bloom-dok-matrix` (entra no `test:regression`).
+
+Não alterado: Bloom, DOK, BNCC e perfis ainda mostram a média única e contam "itens"
+como respostas; só a matriz Bloom × DOK foi separada por tipo.
+
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 
 - `main` = `45c0b12` (PR #14), sincronizado com produção. O PR #13 atualizou
