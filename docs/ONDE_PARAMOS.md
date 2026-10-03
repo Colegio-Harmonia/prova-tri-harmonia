@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 03/10/2026 (geração a partir do planejamento interno, em teste).
+> Última atualização: 03/10/2026 (instrução de LaTeX no pipeline unificado).
 
 ## 1. Fonte da verdade
 
@@ -316,6 +316,30 @@ campo vive no JSON do payload.
 Como avaliar o teste: gerar com `curriculumPlanId` e comparar com os lotes
 anteriores do mesmo recorte (#268 e #269, ambos em erro), principalmente a taxa
 de reprovação do Jev e dos gates nas questões do capítulo de circunferências.
+
+## 2.12 Correção (03/10/2026): fórmulas em ASCII no pipeline unificado
+
+Sintoma: na prova #393 (Matemática, 8º ano), o texto de apoio da questão 10
+apareceu como `(c/2)^2 + d^2 = r^2`, texto puro com circunflexo, em vez de
+fórmula tipografada. Em 3 das 12 questões (2, 9 e 10) havia expoente em ASCII;
+só a questão 4 veio em LaTeX.
+
+Causa: o sistema já renderiza LaTeX (`src/lib/math/latexRender.ts`, KaTeX), mas
+só trechos delimitados por `$...$`. A instrução que manda a IA delimitar as
+fórmulas (`buildMathNotationInstruction`) existia só nos prompts antigos
+(`promptBuilder.ts`). O prompt do pipeline unificado (`buildUnifiedPrompt`, em
+`unifiedRunner.ts`), que gera as provas hoje, não tinha nenhuma menção a LaTeX,
+e `mathTextIntegrity.ts` só corrige LaTeX já delimitado: não converte ASCII.
+
+Correção: a instrução foi para `src/lib/math/notationInstruction.ts`
+(texto idêntico) e passou a ser usada pelos dois prompts. `buildUnifiedPrompt`
+agora é exportada para ter teste.
+
+Fica de fora: provas já geradas não mudam (a #393 continua com ASCII nas
+questões 2, 9 e 10 até serem editadas ou regeneradas), e não há conversão
+automática de ASCII para LaTeX: a correção depende de o modelo obedecer à
+instrução. Se ainda escapar ASCII, o próximo passo é um normalizador
+determinístico, com cuidado para não alterar texto que não é fórmula.
 
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 
