@@ -234,6 +234,31 @@ o job que estiver rodando.
 Fica de fora: os outros tetos baixos de `completionOptionsFor` (`generation/stage*`
 e o padrão de 4.000) não foram tocados; não há evidência de falha neles.
 
+## 2.9 Novo (03/10/2026): filtro de tipo de questão em /desempenho
+
+Na matriz Bloom × DOK de História do 7º ano, o 69% misturava 217 respostas
+objetivas (média 9,3 de 10; valem 0 ou 10) com 155 discursivas (média por volta
+de 3,5; nota parcial). A média única escondia que a turma foi bem nas objetivas
+e mal nas discursivas, e mudaria só pela proporção de cada tipo na prova.
+
+Novo parâmetro `answerType` (`objetiva` | `descritiva`; outro valor dá 400) em
+`/api/analytics/performance` e seletor "Tipo de questão" na tela. O filtro é
+aplicado no laço por resposta, então vale para todos os painéis por questão:
+Bloom, DOK, matriz Bloom × DOK, BNCC, eixos INEP, SOLO, perfis cognitivos e
+questões mais erradas. **Não** vale para notas por prova (desempenho geral, por
+disciplina, série, professor, turma, coordenação e escola), que seguem sendo da
+prova inteira; a tela avisa isso quando o filtro está ativo. Padrão continua
+"objetivas e discursivas".
+
+Não alterado: os rótulos "itens" de Bloom/DOK/BNCC/matriz ainda contam respostas
+de alunos, não questões distintas (só o SOLO esperado foi corrigido, 2.7).
+
+Bundle: o painel SOLO virou chunk sob demanda (`SoloDashboard.tsx`), levando
+`/desempenho` de 134,0 para 133,1 KiB (limite baixado para 133,2). O chunk novo
+soma 16 bytes ao runtime do webpack de toda rota; `/desempenho/relatorio`, que
+estava sem folga em 125,0, teve o limite elevado para 125,1 (registrado em
+TD-018).
+
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 
 - `main` = `45c0b12` (PR #14), sincronizado com produção. O PR #13 atualizou

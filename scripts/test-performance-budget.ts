@@ -9,8 +9,11 @@ const ROUTE_BUDGETS_KIB: Record<string, number> = {
   '/(app)/dashboard/page': 300,
   // Dívida registrada em 30/09/2026 (docs/tech-debt.md): limites elevados ao
   // tamanho medido; meta é voltar a 125/120/130 com code-splitting. Não aumentar.
-  '/(app)/desempenho/page': 134,
-  '/(app)/desempenho/relatorio/page': 125,
+  // 03/10/2026: painel SOLO virou chunk sob demanda (/desempenho 134,0 -> 133,1 KiB, limite
+  // baixado); o chunk novo entra no runtime do webpack (+16 bytes em toda rota), por isso
+  // /desempenho/relatorio, que não tinha folga, sobe 0,1 KiB. Ver TD-018.
+  '/(app)/desempenho/page': 133.2,
+  '/(app)/desempenho/relatorio/page': 125.1,
   '/(app)/desempenho/simulado-enem/page': 240,
   '/(app)/desempenho/simulado-enem/sae/page': 240,
   '/(app)/gerar/page': 120,

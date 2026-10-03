@@ -6,8 +6,11 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createColumnHelper } from '@tanstack/react-table'
 import { DataTable, type DataTableFeatures } from '@/components/ui/data-table'
 import type { SemanticOrganizationView } from '@/components/reports/SemanticOrganizationCard'
+import type { SoloDashboardData } from './SoloDashboard'
 
 const SemanticOrganizationCard = lazy(() => import('@/components/reports/SemanticOrganizationCard'))
+// Painel SOLO só aparece na visão Bloom: carregado sob demanda para manter o bundle de /desempenho dentro do orçamento.
+const SoloDashboard = lazy(() => import('./SoloDashboard'))
 
 type GroupStats = Record<string, { avg: number | null; count: number }>
 type BloomStats = {
@@ -92,22 +95,6 @@ type BloomDokMatrixData = {
   summary: { itemCount: number }
   rows: Array<{ bloomLevel: string; cells: BloomDokCell[] }>
 }
-type SoloLevelStats = {
-  level: string
-  itemCount: number
-  /** Questões distintas no nível; só existe no SOLO esperado (itemCount conta respostas). */
-  questionCount: number | null
-  equivalentCorrect: number
-  accuracyPercent: number | null
-  averageScore: number | null
-  confidence: 'baixa' | 'media' | 'alta'
-  sampleSize: number
-  insufficientSample: boolean
-}
-type SoloDashboardData = {
-  expected: { summary: { classifiedItemCount: number; unclassifiedItemCount: number; classifiedQuestionCount: number; unclassifiedQuestionCount: number }; levels: SoloLevelStats[] }
-  observed: { summary: { classifiedAnswerCount: number; unclassifiedDiscursiveAnswerCount: number }; levels: SoloLevelStats[] }
-}
 type CognitiveProfile = {
   studentId: string | null
   studentName: string
@@ -153,7 +140,7 @@ type Intervention = { id: number; segment: string; gradeYear: number; subject: s
 type UserOption = { id: number; name: string }
 type FilterRow = { examId: number; segment: string; gradeYear: number; subject: string; academicYear: number; bimester: number | null; classroomCourseId: string | null; assignedTo: number | null }
 type CourseOption = { id: string; name: string; section?: string | null }
-type Filters = { subject: string; gradeYear: string; segment: string; assignedTo: string; academicYear: string; bimester: string; classroomCourseId: string; examId: string }
+type Filters = { subject: string; gradeYear: string; segment: string; assignedTo: string; academicYear: string; bimester: string; classroomCourseId: string; examId: string; answerType: string }
 
 function SemanticCard({ data }: { data: Performance }) {
   return <Suspense fallback={null}><SemanticOrganizationCard organization={data.semanticOrganization} coverage={data.coverage} /></Suspense>
@@ -162,8 +149,11 @@ function SemanticCard({ data }: { data: Performance }) {
 const BLOOM_ORDER = ['lembrar', 'compreender', 'aplicar', 'analisar', 'avaliar', 'criar']
 const DOK_ORDER = ['DOK_1', 'DOK_2', 'DOK_3', 'DOK_4']
 const INEP_AXIS_ORDER = ['DL', 'CF', 'SP', 'CA', 'EP']
-const SOLO_EXPECTED_ORDER = ['UNIESTRUTURAL', 'MULTIESTRUTURAL', 'RELACIONAL', 'ABSTRATO_AMPLIADO']
-const SOLO_OBSERVED_ORDER = ['PRE_ESTRUTURAL', 'UNIESTRUTURAL', 'MULTIESTRUTURAL', 'RELACIONAL', 'ABSTRATO_AMPLIADO']
+const CONFIDENCE_LABELS: Record<BloomStats['confidence'], string> = {
+  baixa: 'Confiança baixa',
+  media: 'Confiança média',
+  alta: 'Confiança alta',
+}
 const BLOOM_LABELS: Record<string, string> = {
   lembrar: 'Lembrar', compreender: 'Compreender', aplicar: 'Aplicar', analisar: 'Analisar', avaliar: 'Avaliar', criar: 'Criar',
 }
@@ -179,18 +169,6 @@ const INEP_AXIS_FALLBACK: Record<string, { name: string; description: string }> 
   SP: { name: 'Enfrentar Situações-Problema', description: 'Selecionar e relacionar dados para resolver situações-problema.' },
   CA: { name: 'Construir Argumentação', description: 'Construir argumentação consistente com base em informações e conhecimentos.' },
   EP: { name: 'Elaborar Propostas', description: 'Elaborar propostas de intervenção considerando valores humanos e diversidade.' },
-}
-const SOLO_LABELS: Record<string, string> = {
-  PRE_ESTRUTURAL: 'Pré-estrutural',
-  UNIESTRUTURAL: 'Uniestrutural',
-  MULTIESTRUTURAL: 'Multiestrutural',
-  RELACIONAL: 'Relacional',
-  ABSTRATO_AMPLIADO: 'Abstrato ampliado',
-}
-const CONFIDENCE_LABELS: Record<BloomStats['confidence'], string> = {
-  baixa: 'Confiança baixa',
-  media: 'Confiança média',
-  alta: 'Confiança alta',
 }
 const BNCC_STATUS_LABELS: Record<BnccStatus, string> = {
   dominio: 'Domínio',
@@ -879,121 +857,6 @@ function BloomDokMatrix({ data }: { data: BloomDokMatrixData }) {
   )
 }
 
-function SoloLevelBars({ title, subtitle, levels, order, unit }: { title: string; subtitle: string; levels: SoloLevelStats[]; order: string[]; unit: 'questao' | 'resposta' }) {
-  const orderedLevels = order.map((level) => levels.find((stat) => stat.level === level) ?? {
-    level,
-    itemCount: 0,
-    questionCount: null,
-    equivalentCorrect: 0,
-    accuracyPercent: null,
-    averageScore: null,
-    confidence: 'baixa' as const,
-    sampleSize: 0,
-    insufficientSample: true,
-  })
-
-  // "questao" conta questões distintas (cada uma uma vez, mesmo respondida por
-  // vários alunos); "resposta" conta respostas de alunos.
-  const countOf = (stat: SoloLevelStats) => (unit === 'questao' ? stat.questionCount ?? stat.itemCount : stat.itemCount)
-  const noun = (count: number) => (unit === 'questao' ? (count === 1 ? 'questão' : 'questões') : (count === 1 ? 'resposta' : 'respostas'))
-  const total = orderedLevels.reduce((sum, stat) => sum + countOf(stat), 0)
-
-  return (
-    <div className="rounded-lg border border-border bg-surface-subtle p-3">
-      <p className="text-sm font-semibold text-content-primary">{title}</p>
-      <p className="mt-1 text-xs text-content-muted">{subtitle}</p>
-      <p className="mt-1 text-[11px] text-content-muted">
-        A barra mostra a participação do nível no total ({total} {noun(total)}); a nota média dos alunos aparece abaixo de cada nível.
-      </p>
-      <div className="mt-3 space-y-3">
-        {orderedLevels.map((stat) => {
-          const count = countOf(stat)
-          const sharePercent = total > 0 ? Math.round((count / total) * 100) : 0
-          return (
-            <div key={stat.level}>
-              <div className="flex items-center justify-between gap-3 text-xs">
-                <span className="truncate text-content-secondary">{SOLO_LABELS[stat.level] ?? stat.level}</span>
-                <span className="shrink-0 text-content-muted">
-                  {sharePercent}% · {count} {noun(count)}
-                </span>
-              </div>
-              <div className="mt-1 h-2 rounded-full bg-surface">
-                <div className="h-2 rounded-full bg-harmonia-green" style={{ width: `${sharePercent}%` }} />
-              </div>
-              {stat.itemCount > 0 && (
-                <p className="mt-1 text-[11px] text-content-muted">
-                  Nota média {stat.averageScore?.toFixed(1) ?? '—'}
-                  {stat.accuracyPercent !== null ? ` (${stat.accuracyPercent}% da nota máxima)` : ''}
-                  {unit === 'questao' ? ` · ${stat.itemCount} ${stat.itemCount === 1 ? 'resposta' : 'respostas'} de alunos` : ''}
-                  {' · '}{stat.insufficientSample ? 'amostra baixa' : CONFIDENCE_LABELS[stat.confidence]}
-                </p>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-function SoloDashboard({ data }: { data: SoloDashboardData }) {
-  const hasExpected = data.expected.summary.classifiedQuestionCount > 0
-  const hasObserved = data.observed.summary.classifiedAnswerCount > 0
-
-  return (
-    <div className="rounded border border-border bg-surface p-4">
-      <div className="flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <p className="text-sm font-medium text-content-primary">Análise SOLO</p>
-          <p className="mt-1 text-xs text-content-muted">
-            Compara a complexidade de raciocínio planejada nas questões com a estrutura demonstrada pelos alunos nas respostas discursivas.
-          </p>
-        </div>
-        <span className="text-xs text-content-muted">O nível planejado da questão não representa, por si só, aprendizagem observada.</span>
-      </div>
-
-      <div className="mt-4 rounded border border-status-info-border bg-status-info-surface p-3 text-sm text-status-info-content">
-        <p className="font-semibold">Como interpretar</p>
-        <p className="mt-1">Leia primeiro o painel da esquerda para entender o que as questões exigiam. Depois, use o painel da direita para verificar como os alunos organizaram as respostas discursivas. Compare apenas níveis com amostra suficiente.</p>
-        <p className="mt-2 text-xs">Pré-estrutural: resposta sem compreensão identificável. Uniestrutural: usa um aspecto relevante. Multiestrutural: reúne vários aspectos ainda separados. Relacional: conecta os aspectos em uma explicação coerente. Abstrato ampliado: generaliza, transfere ou formula novas relações.</p>
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatTile label="Questões com nível planejado" value={data.expected.summary.classifiedQuestionCount} />
-        <StatTile label="Questões sem nível planejado" value={data.expected.summary.unclassifiedQuestionCount} />
-        <StatTile label="Respostas discursivas analisadas" value={data.observed.summary.classifiedAnswerCount} />
-        <StatTile label="Respostas discursivas sem análise" value={data.observed.summary.unclassifiedDiscursiveAnswerCount} />
-      </div>
-
-      <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
-        {hasExpected ? (
-          <SoloLevelBars
-            title="Complexidade planejada nas questões"
-            subtitle="Mostra o nível de organização do conhecimento exigido pela questão, tanto objetiva quanto discursiva."
-            levels={data.expected.levels}
-            order={SOLO_EXPECTED_ORDER}
-            unit="questao"
-          />
-        ) : (
-          <p className="rounded bg-surface-subtle px-3 py-2 text-xs text-content-muted">Nenhuma questão possui nível de complexidade planejado nesta amostra.</p>
-        )}
-
-        {hasObserved ? (
-          <SoloLevelBars
-            title="Complexidade demonstrada nas respostas"
-            subtitle="Mostra como o aluno organizou o conhecimento nas respostas discursivas; questões objetivas não entram nesta leitura."
-            levels={data.observed.levels}
-            order={SOLO_OBSERVED_ORDER}
-            unit="resposta"
-          />
-        ) : (
-          <p className="rounded bg-surface-subtle px-3 py-2 text-xs text-content-muted">Nenhuma resposta discursiva possui análise de complexidade nesta amostra.</p>
-        )}
-      </div>
-    </div>
-  )
-}
-
 function CognitiveProfiles({ profiles, studentSearch, reportQuery }: { profiles: CognitiveProfile[]; studentSearch: string; reportQuery: string }) {
   const normalizedSearch = studentSearch.trim().toLocaleLowerCase('pt-BR')
   const visibleProfiles = normalizedSearch
@@ -1252,6 +1115,7 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
     subject: searchParams.get('subject') ?? '', gradeYear: searchParams.get('gradeYear') ?? '', segment: searchParams.get('segment') ?? '',
     assignedTo: searchParams.get('assignedTo') ?? '', academicYear: searchParams.get('academicYear') ?? '', bimester: searchParams.get('bimester') ?? '',
     classroomCourseId: searchParams.get('classroomCourseId') ?? '', examId: searchParams.get('examId') ?? '',
+    answerType: searchParams.get('answerType') === 'objetiva' || searchParams.get('answerType') === 'descritiva' ? searchParams.get('answerType') ?? '' : '',
   }))
   const [studentSearch, setStudentSearch] = useState('')
   const deferredSubject = useDeferredValue(filters.subject)
@@ -1343,6 +1207,7 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
     if (filters.bimester) params.set('bimester', filters.bimester)
     if (filters.classroomCourseId) params.set('classroomCourseId', filters.classroomCourseId)
     if (filters.examId) params.set('examId', filters.examId)
+    if (filters.answerType) params.set('answerType', filters.answerType)
     if (activeView === 'turma') params.set('s', 't')
     if (activeView === 'coordenacao') params.set('s', 'c')
     if (activeView === 'escola') params.set('s', 'e')
@@ -1357,7 +1222,7 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
       })
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSuperuser, activeView, deferredSubject, filters.gradeYear, filters.segment, filters.assignedTo, filters.academicYear, filters.bimester, filters.classroomCourseId, filters.examId])
+  }, [isSuperuser, activeView, deferredSubject, filters.gradeYear, filters.segment, filters.assignedTo, filters.academicYear, filters.bimester, filters.classroomCourseId, filters.examId, filters.answerType])
 
   if (error) return <p role="alert" className="text-sm text-status-danger-content">{error}</p>
   if (!data) return <p role="status" aria-live="polite" className="text-sm text-content-muted">Carregando…</p>
@@ -1388,8 +1253,9 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
           </select>}
           <select aria-label="Ano letivo" value={filters.academicYear} onChange={(e) => setFilter('academicYear', e.target.value)} className="rounded border border-border bg-canvas px-2 py-2 text-sm"><option value="">Todos os anos letivos</option>{permittedOptions.academicYears.map((year) => <option key={year} value={year}>{year}</option>)}</select>
           <select aria-label="Bimestre" value={filters.bimester} onChange={(e) => setFilter('bimester', e.target.value)} className="rounded border border-border bg-canvas px-2 py-2 text-sm"><option value="">Todos os bimestres</option>{[1, 2, 3, 4].map((b) => <option key={b} value={b}>{b}º bimestre</option>)}</select>
+          <select aria-label="Tipo de questão" value={filters.answerType} onChange={(e) => setFilter('answerType', e.target.value)} className="rounded border border-border bg-canvas px-2 py-2 text-sm"><option value="">Objetivas e discursivas</option><option value="objetiva">Só objetivas</option><option value="descritiva">Só discursivas</option></select>
           </div>
-          <div className="mt-3 flex justify-end"><button type="button" onClick={() => { const cleared = { subject: '', gradeYear: '', segment: '', assignedTo: '', academicYear: '', bimester: '', classroomCourseId: '', examId: '' }; setFilters(cleared); router.replace(activeView === 'geral' ? pathname : `${pathname}?visao=${activeView}`, { scroll: false }) }} className="min-h-9 rounded border border-border px-3 text-sm text-content-secondary">Limpar filtros</button></div>
+          <div className="mt-3 flex justify-end"><button type="button" onClick={() => { const cleared = { subject: '', gradeYear: '', segment: '', assignedTo: '', academicYear: '', bimester: '', classroomCourseId: '', examId: '', answerType: '' }; setFilters(cleared); router.replace(activeView === 'geral' ? pathname : `${pathname}?visao=${activeView}`, { scroll: false }) }} className="min-h-9 rounded border border-border px-3 text-sm text-content-secondary">Limpar filtros</button></div>
       </fieldset>
 
       <nav className="flex flex-wrap gap-2 border-b border-border pb-3" aria-label="Visões de desempenho">
@@ -1409,6 +1275,8 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
         <p className="text-sm text-content-secondary">Percentual de desempenho de 0% a 100%. Referência institucional: 60% ou mais. Amostras pequenas não sustentam comparação ou evolução.</p>
         <button type="button" onClick={exportCsv} className="min-h-10 rounded border border-border px-3 text-sm font-medium text-content-primary">Exportar CSV do recorte</button>
       </div>
+
+      {filters.answerType && <p role="status" className="rounded border border-status-info-border bg-status-info-surface p-3 text-sm text-status-info-content">Filtro ativo: {filters.answerType === 'objetiva' ? 'só objetivas' : 'só discursivas'}. Vale para os painéis por questão (Bloom, DOK, BNCC, SOLO, eixos INEP e perfis). Desempenho geral e comparativos por disciplina, série, professor e gestão continuam considerando a prova inteira.</p>}
 
       {!data.overall && <p className="rounded border border-border bg-surface p-4 text-sm text-content-muted">Nenhuma resposta avaliada neste recorte. Os filtros continuam disponíveis para ajustar a consulta.</p>}
 
@@ -1436,7 +1304,7 @@ export default function DesempenhoPanel({ isSuperuser }: { isSuperuser: boolean 
       {activeView === 'bloom' && <>
         <BloomDashboard data={data.bloomDashboard} />
         <BloomDokMatrix data={data.bloomDokMatrix} />
-        <SoloDashboard data={data.soloDashboard} />
+        <Suspense fallback={null}><SoloDashboard data={data.soloDashboard} /></Suspense>
       </>}
       {activeView === 'dok' && <DokDashboard data={data.dokDashboard} />}
       {activeView === 'bncc' && <>

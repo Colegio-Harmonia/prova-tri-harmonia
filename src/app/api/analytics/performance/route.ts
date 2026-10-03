@@ -248,6 +248,16 @@ export async function GET(req: NextRequest) {
   if (segment) { conditions.push(eq(generatedExams.segment, segment as Segment)); managementExamConditions.push(eq(generatedExams.segment, segment as Segment)) }
   if (classroomCourseId) { conditions.push(eq(generatedExams.classroomCourseId, classroomCourseId)); managementExamConditions.push(eq(generatedExams.classroomCourseId, classroomCourseId)) }
   if (examIdParam) { conditions.push(eq(generatedExams.id, Number(examIdParam))); managementExamConditions.push(eq(generatedExams.id, Number(examIdParam))) }
+  // Tipo de questão: restringe os painéis por questão (Bloom, DOK, BNCC, SOLO,
+  // eixos INEP, perfis) a objetivas ou a discursivas. Objetiva vale 0 ou 10 e
+  // discursiva tem nota parcial, então misturá-las numa só média esconde a
+  // diferença. Notas por prova (geral, disciplina, série, professor, gestão)
+  // seguem sendo da prova inteira.
+  const answerTypeParam = params.get('answerType')
+  if (answerTypeParam && answerTypeParam !== 'objetiva' && answerTypeParam !== 'descritiva') {
+    return performanceJson({ error: 'Tipo de questão inválido.' }, startedAt, { status: 400 })
+  }
+  const answerTypeFilter = answerTypeParam as 'objetiva' | 'descritiva' | null
   const academicYearParam = params.get('academicYear')
   const bimesterParam = params.get('bimester')
   const studentName = params.get('student')?.trim()
@@ -585,6 +595,7 @@ export async function GET(req: NextRequest) {
     }
 
     for (const answer of answers) {
+      if (answerTypeFilter && answer.type !== answerTypeFilter) continue
       const question = questionsByNumber.get(answer.questionNumber)
       if (!question) continue
 
