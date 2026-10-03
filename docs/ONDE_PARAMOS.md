@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 03/10/2026 (gates que tratavam resposta matemática como prosa).
+> Última atualização: 03/10/2026 (teto de tokens da auditoria de qualidade no gpt-5-mini).
 
 ## 1. Fonte da verdade
 
@@ -137,7 +137,32 @@ explicando a diferença. A API `/api/analytics/performance` não mudou. Bundle d
 `/desempenho`: 133,6 → 133,9 KiB (limite 134), sem folga para novos acréscimos
 nessa rota antes de resolver TD-018.
 
-## 2.6 Correção (03/10/2026): "questões" da Análise SOLO eram respostas de alunos
+## 2.6 Correção (03/10/2026): auditoria de qualidade devolvia resposta vazia no gpt-5-mini
+
+Sintoma: na aprovação, "Questão N: ausente do relatório final de qualidade" e
+auditorias `exams/question-quality-test-*` falhando com `empty_response`
+(prova #200, Inglês 2º ano; ~56% das chamadas desse tipo falharam em 3 dias,
+e a questão 3 falhou 100% das tentativas).
+
+Causa: `completionOptionsFor` (`structuredRepair.ts`) limitava a auditoria a
+2.400 tokens. No `gpt-5-mini` os tokens de raciocínio contam contra
+`max_completion_tokens`; essa auditoria gasta ~2,7 mil só raciocinando (~3,5 a
+4,5 mil no total), então o JSON nunca chegava. O modelo não era o problema:
+a mesma chamada com limite de 8.000 funcionou.
+
+Correção: teto de 16.000 tokens para `question-quality-test`/`exam-quality-audit`
+(é só um limite; o consumo real não muda). No DeepSeek o `max_tokens` fica
+limitado a 8.000 (`llmClient.ts`), que é o máximo já usado até hoje, para não
+quebrar se o perfil de `text_generation` voltar a ser DeepSeek.
+
+Fica de fora (não alterado): `qualityReportNeedsRecompute` só considera
+relatório *vazio*; uma prova com relatório parcial (só questões trocadas
+manualmente) nunca é reauditada na aprovação. Outros contextos de IA com teto
+baixo e que podem sofrer o mesmo problema em modelo de raciocínio:
+`generation/stage3-5` (2.400), `generation/stage2` (1.600) e o padrão de
+4.000 (inclui `exams/final-quality-audit`).
+
+## 2.7 Correção (03/10/2026): "questões" da Análise SOLO eram respostas de alunos
 
 Continuação da 2.5. No painel "Complexidade planejada nas questões", o
 "372 questões" de História do 7º ano eram **24 questões distintas** (2 provas)
