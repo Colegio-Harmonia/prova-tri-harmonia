@@ -889,29 +889,38 @@ function SoloLevelBars({ title, subtitle, levels, order }: { title: string; subt
     insufficientSample: true,
   })
 
+  const totalItems = orderedLevels.reduce((sum, stat) => sum + stat.itemCount, 0)
+
   return (
     <div className="rounded-lg border border-border bg-surface-subtle p-3">
       <p className="text-sm font-semibold text-content-primary">{title}</p>
       <p className="mt-1 text-xs text-content-muted">{subtitle}</p>
+      <p className="mt-1 text-[11px] text-content-muted">
+        A barra mostra a participação do nível no total ({totalItems} {totalItems === 1 ? 'item' : 'itens'}); a nota média aparece abaixo de cada nível.
+      </p>
       <div className="mt-3 space-y-3">
-        {orderedLevels.map((stat) => (
-          <div key={stat.level}>
-            <div className="flex items-center justify-between gap-3 text-xs">
-              <span className="truncate text-content-secondary">{SOLO_LABELS[stat.level] ?? stat.level}</span>
-              <span className="shrink-0 text-content-muted">
-                {stat.accuracyPercent ?? '—'}{stat.accuracyPercent !== null ? '%' : ''} · {stat.itemCount}
-              </span>
+        {orderedLevels.map((stat) => {
+          const sharePercent = totalItems > 0 ? Math.round((stat.itemCount / totalItems) * 100) : 0
+          return (
+            <div key={stat.level}>
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="truncate text-content-secondary">{SOLO_LABELS[stat.level] ?? stat.level}</span>
+                <span className="shrink-0 text-content-muted">
+                  {sharePercent}% · {stat.itemCount} {stat.itemCount === 1 ? 'item' : 'itens'}
+                </span>
+              </div>
+              <div className="mt-1 h-2 rounded-full bg-surface">
+                <div className="h-2 rounded-full bg-harmonia-green" style={{ width: `${sharePercent}%` }} />
+              </div>
+              {stat.itemCount > 0 && (
+                <p className="mt-1 text-[11px] text-content-muted">
+                  Nota média {stat.averageScore?.toFixed(1) ?? '—'}
+                  {stat.accuracyPercent !== null ? ` (${stat.accuracyPercent}% da nota máxima)` : ''} · {stat.insufficientSample ? 'amostra baixa' : CONFIDENCE_LABELS[stat.confidence]}
+                </p>
+              )}
             </div>
-            <div className="mt-1 h-2 rounded-full bg-surface">
-              <div className="h-2 rounded-full bg-harmonia-green" style={{ width: `${stat.accuracyPercent ?? 0}%` }} />
-            </div>
-            {stat.itemCount > 0 && (
-              <p className="mt-1 text-[11px] text-content-muted">
-                Média {stat.averageScore?.toFixed(1) ?? '—'} · {stat.insufficientSample ? 'amostra baixa' : CONFIDENCE_LABELS[stat.confidence]}
-              </p>
-            )}
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
