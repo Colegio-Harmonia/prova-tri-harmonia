@@ -486,6 +486,11 @@ export async function GET(req: NextRequest) {
   const soloObservedStats: Record<string, ScoreCount> = {}
   let soloExpectedClassifiedItemCount = 0
   let soloExpectedUnclassifiedItemCount = 0
+  // Questões distintas (prova:número) por nível: cada questão conta uma vez,
+  // não uma vez por aluno que a respondeu. Os stats acima seguem contando
+  // respostas, que é o que sustenta a nota média.
+  const soloExpectedQuestionKeysByLevel: Record<string, Set<string>> = {}
+  const soloExpectedUnclassifiedQuestionKeys = new Set<string>()
   let soloObservedClassifiedAnswerCount = 0
   let soloObservedUnclassifiedDiscursiveAnswerCount = 0
   const bnccSkills = new Map<string, BnccSkillAccumulator>()
@@ -601,12 +606,15 @@ export async function GET(req: NextRequest) {
         periodStats.scoreSum += questionScore
         periodStats.count++
 
-        const soloExpectedLevel = soloExpectedByQuestion.get(`${row.examId}:${answer.questionNumber}`) ?? question.pedagogicalClassification?.soloExpected.categoryCode
+        const soloExpectedQuestionKey = `${row.examId}:${answer.questionNumber}`
+        const soloExpectedLevel = soloExpectedByQuestion.get(soloExpectedQuestionKey) ?? question.pedagogicalClassification?.soloExpected.categoryCode
         if (soloExpectedLevel && SOLO_EXPECTED_LEVELS.includes(soloExpectedLevel as SoloExpectedLevel)) {
           bumpScoreCount(soloExpectedStats, soloExpectedLevel, questionScore)
           soloExpectedClassifiedItemCount++
+          ;(soloExpectedQuestionKeysByLevel[soloExpectedLevel] ??= new Set()).add(soloExpectedQuestionKey)
         } else {
           soloExpectedUnclassifiedItemCount++
+          soloExpectedUnclassifiedQuestionKeys.add(soloExpectedQuestionKey)
         }
 
         if (answer.type === 'descritiva') {
@@ -887,12 +895,17 @@ export async function GET(req: NextRequest) {
       }),
     })),
   }
-  const mapSoloLevels = (levels: readonly string[], stats: Record<string, ScoreCount>) =>
+  const mapSoloLevels = (
+    levels: readonly string[],
+    stats: Record<string, ScoreCount>,
+    questionKeysByLevel?: Record<string, Set<string>>,
+  ) =>
     levels.map((level) => {
       const stat = stats[level] ?? { scoreSum: 0, count: 0 }
       return {
         level,
         itemCount: stat.count,
+        questionCount: questionKeysByLevel ? (questionKeysByLevel[level]?.size ?? 0) : null,
         equivalentCorrect: Math.round((stat.scoreSum / 10) * 10) / 10,
         accuracyPercent: percentFromScoreSum(stat.scoreSum, stat.count),
         averageScore: stat.count ? Math.round((stat.scoreSum / stat.count) * 10) / 10 : null,
@@ -907,8 +920,10 @@ export async function GET(req: NextRequest) {
       summary: {
         classifiedItemCount: soloExpectedClassifiedItemCount,
         unclassifiedItemCount: soloExpectedUnclassifiedItemCount,
+        classifiedQuestionCount: Object.values(soloExpectedQuestionKeysByLevel).reduce((sum, keys) => sum + keys.size, 0),
+        unclassifiedQuestionCount: soloExpectedUnclassifiedQuestionKeys.size,
       },
-      levels: mapSoloLevels(SOLO_EXPECTED_LEVELS, soloExpectedStats),
+      levels: mapSoloLevels(SOLO_EXPECTED_LEVELS, soloExpectedStats, soloExpectedQuestionKeysByLevel),
     },
     observed: {
       summary: {

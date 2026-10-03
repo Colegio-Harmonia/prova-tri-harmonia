@@ -162,6 +162,27 @@ baixo e que podem sofrer o mesmo problema em modelo de raciocínio:
 `generation/stage3-5` (2.400), `generation/stage2` (1.600) e o padrão de
 4.000 (inclui `exams/final-quality-audit`).
 
+## 2.7 Correção (03/10/2026): "questões" da Análise SOLO eram respostas de alunos
+
+Continuação da 2.5. No painel "Complexidade planejada nas questões", o
+"372 questões" de História do 7º ano eram **24 questões distintas** (2 provas)
+contadas uma vez por aluno que as respondeu. Verificado no banco (somente
+leitura): a classificação de `SOLO_EXPECTED` em si não está presa num nível
+(4.212 classificações correntes: Relacional 43%, Uniestrutural 37%,
+Multiestrutural 19%, Abstrato ampliado 1%); o 100% Relacional daquele recorte
+era amostra pequena e uniforme.
+
+Correção: `/api/analytics/performance` passa a devolver `questionCount` por nível
+e `classifiedQuestionCount`/`unclassifiedQuestionCount` no resumo do SOLO
+esperado (chaves `prova:número` distintas). `itemCount` continua sendo respostas
+e sustenta a nota média. O painel esquerdo agora conta questões distintas; o
+direito segue contando respostas discursivas. Bundle de `/desempenho` em 134,0
+KiB, **no limite** de 134: nova mudança nessa rota exige code-splitting antes
+(TD-018).
+
+Pendente (não alterado aqui): os painéis de Bloom e DOK também somam respostas
+de alunos sob rótulos de "itens"; vale conferir se o rótulo é claro.
+
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 
 - `main` = `45c0b12` (PR #14), sincronizado com produção. O PR #13 atualizou
