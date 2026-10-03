@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { generateValidatedStructuredContent } from '@/lib/gemini/structuredRepair'
-import { canonicalDomainsForSubject } from './domains'
+import { canonicalDomainsForSubject, type CanonicalDomainId } from './domains'
+import { domainFitsContent } from './domainFit'
 import { getRuleEngine, registeredRuleEngineIds } from './rules'
 import { TRUTH_STRATEGIES, type TruthStrategy } from './types'
 
@@ -89,7 +90,7 @@ const BLUEPRINT_RESPONSE_SCHEMA = {
 // ---------------------------------------------------------------------------
 
 /** Valida e enriquece cada slot do blueprint com dados do catálogo. */
-function validateAndEnrichBlueprint(
+export function validateAndEnrichBlueprint(
   params: BlueprintParams,
   parsed: z.infer<typeof blueprintSchema>,
 ): { slots: BlueprintSlot[]; issues: string[] } {
@@ -114,6 +115,13 @@ function validateAndEnrichBlueprint(
     if (truthStrategy === 'calculavel') {
       if (!domain || !domainIds.has(domain)) {
         issues.push(`Slot ${item.slotNumber}: domínio "${domain ?? 'ausente'}" inválido para calculável; rebaixado para fonte_ancorada.`)
+        truthStrategy = 'fonte_ancorada'
+        domain = undefined
+      } else if (domainFitsContent(domain as CanonicalDomainId, `${inputSlot.unitTitle}\n${inputSlot.curriculumContent}`) === false) {
+        // O recálculo por código só vale quando a questão pede a grandeza do domínio.
+        // Capítulo de outro assunto (ex.: triângulos em "distância entre pontos")
+        // vira questão ancorada em texto, conferida pelo juiz de qualidade.
+        issues.push(`Slot ${item.slotNumber}: domínio "${domain}" fora do assunto do capítulo; rebaixado para fonte_ancorada.`)
         truthStrategy = 'fonte_ancorada'
         domain = undefined
       }
@@ -197,7 +205,7 @@ ${engines || '(nenhum)'}
 - "interpretativa": leitura de texto/literatura.
 
 Regras:
-- Use "calculavel" APENAS se a disciplina tiver domínios listados e o capítulo envolver cálculo.
+- Use "calculavel" APENAS se o capítulo tratar explicitamente do assunto do domínio escolhido (ex.: capítulo de porcentagem → percentage). Capítulo com números mas de outro assunto, geometria conceitual (triângulos, quadriláteros, ângulos, circunferências, construções, demonstrações) e conceitos sem cálculo do catálogo usam "fonte_ancorada". NUNCA force um domínio só porque o capítulo tem números.
 - Use "regra_deterministica" APENAS para Língua Portuguesa com motores listados.
 - NUNCA invente domínio ou ruleId fora das listas.
 - Distribua dificuldade: ~30% fácil, ~50% média, ~20% difícil.
