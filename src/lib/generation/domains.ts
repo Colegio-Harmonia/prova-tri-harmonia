@@ -12,6 +12,7 @@
  * Gate 0 consulta `hasCanonicalDomain`; o que não tem recalculador não pode
  * ser selecionado.
  */
+import { NUMBER_TOKEN, parseNumberToken } from './similarity'
 
 export const CANONICAL_DOMAIN_IDS = [
   'linear_system',
@@ -635,8 +636,6 @@ export function computeCanonicalDomain(id: CanonicalDomainId, values: Record<str
 }
 
 export function comparableNumber(value: string): number | null {
-  const match = value.replace(/\./g, '').replace(',', '.').match(/-?\d+(?:\.\d+)?/)
-  if (!match) return null
-  const parsed = Number(match[0])
-  return Number.isFinite(parsed) ? parsed : null
+  const token = value.match(NUMBER_TOKEN)?.[0]
+  return token ? parseNumberToken(token) : null
 }

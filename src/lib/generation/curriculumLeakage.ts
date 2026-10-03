@@ -73,6 +73,9 @@ function contentStems(text: string): string[] {
 
 /** Resposta curta cujos termos já estão quase todos na própria pergunta. */
 function isTautological(answer: string, statement: string): boolean {
+  // Resposta com número ou equação ("y = 2x - 1") traz o resultado em símbolos de
+  // 1-3 letras que contentStems ignora; não é repetição da pergunta.
+  if (/[\d=]/.test(answer)) return false
   const answerStems = contentStems(answer)
   if (answerStems.length < 2 || answerStems.length > 5) return false
   const statementStems = new Set(contentStems(statement))

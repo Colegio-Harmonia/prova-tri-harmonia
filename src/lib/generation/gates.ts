@@ -148,9 +148,19 @@ export function gateAnchoredClaim(supportText: string | null | undefined, truth:
   if (evidence.length < 8) {
     throw new StageGateError('stage1', 'evidence_missing', 'A evidência ancorada está vazia ou curta demais; cite 1–2 frases do texto de apoio que sustentam a resposta.')
   }
-  if (!support.includes(evidence)) {
+  if (!support.includes(evidence) && !everySentenceIsLiteral(truth.sourceEvidence ?? truth.textEvidence ?? '', support)) {
     throw new StageGateError('stage1', 'evidence_not_found', 'A evidência citada não existe literalmente no texto de apoio escrito para a questão; copie palavra por palavra uma frase do próprio texto de apoio.')
   }
+}
+
+/**
+ * A IA costuma citar duas frases do apoio saltando a do meio. Cada frase é
+ * citação literal, mesmo sem ser um trecho contíguo; o que o gate quer barrar é
+ * evidência inventada, e isso continua barrado (qualquer frase fora do apoio reprova).
+ */
+function everySentenceIsLiteral(evidence: string, normalizedSupport: string): boolean {
+  const sentences = evidence.split(/(?<=[.!?])\s+/).map(normalize).filter((sentence) => sentence.length >= 8)
+  return sentences.length > 0 && sentences.every((sentence) => normalizedSupport.includes(sentence))
 }
 
 function numericTokens(text: string): number[] {

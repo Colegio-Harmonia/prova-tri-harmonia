@@ -14,6 +14,22 @@ export type AlternativeAmbiguity = {
 const DEFENSIBLE_JACCARD = 0.8
 const NEGATIONS = ['nao', 'nunca', 'jamais', 'nenhum', 'nenhuma', 'sem']
 
+/**
+ * "Esqueleto" matemático: a alternativa sem as palavras (3+ letras), só dígitos,
+ * sinais, operadores e variáveis. Duas alternativas com o mesmo vocabulário mas
+ * esqueleto diferente ("y = -x + 2…coef. -1" vs "y = x + 2…coef. 1") são respostas
+ * distintas, não "a mesma resposta escrita de outro jeito".
+ */
+function mathSkeleton(text: string): string {
+  return text.toLowerCase().replace(/[a-zà-ú]{3,}/g, '').replace(/\s+/g, '')
+}
+
+function differInMath(first: string, second: string): boolean {
+  const a = mathSkeleton(first)
+  const b = mathSkeleton(second)
+  return /\d/.test(a) && /\d/.test(b) && a !== b
+}
+
 function hasNegation(text: string): boolean {
   return tokenize(text).has('nao') || NEGATIONS.some((word) => normalizeOption(text).includes(` ${word} `))
 }
@@ -45,7 +61,7 @@ export function detectAlternativeAmbiguities(alternatives: AlternativeLike[]): A
 
       const similarity = jaccard(tokenize(a.text), tokenize(b.text))
       const longEnough = tokenize(a.text).size >= 4 && tokenize(b.text).size >= 4
-      if (longEnough && similarity >= DEFENSIBLE_JACCARD) {
+      if (longEnough && similarity >= DEFENSIBLE_JACCARD && !differInMath(a.text, b.text)) {
         issues.push({ first: a.letter, second: b.letter, severity: 'bloqueante', reason: `Alternativas ${a.letter} e ${b.letter} são praticamente equivalentes (${Math.round(similarity * 100)}% de termos em comum); há mais de uma resposta defensável.` })
         continue
       }
