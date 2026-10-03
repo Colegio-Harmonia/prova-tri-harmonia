@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 02/10/2026 (resposta-modelo das descritivas calculáveis e reparo de formato das alternativas).
+> Última atualização: 03/10/2026 (domínio calculável fora do assunto do capítulo).
 
 ## 1. Fonte da verdade
 
@@ -74,6 +74,28 @@ irracional exibido com 6 casas, enunciado pedindo expressão algébrica, gabarit
 com duas respostas) reprovaram 0/3 na amostra, por defeitos de geração que não
 são deste PR; o reparo local de formato não foi exercitado com IA real (só em teste
 unitário).
+
+## 2.3 Correção (03/10/2026): domínio calculável fora do assunto do capítulo
+
+Lote #269 (Matemática, 8º ano, 4º bim.) travou na Questão 5. As 6 unidades eram
+de geometria conceitual (coordenadas, sistemas, triângulos, quadriláteros,
+circunferências, ângulos) e o plano de geração (`blueprint.ts`) mandou todas para
+`calculavel` com um domínio do catálogo (distância entre pontos, proporção…) só
+porque o capítulo "tem números". O código recalculava uma grandeza que não era a
+da questão: divergência 3 vezes seguidas, enunciado com valores fora do
+objeto-fonte ou gabarito errado (teorema da bissetriz saiu 10; o certo é 9, e só o
+Jev barrou, `fatos_corretos` 0,19).
+
+Correção: `domainFit.ts` + checagem em `validateAndEnrichBlueprint`. Se o capítulo
+não trata do assunto do domínio escolhido (palavras-chave tolerantes, sem acento),
+o slot é rebaixado para `fonte_ancorada` e passa pelo juiz Jev; o prompt do plano
+também foi reforçado. Só os domínios de Matemática têm regra; Física e Química
+seguem sem verificação.
+
+Limite conhecido: as palavras-chave são heurística. Capítulo que trate do assunto
+sem usar as palavras previstas perde a conferência por código e cai em
+`fonte_ancorada` (ainda conferida pelo Jev). Se isso aparecer, ampliar
+`DOMAIN_TOPICS`.
 
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 
