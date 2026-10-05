@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { JevAnswers } from './jevClient'
 import { evaluateQualityAnswers, judgeQuestionQuality } from './questionQualityDecision'
+import { MULTIPLE_CORRECT_ALTERNATIVES, NO_CORRECT_ALTERNATIVE } from './questionQualityDecision'
 
 const noul = (value: number) => ({ type: 'noul' as const, noul: value })
 const good: JevAnswers = {
   resposta_substantiva: noul(0.97), copia_escopo_curricular: noul(0.1), apoio_autossuficiente: noul(0.95),
+  resposta_exposta_enunciado: noul(0.05), informacao_suficiente: noul(0.95),
   alternativas_homogeneas: noul(0.8), resposta_unica: noul(0.95), fatos_corretos: noul(0.95), enunciado_coerente: noul(0.9),
   gabarito_independente: { type: 'choice', choice: 'A', confidence: 0.99 },
 }
@@ -39,6 +41,18 @@ describe('evaluateQualityAnswers', () => {
     const result = evaluateQualityAnswers({ type: 'objetiva', correctLetter: 'B' }, { ...good, gabarito_independente: { type: 'choice', choice: 'E', confidence: 0.96 } })
     expect(result.blocked).toBe(true)
     expect(result.answerKey).toMatchObject({ declaredLetter: 'B', independentLetter: 'E', matches: false })
+  })
+
+  it('distingue enunciado que entrega a resposta', () => {
+    const result = evaluateQualityAnswers({ type: 'objetiva', correctLetter: 'A' }, { ...good, resposta_exposta_enunciado: noul(0.91) })
+    expect(result.issues).toEqual(expect.arrayContaining([expect.objectContaining({ criterion: 'resposta_exposta_enunciado', severity: 'bloqueante' })]))
+  })
+
+  it('distingue nenhuma alternativa correta de múltiplas corretas', () => {
+    const none = evaluateQualityAnswers({ type: 'objetiva', correctLetter: 'A' }, { ...good, gabarito_independente: { type: 'choice', choice: NO_CORRECT_ALTERNATIVE, confidence: 0.94 } })
+    const multiple = evaluateQualityAnswers({ type: 'objetiva', correctLetter: 'A' }, { ...good, gabarito_independente: { type: 'choice', choice: MULTIPLE_CORRECT_ALTERNATIVES, confidence: 0.91 } })
+    expect(none.issues[0]?.reason).toContain('nenhuma alternativa')
+    expect(multiple.issues[0]?.reason).toContain('mais de uma alternativa')
   })
 
   it('exige critérios próprios da descritiva e ignora os de objetiva', () => {
@@ -86,7 +100,13 @@ describe('judgeQuestionQuality', () => {
     const verdict = await judgeQuestionQuality(input, { evaluate })
     const call = evaluate.mock.calls[0][0]
     expect(call.state.escopoCurricular).toBe('Combustíveis renováveis')
-    expect(call.questions.gabarito_independente.criteria).toEqual({ A: 'Resposta um', B: 'Resposta dois' })
+    expect(call.questions.gabarito_independente.criteria).toEqual({
+      A: 'Resposta um',
+      B: 'Resposta dois',
+      [NO_CORRECT_ALTERNATIVE]: 'Nenhuma alternativa apresentada responde corretamente.',
+      [MULTIPLE_CORRECT_ALTERNATIVES]: 'Mais de uma alternativa apresentada pode ser considerada correta.',
+    })
+    expect(call.state.alternativaCorreta).toBeUndefined()
     expect(verdict).toMatchObject({ available: true, blocked: false })
   })
 })

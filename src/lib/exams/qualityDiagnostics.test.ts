@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ExamGenerationResult, ExamQuestion } from '@/lib/gemini/examSchema'
-import { diagnosticFromIssue, humanReviewApprovalBlocks } from './qualityDiagnostics'
+import { diagnosticFromIssue, diagnosticFromJevIssue, humanReviewApprovalBlocks } from './qualityDiagnostics'
+import { NO_CORRECT_ALTERNATIVE } from '@/lib/ai/questionQualityDecision'
 
 function question(review: ExamQuestion['review'] = null): ExamQuestion {
   return {
@@ -27,6 +28,18 @@ describe('quality diagnostics', () => {
     })
     expect(diagnostic.code).toBe('INVALID_AI_RESPONSE')
     expect(diagnostic.repairAction).toBe('regenerar_questao')
+  })
+
+  it('roteia critérios tipados do Jev sem interpretar a mensagem', () => {
+    const exposed = diagnosticFromJevIssue({ criterion: 'resposta_exposta_enunciado', severity: 'bloqueante', reason: 'qualquer texto' }, question(), null)
+    expect(exposed).toMatchObject({ code: 'ANSWER_EXPOSED_IN_STATEMENT', repairAction: 'reparo_local', fields: ['statement'] })
+
+    const noAnswer = diagnosticFromJevIssue(
+      { criterion: 'gabarito', severity: 'bloqueante', reason: 'qualquer texto' },
+      question(),
+      { declaredLetter: 'A', independentLetter: NO_CORRECT_ALTERNATIVE, confidence: 0.95, matches: false },
+    )
+    expect(noAnswer).toMatchObject({ code: 'NO_CORRECT_ALTERNATIVE', repairAction: 'reparo_local', fields: ['alternatives', 'correctLetter'] })
   })
 
   it('exige confirmação humana para cálculo não verificável', () => {

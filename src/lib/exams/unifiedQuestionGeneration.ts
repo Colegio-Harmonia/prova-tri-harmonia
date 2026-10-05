@@ -68,14 +68,13 @@ export async function generateQuestionWithUnifiedFlow(params: Params): Promise<{
     number: params.questionNumber,
     curriculumUnitRowIndex: unit.rowIndex,
     review: null,
-  }, params.curriculum, { allowMathReviewFallback: true })
-  if (corrected.issues.length) throw new Error(corrected.issues.join(' '))
-
+  }, params.curriculum, { allowMathReviewFallback: true, deferContentQualityToJev: true })
   return {
     question: { ...corrected.question, number: params.questionNumber, curriculumUnitRowIndex: unit.rowIndex, review: null },
     warnings: [
       ...blueprint.issues.map((issue) => `Blueprint: ${issue}`),
       ...generated.issues.map((issue) => `[${issue.severity}] ${issue.reason}`),
+      ...corrected.issues.map((issue) => `Conferência para o Jev: ${issue}`),
       ...corrected.warnings,
     ],
   }

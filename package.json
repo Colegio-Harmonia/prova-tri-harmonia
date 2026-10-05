@@ -63,6 +63,7 @@
     "seed-templates": "tsx scripts/seed-templates.ts"
   },
   "dependencies": {
+    "@bncc/dados": "^0.6.0",
     "@cp949/react-wordcloud": "^1.0.1",
     "@fontsource/opendyslexic": "^5.3.0",
     "@hookform/resolvers": "^5.4.0",

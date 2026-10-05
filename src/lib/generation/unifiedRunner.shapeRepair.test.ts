@@ -69,29 +69,33 @@ describe('generateUnifiedQuestion — gate de formato das alternativas', () => {
     judge.mockResolvedValue({ available: true, source: 'provider', scores: {}, answerKey: null, issues: [], blocked: false })
   })
 
-  it('repara só os distratores em vez de reprovar a questão inteira', async () => {
+  it('encaminha o desvio de formato ao Jev sem reprovar ou corrigir localmente', async () => {
     generate.mockImplementation(async ({ context }: { context: string }) =>
       context.includes('distractor-repair') ? completion({ distractors: ['45', '120', '170', '15'] }) : completion(parsed))
 
     const result = await generateUnifiedQuestion(ctx, slot, { shuffle: (items) => items })
 
     const repairCalls = generate.mock.calls.filter(([params]) => String(params.context).includes('distractor-repair'))
-    expect(repairCalls).toHaveLength(1)
-    expect(repairCalls[0][0].prompt).toContain('Cada distrator deve ter forma e extensão comparáveis')
-    expect(result.question.alternatives?.map((alternative) => alternative.text).sort()).toEqual(['120', '15', '170', '30', '45'])
+    expect(repairCalls).toHaveLength(0)
+    expect(result.question.alternatives?.map((alternative) => alternative.text)).toEqual([
+      parsed.claim,
+      ...parsed.distractors,
+    ])
     const correct = result.question.alternatives?.find((alternative) => alternative.letter === result.question.correctLetter)
     expect(correct?.text).toBe('30')
-    expect(result.issues.some((issue) => issue.severity === 'alerta' && issue.reason.includes('Reparo local aplicado'))).toBe(true)
-    expect(result.issues.some((issue) => issue.severity === 'bloqueante')).toBe(false)
+    expect(result.issues.some((issue) => issue.severity === 'bloqueante' && issue.reason.includes('alternativas não têm o mesmo formato'))).toBe(true)
+    expect(result.needsAudit).toBe(true)
   })
 
-  it('se o reparo local falhar, a questão continua reprovada pelo gate de formato', async () => {
+  it('não tenta corrigir localmente um desvio que cabe ao parecer exclusivo do Jev', async () => {
     generate.mockImplementation(async ({ context }: { context: string }) => {
       if (context.includes('distractor-repair')) throw new StructuredGenerationError('inválida', context, 2, ['x'], 'validation_rejected')
       return completion(parsed)
     })
 
-    await expect(generateUnifiedQuestion(ctx, slot, { shuffle: (items) => items }))
-      .rejects.toThrow(/alternativas não têm o mesmo formato/)
+    const result = await generateUnifiedQuestion(ctx, slot, { shuffle: (items) => items })
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect(result.issues.some((issue) => issue.severity === 'bloqueante')).toBe(true)
+    expect(result.needsAudit).toBe(true)
   })
 })

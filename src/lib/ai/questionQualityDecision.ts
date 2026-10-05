@@ -1,5 +1,8 @@
 import { evaluateWithJev, type JevAnswers, type JevQuestions } from './jevClient'
 import type { ExamQuestion } from '@/lib/gemini/examSchema'
+import { ALTERNATIVE_COMPLETE, ALTERNATIVE_EXPOSES_WORK, ALTERNATIVE_FINAL_ONLY, ALTERNATIVE_FORMAT_OUTLIER, ALTERNATIVE_FORMAT_STANDARD, ALTERNATIVE_INCOMPLETE, MULTIPLE_CORRECT_ALTERNATIVES, NO_CORRECT_ALTERNATIVE, OBJECTIVE_ANSWER_ONLY, OBJECTIVE_ASKS_WORK } from './questionQualityContract'
+
+export { MULTIPLE_CORRECT_ALTERNATIVES, NO_CORRECT_ALTERNATIVE } from './questionQualityContract'
 
 /**
  * Juiz de qualidade de questões, decidido pelo Jev (TypeSafe) — não por LLM.
@@ -11,12 +14,11 @@ import type { ExamQuestion } from '@/lib/gemini/examSchema'
  * boas de 6 disciplinas: todas as 10 ruins foram barradas e nenhuma boa foi
  * barrada. Ver `docs/GESTAO_QUALIDADE_QUESTOES_JEV.md`.
  *
- * Falha aberta e explícita: se o Jev estiver indisponível, devolvemos
- * `available:false` com um alerta; os gates determinísticos continuam valendo
- * e a aprovação final exige a conferência independente do gabarito.
+ * Se o Jev estiver indisponível, devolvemos `available:false`; sem o parecer
+ * exclusivo do Jev, a questão permanece sem aprovação.
  */
 
-export const QUESTION_QUALITY_VERSION = '2026-10-02.v1'
+export const QUESTION_QUALITY_VERSION = '2026-10-05.v5'
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const TIMEOUT_MS = 15_000
 const COMPOSITE_WARNING_BLOCK = 3
@@ -24,9 +26,15 @@ const COMPOSITE_WARNING_BLOCK = 3
 export const QUALITY_CRITERIA_IDS = [
   'alinhamento_bncc',
   'resposta_substantiva',
+  'resposta_exposta_enunciado',
+  'informacao_suficiente',
+  'calculo_ou_dados',
   'copia_escopo_curricular',
   'apoio_autossuficiente',
   'alternativas_homogeneas',
+  'alternativa_formato_outlier',
+  'alternativa_completa',
+  'objetiva_exige_desenvolvimento',
   'resposta_unica',
   'fatos_corretos',
   'enunciado_coerente',
@@ -61,6 +69,21 @@ export const QUALITY_CRITERIA: readonly CriterionSpec[] = [
     id: 'resposta_substantiva', applies: ['objetiva', 'descritiva'], polarity: 'good', block: 0.4, warn: 0.7,
     instructions: 'A resposta correta (a alternativa indicada como correta, ou a respostaEsperada nas discursivas) responde de fato ao que o enunciado pergunta, com conteúdo próprio da disciplina, e NÃO se limita a repetir o título de um capítulo, um tópico do escopo curricular ou as palavras da própria pergunta?',
     message: 'A resposta correta não responde de fato à pergunta: repete um título/tópico do currículo ou os termos do próprio enunciado. Escreva uma resposta com conteúdo da disciplina.',
+  },
+  {
+    id: 'resposta_exposta_enunciado', applies: ['objetiva', 'descritiva'], polarity: 'defect', block: 0.75, warn: 0.4,
+    instructions: 'O próprio enunciado entrega, repete ou torna explícita a resposta que o aluno deveria produzir, mesmo sem usar o texto de apoio ou raciocinar sobre as alternativas?',
+    message: 'O enunciado entrega a resposta. Reescreva somente o comando da questão, preservando conteúdo, dados, texto de apoio e gabarito.',
+  },
+  {
+    id: 'informacao_suficiente', applies: ['objetiva', 'descritiva'], polarity: 'good', block: 0.4, warn: 0.7,
+    instructions: 'O enunciado e o texto de apoio, em conjunto, fornecem todas as informações necessárias para responder sem adivinhar dados, contexto ou referência ausente?',
+    message: 'Faltam informações para responder. Acrescente um texto de apoio autocontido e ajuste somente o enunciado para usá-lo.',
+  },
+  {
+    id: 'calculo_ou_dados', applies: ['objetiva', 'descritiva'], polarity: 'good', block: 0.4, warn: 0.7,
+    instructions: 'Resolva a questão de forma independente com os dados apresentados. O raciocínio, o resultado solicitado, a resposta esperada e pelo menos uma alternativa correspondem ao mesmo problema? Confira também as evidências de recálculo anexadas, sem aceitá-las sem verificar.',
+    message: 'O cálculo, os dados do enunciado e a resposta não correspondem entre si. Corrija a parte apontada mantendo o tema e os dados válidos da planilha escolar.',
   },
   {
     id: 'copia_escopo_curricular', applies: ['objetiva', 'descritiva'], polarity: 'defect', block: 0.75, warn: 0.4,
@@ -110,13 +133,16 @@ export type QualityJudgeInput = {
   question: QualityJudgeQuestion
   /** Escopo curricular (títulos e tópicos do capítulo), para detectar cópia. */
   curriculumScope: string
+  /** Conferências determinísticas anexadas como evidência; somente o Jev decide se reprovam. */
+  verificationEvidence?: string[]
 }
 
 export type QualityJudgeIssue = {
   severity: 'bloqueante' | 'alerta'
-  criterion: QualityCriterionId | 'composto' | 'gabarito' | 'indisponivel'
+  criterion: QualityCriterionId | 'alternativa_exibe_calculo' | 'composto' | 'gabarito' | 'indisponivel'
   reason: string
   score?: number
+  alternativeLetter?: string
 }
 
 export type AnswerKeyCheck = {
@@ -131,6 +157,7 @@ export type QualityJudgeVerdict = {
   source: 'provider' | 'cache' | 'fallback'
   scores: Partial<Record<QualityCriterionId, number>>
   answerKey: AnswerKeyCheck | null
+  alternativeOutlier: { letter: string; confidence: number | null } | null
   issues: QualityJudgeIssue[]
   blocked: boolean
 }
@@ -151,7 +178,7 @@ export function criterionSeverity(spec: CriterionSpec, score: number): 'bloquean
 }
 
 /** Regra pura: transforma as respostas do Jev em problemas. Testável sem rede. */
-export function evaluateQualityAnswers(question: Pick<QualityJudgeQuestion, 'type' | 'correctLetter'>, answers: JevAnswers): Pick<QualityJudgeVerdict, 'scores' | 'answerKey' | 'issues' | 'blocked'> {
+export function evaluateQualityAnswers(question: Pick<QualityJudgeQuestion, 'type' | 'correctLetter'> & Partial<Pick<QualityJudgeQuestion, 'alternatives'>>, answers: JevAnswers): Pick<QualityJudgeVerdict, 'scores' | 'answerKey' | 'alternativeOutlier' | 'issues' | 'blocked'> {
   const scores: Partial<Record<QualityCriterionId, number>> = {}
   const issues: QualityJudgeIssue[] = []
 
@@ -173,7 +200,57 @@ export function evaluateQualityAnswers(question: Pick<QualityJudgeQuestion, 'typ
   }
 
   let answerKey: AnswerKeyCheck | null = null
+  let alternativeOutlier: QualityJudgeVerdict['alternativeOutlier'] = null
   if (question.type === 'objetiva') {
+    const asksWork = answers.objetiva_comando_resposta
+    if (asksWork?.type === 'choice') {
+      if (asksWork.choice === OBJECTIVE_ASKS_WORK) {
+        issues.push({
+          severity: 'bloqueante', criterion: 'objetiva_exige_desenvolvimento',
+          reason: 'Jev identificou que o enunciado objetivo pede mostrar cálculos, fórmulas usadas ou justificar a resolução. Em múltipla escolha, peça apenas o resultado ou os demais produtos finais solicitados.',
+        })
+      } else if (asksWork.choice !== OBJECTIVE_ANSWER_ONLY) {
+        issues.push({ severity: 'bloqueante', criterion: 'indisponivel', reason: 'O Jev não retornou uma decisão válida sobre o comando da questão objetiva; ela não pode ser aprovada sem essa conferência.' })
+      }
+    }
+    for (const alternative of question.alternatives ?? []) {
+      const letter = alternative.letter.toUpperCase()
+      const completeness = answers[`completude_alternativa_${letter}`]
+      if (completeness?.type === 'choice') {
+        if (completeness.choice === ALTERNATIVE_INCOMPLETE) {
+          issues.push({
+            severity: 'bloqueante', criterion: 'alternativa_completa', alternativeLetter: letter,
+            reason: `Jev identificou que a alternativa ${letter} não responde a todos os itens pedidos. Reescreva somente essa opção para cobrir cada item do enunciado, na mesma ordem e no padrão das demais.`,
+          })
+        } else if (completeness.choice !== ALTERNATIVE_COMPLETE) {
+          issues.push({ severity: 'bloqueante', criterion: 'indisponivel', alternativeLetter: letter, reason: `O Jev não retornou uma decisão válida sobre a completude da alternativa ${letter}; ela não pode ser aprovada sem essa conferência.` })
+        }
+      }
+      const format = answers[`formato_alternativa_${letter}`]
+      if (format?.type === 'choice') {
+        if (format.choice === ALTERNATIVE_FORMAT_OUTLIER) {
+          issues.push({
+            severity: 'bloqueante', criterion: 'alternativa_formato_outlier', alternativeLetter: letter,
+            reason: `Jev identificou que a alternativa ${letter} destoa em estrutura, componentes, unidades, notação ou nível de detalhe e pode denunciar o gabarito. Reescreva somente essa opção para igualar o padrão das demais.`,
+          })
+          const confidence = format.confidence ?? format.probabilities?.[ALTERNATIVE_FORMAT_OUTLIER] ?? null
+          alternativeOutlier ??= { letter, confidence }
+        } else if (format.choice !== ALTERNATIVE_FORMAT_STANDARD) {
+          issues.push({ severity: 'bloqueante', criterion: 'indisponivel', alternativeLetter: letter, reason: `O Jev não retornou uma decisão válida sobre o padrão visual da alternativa ${letter}; ela não pode ser aprovada sem essa conferência.` })
+        }
+      }
+      const calculation = answers[`calculo_na_alternativa_${letter}`]
+      if (calculation?.type === 'choice') {
+        if (calculation.choice === ALTERNATIVE_EXPOSES_WORK) {
+          issues.push({
+            severity: 'bloqueante', criterion: 'alternativa_exibe_calculo', alternativeLetter: letter,
+            reason: `Jev identificou fórmula utilizada, conta armada, etapas ou justificativa de cálculo na alternativa ${letter}. Reescreva somente essa opção com a resposta final pedida, preservando fórmulas que sejam o próprio resultado solicitado e as interpretações conceituais pedidas.`,
+          })
+        } else if (calculation.choice !== ALTERNATIVE_FINAL_ONLY) {
+          issues.push({ severity: 'bloqueante', criterion: 'indisponivel', alternativeLetter: letter, reason: `O Jev não retornou uma decisão válida sobre a exposição do cálculo na alternativa ${letter}; ela não pode ser aprovada sem essa conferência.` })
+        }
+      }
+    }
     const key = answers.gabarito_independente
     if (key?.type === 'choice') {
       const confidence = key.confidence ?? key.probabilities?.[key.choice] ?? null
@@ -183,7 +260,11 @@ export function evaluateQualityAnswers(question: Pick<QualityJudgeQuestion, 'typ
         issues.push({
           severity: 'bloqueante',
           criterion: 'gabarito',
-          reason: `Conferência independente do gabarito diverge: declarado ${question.correctLetter ?? 'ausente'}, calculado ${key.choice}${confidence !== null ? ` (confiança ${Math.round(confidence * 100)}%)` : ''}.`,
+          reason: key.choice === NO_CORRECT_ALTERNATIVE
+            ? 'A conferência independente concluiu que nenhuma alternativa responde corretamente ao enunciado.'
+            : key.choice === MULTIPLE_CORRECT_ALTERNATIVES
+              ? 'A conferência independente concluiu que mais de uma alternativa pode responder corretamente ao enunciado.'
+              : `Conferência independente do gabarito diverge: declarado ${question.correctLetter ?? 'ausente'}, calculado ${key.choice}${confidence !== null ? ` (confiança ${Math.round(confidence * 100)}%)` : ''}.`,
           score: confidence ?? undefined,
         })
       } else if (confidence !== null && confidence < ANSWER_KEY_MIN_CONFIDENCE) {
@@ -192,7 +273,7 @@ export function evaluateQualityAnswers(question: Pick<QualityJudgeQuestion, 'typ
     }
   }
 
-  return { scores, answerKey, issues, blocked: issues.some((issue) => issue.severity === 'bloqueante') }
+  return { scores, answerKey, alternativeOutlier, issues, blocked: issues.some((issue) => issue.severity === 'bloqueante') }
 }
 
 function buildState(input: QualityJudgeInput) {
@@ -206,20 +287,71 @@ function buildState(input: QualityJudgeInput) {
     enunciado: question.statement,
     textoDeApoio: question.supportText?.trim() || null,
     alternativas: (question.alternatives ?? []).map((alternative) => ({ letra: alternative.letter, texto: alternative.text })),
-    alternativaCorreta: question.correctLetter ?? null,
     respostaEsperada: question.expectedAnswer ?? null,
     criteriosDeCorrecao: question.gradingCriteria ?? null,
+    ...(input.verificationEvidence?.length
+      ? { evidenciasDeConferencia: input.verificationEvidence.slice(0, 12) }
+      : {}),
   }
 }
 
 function buildQuestions(input: QualityJudgeInput): JevQuestions {
   const questions: JevQuestions = {}
-  for (const spec of criteriaForType(input.question.type, Boolean(input.skills?.length))) questions[spec.id] = { type: 'noul', instructions: spec.instructions }
-  if (input.question.type === 'objetiva' && input.question.alternatives?.length) {
+  const evidenceInstruction = input.verificationEvidence?.length
+    ? ' Confira também evidenciasDeConferencia no estado. São alertas preliminares do sistema: verifique cada um contra o enunciado, apoio, alternativas e escopo, e decida por conta própria se há um defeito real.'
+    : ''
+  for (const spec of criteriaForType(input.question.type, Boolean(input.skills?.length))) {
+    questions[spec.id] = { type: 'noul', instructions: `${spec.instructions}${evidenceInstruction}` }
+  }
+  if (input.question.type === 'objetiva') {
+    const isMathSubject = /matemática|matematica|física|fisica|química|quimica/i.test(input.subject)
+    if (isMathSubject) {
+      questions.objetiva_comando_resposta = {
+        type: 'choice',
+        instructions: `A questão é objetiva de ${input.subject}. O enunciado pede apenas a resposta final que o aluno deve selecionar, ou pede que ele mostre fórmulas usadas, desenvolva contas ou justifique a resolução? Se pede desenvolvimento/justificativa de cálculo, escolha a opção correspondente. Se pede expressão algébrica como resultado final, isso NÃO conta como pedir para mostrar o cálculo. Enunciado: ${input.question.statement}`,
+        criteria: {
+          [OBJECTIVE_ANSWER_ONLY]: 'Pede o resultado ou produtos finais; o estudante faz os cálculos sem precisar apresentá-los.',
+          [OBJECTIVE_ASKS_WORK]: 'Pede apresentar cálculos, mostrar fórmula usada, desenvolver passos ou justificar como chegou ao resultado.',
+        },
+      }
+    }
+    for (const alternative of input.question.alternatives ?? []) {
+      const letter = alternative.letter.toUpperCase()
+      questions[`completude_alternativa_${letter}`] = {
+        type: 'choice',
+        instructions: `Avalie somente se a alternativa ${letter} responde a TODOS os itens solicitados no enunciado e contém os componentes necessários, na ordem. Um distrator pode ter resultado errado e ainda cobrir todos os itens; julgue completude, não correção. Escolha exatamente uma opção: completa ou incompleta. Enunciado: ${input.question.statement}. Alternativa: ${alternative.text}`,
+        criteria: {
+          [ALTERNATIVE_COMPLETE]: 'Responde a todos os itens pedidos e apresenta cada componente necessário.',
+          [ALTERNATIVE_INCOMPLETE]: 'Omite um ou mais itens pedidos; por exemplo, apresenta apenas um número quando a pergunta exige também comparação, interpretação ou conclusão.',
+        },
+      }
+      questions[`formato_alternativa_${letter}`] = {
+        type: 'choice',
+        instructions: `Compare a alternativa ${letter} com todas as demais. Ela destoa claramente em estrutura, componentes, unidades, notação ou nível de detalhe, de modo que um aluno possa suspeitar do gabarito pela apresentação? Não marque diferenças pequenas. Escolha exatamente uma opção: segue o padrão ou destoa do padrão. Enunciado: ${input.question.statement}. Alternativa avaliada: ${alternative.text}. Demais alternativas: ${JSON.stringify((input.question.alternatives ?? []).filter((item) => item.letter !== alternative.letter))}`,
+        criteria: {
+          [ALTERNATIVE_FORMAT_STANDARD]: 'A alternativa segue o padrão e não denuncia o gabarito pela apresentação.',
+          [ALTERNATIVE_FORMAT_OUTLIER]: 'A alternativa destoa claramente e pode denunciar o gabarito pela apresentação.',
+        },
+      }
+      if (isMathSubject) {
+        questions[`calculo_na_alternativa_${letter}`] = {
+          type: 'choice',
+          instructions: `A alternativa ${letter} apresenta somente os resultados finais necessários, ou revela como fazer a conta por fórmula utilizada, conta armada, passos algébricos ou justificativa do cálculo? A questão não pede ao estudante que apresente o desenvolvimento. Não classifique como desenvolvimento uma expressão algébrica que seja, ela própria, o produto final solicitado; também preserve uma interpretação conceitual pedida, desde que não revele as contas. Enunciado: ${input.question.statement}. Alternativa: ${alternative.text}`,
+          criteria: {
+            [ALTERNATIVE_FINAL_ONLY]: 'Traz apenas os resultados finais e outros produtos conceituais pedidos, sem revelar a resolução numérica.',
+            [ALTERNATIVE_EXPOSES_WORK]: 'Expõe fórmula de resolução, conta armada, etapas de cálculo ou justificativa numérica que o estudante deveria produzir.',
+          },
+        }
+      }
+    }
     questions.gabarito_independente = {
       type: 'choice',
-      instructions: 'Com base apenas no enunciado, no texto de apoio e nos conhecimentos esperados para a série, qual alternativa é a correta? Resolva por conta própria; ignore qualquer alternativaCorreta sugerida.',
-      criteria: Object.fromEntries(input.question.alternatives.map((alternative) => [alternative.letter, alternative.text])),
+      instructions: `Com base no enunciado, texto de apoio e conhecimentos esperados para a série, qual alternativa é correta? Resolva por conta própria e ignore qualquer gabarito indicado. ${evidenceInstruction}`,
+      criteria: {
+        ...Object.fromEntries((input.question.alternatives ?? []).map((alternative) => [alternative.letter, alternative.text])),
+        [NO_CORRECT_ALTERNATIVE]: 'Nenhuma alternativa apresentada responde corretamente.',
+        [MULTIPLE_CORRECT_ALTERNATIVES]: 'Mais de uma alternativa apresentada pode ser considerada correta.',
+      },
     }
   }
   return questions
@@ -258,8 +390,9 @@ export async function judgeQuestionQuality(
       source: 'fallback',
       scores: {},
       answerKey: null,
+      alternativeOutlier: null,
       blocked: false,
-      issues: [{ severity: 'alerta', criterion: 'indisponivel', reason: 'O juiz de qualidade (Jev) não respondeu; a questão passou apenas pelas validações determinísticas e precisa de conferência humana.' }],
+      issues: [{ severity: 'alerta', criterion: 'indisponivel', reason: 'O juiz de qualidade (Jev) não respondeu; sem o parecer exclusivo dele, a questão permanece sem aprovação.' }],
     }
   }
   return { available: true, source: result.source, ...evaluateQualityAnswers(input.question, result.answers) }
