@@ -27,4 +27,31 @@ describe('correctSingleQuestion', () => {
     const result = correctSingleQuestion(question({ statement: 'Resolva o sistema.', supportText: null, solutionBlueprint: { domain: 'linear_system', variables: [], equations: ['x + y = 3'], values: {}, calculationSteps: ['Resolver'], derivedAnswer: '1', visualSpec: 'none' } }), { segment: 'anos-finais', gradeYear: 8, subject: 'Matemática' }, { allowMathReviewFallback: true })
     expect(result.issues).toEqual([]); expect(result.warnings.join(' ')).toContain('revisão humana')
   })
+
+  describe('resposta esperada obrigatória nas descritivas', () => {
+    const discursive = (overrides: Partial<ExamQuestion> = {}) =>
+      question({ type: 'descritiva', alternatives: null, correctLetter: null, supportText: null, ...overrides })
+
+    it('rejeita descritiva sem expectedAnswer', () => {
+      const result = correctSingleQuestion(discursive({ expectedAnswer: null }), curriculum)
+      expect(result.issues.some((i) => i.includes('expectedAnswer ausente'))).toBe(true)
+    })
+
+    it('rejeita expectedAnswer em branco ou curta demais', () => {
+      expect(correctSingleQuestion(discursive({ expectedAnswer: '   ' }), curriculum).issues).toHaveLength(1)
+      expect(correctSingleQuestion(discursive({ expectedAnswer: 'varia' }), curriculum).issues).toHaveLength(1)
+    })
+
+    it('aceita descritiva com resposta esperada e avisa se faltar critério', () => {
+      const ok = correctSingleQuestion(discursive({ expectedAnswer: 'A energia se transforma em calor por atrito.', gradingCriteria: '1 ponto: cita atrito.' }), curriculum)
+      expect(ok.issues).toEqual([])
+      const noCriteria = correctSingleQuestion(discursive({ expectedAnswer: 'A energia se transforma em calor por atrito.', gradingCriteria: null }), curriculum)
+      expect(noCriteria.issues).toEqual([])
+      expect(noCriteria.warnings.some((w) => w.includes('gradingCriteria'))).toBe(true)
+    })
+
+    it('não exige resposta esperada em objetiva', () => {
+      expect(correctSingleQuestion(question({ expectedAnswer: null }), curriculum).issues).toEqual([])
+    })
+  })
 })

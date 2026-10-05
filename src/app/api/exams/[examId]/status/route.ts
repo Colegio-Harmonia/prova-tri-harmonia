@@ -8,6 +8,7 @@ import { generateExamDocs } from '@/lib/docs/generateExamDocs'
 import { sendChatAssignmentNotification, sendChatReviewReadyNotification } from '@/lib/notifications/googleChat'
 import { singleQuestionResultSchema, SINGLE_QUESTION_RESPONSE_SCHEMA, type ExamGenerationResult, type ExamQuestion, type SingleQuestionResult } from '@/lib/gemini/examSchema'
 import { isStaffSuperuser } from '@/lib/auth/roles'
+import { findDiscursiveWithoutReferenceAnswer, referenceAnswerMissingMessage } from '@/lib/exams/referenceAnswer'
 import { isSelfManagedActivity } from '@/lib/exams/activityWorkflow'
 import { SheetAssignmentsSnapshotError, snapshotSheetAssignments } from '@/lib/scan-sheets/sheetAssignments'
 import { enqueuePontuarProvaJob } from '@/lib/queue/enqueue'
@@ -156,6 +157,16 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
 
   if (exam.status !== transition.from) {
     return NextResponse.json({ error: `Transição inválida: prova está em "${exam.status}", esperado "${transition.from}".` }, { status: 409 })
+  }
+
+  // Descritiva sem resposta esperada não pode seguir pra revisão concluída/
+  // aprovação: a correção ficaria sem base. Vale também pra provas antigas.
+  if (action === 'concluir_revisao' || action === 'aprovar' || action === 'finalizar_atividade') {
+    const payload = exam.generationPayload as ExamGenerationResult
+    const missing = findDiscursiveWithoutReferenceAnswer(payload.questions ?? [])
+    if (missing.length) {
+      return NextResponse.json({ error: 'missing_reference_answer', message: referenceAnswerMissingMessage(missing), questions: missing }, { status: 422 })
+    }
   }
 
   if (action === 'atribuir') {

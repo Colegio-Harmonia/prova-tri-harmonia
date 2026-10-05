@@ -463,6 +463,18 @@ funcionou antes de seguir em frente). Pra isso não se repetir:
    configuração por ambiente. Ver "Infraestrutura: legado atual e destino
    futuro" em `docs/deployment.md` e `docs/git-workflow.md`.
 
+## Descritivas: resposta esperada obrigatória e verbos de comando (05/10/2026)
+
+- Toda questão descritiva **sempre** tem `expectedAnswer` (base da correção) —
+  validada na geração/troca de questão, e bloqueia concluir revisão/aprovar/
+  sugerir nota por IA quando faltar. Helper: `src/lib/exams/referenceAnswer.ts`.
+- No Google Docs da Prova (Fundamental 1 e 2), os verbos de comando do
+  enunciado ficam em **negrito** e mais nada; lista em
+  `src/lib/docs/commandVerbs.ts`. Detalhes e limites em
+  [`docs/RESPOSTA_ESPERADA_E_VERBOS_DE_COMANDO.md`](docs/RESPOSTA_ESPERADA_E_VERBOS_DE_COMANDO.md).
+
+---
+
 ## Metodologia (comum a todos os segmentos)
 
 ⚠️ **Fonte normativa dos critérios de classificação pedagógica**: ver

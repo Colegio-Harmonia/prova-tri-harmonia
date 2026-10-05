@@ -3,6 +3,7 @@ import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { findMarkerRange } from './richTextInsert'
 import type { AssessmentMeta } from './assessmentMeta'
 import { splitLatexSegments, IMAGE_ALTERNATIVE_PLACEHOLDER } from '@/lib/math/latexRender'
+import { splitCommandVerbs, shouldBoldCommandVerbs, isEnglishSubject, type CommandVerbOptions } from './commandVerbs'
 import { buildLatexImageCache, type LatexImageCache } from './latexImageCache'
 import { buildMarkdownTableImageCache, splitMarkdownTables, type MarkdownTableImageCache } from './markdownTableImageCache'
 
@@ -20,10 +21,16 @@ type ProvaOp =
  * de rede no serviço externo), cai pro LaTeX cru em vez de sumir com o
  * conteúdo da questão.
  */
-function textToOps(text: string, latexCache: LatexImageCache, bold?: boolean): ProvaOp[] {
+function textToOps(text: string, latexCache: LatexImageCache, bold?: boolean, commandVerbs?: CommandVerbOptions | null): ProvaOp[] {
   return splitLatexSegments(text).flatMap((seg): ProvaOp[] => {
     if (seg.type === 'text') {
-      return seg.content ? [{ kind: 'text', text: seg.content, bold }] : []
+      if (!seg.content) return []
+      // Só o enunciado passa `commandVerbs`: os verbos de comando saem em
+      // negrito e o restante do texto mantém o peso normal.
+      if (commandVerbs) {
+        return splitCommandVerbs(seg.content, commandVerbs).map((part): ProvaOp => ({ kind: 'text', text: part.text, bold: part.bold || bold }))
+      }
+      return [{ kind: 'text', text: seg.content, bold }]
     }
     const info = latexCache.get(seg.latex)
     return info
@@ -32,9 +39,9 @@ function textToOps(text: string, latexCache: LatexImageCache, bold?: boolean): P
   })
 }
 
-function markdownTextToOps(text: string, latexCache: LatexImageCache, tableCache: MarkdownTableImageCache, bold?: boolean): ProvaOp[] {
+function markdownTextToOps(text: string, latexCache: LatexImageCache, tableCache: MarkdownTableImageCache, bold?: boolean, commandVerbs?: CommandVerbOptions | null): ProvaOp[] {
   return splitMarkdownTables(text).flatMap((block): ProvaOp[] => {
-    if (block.kind === 'text') return textToOps(block.text, latexCache, bold)
+    if (block.kind === 'text') return textToOps(block.text, latexCache, bold, commandVerbs)
     const image = tableCache.get(block.table.raw)
     // A tabela nunca desaparece se o Drive ou o renderer falhar: conserva o
     // Markdown original como fallback, em vez de publicar uma questão vazia.
@@ -61,6 +68,10 @@ export type ProvaBuildOptions = {
 export function buildProvaOps(exam: ExamGenerationResult, latexCache: LatexImageCache, tableCache: MarkdownTableImageCache, options: ProvaBuildOptions = {}): ProvaOp[] {
   const discursiveBlankLines = options.discursiveBlankLines ?? 5
   const ops: ProvaOp[] = []
+  // Negrito nos verbos de comando do enunciado: só Fundamental 1 e 2.
+  const commandVerbs: CommandVerbOptions | null = shouldBoldCommandVerbs(exam.metadata.segment)
+    ? { includeEnglish: isEnglishSubject(exam.metadata.subject) }
+    : null
 
   for (const q of exam.questions) {
     // O número abre o bloco e o texto de apoio vem ANTES do enunciado —
@@ -75,7 +86,7 @@ export function buildProvaOps(exam: ExamGenerationResult, latexCache: LatexImage
       ops.push({ kind: 'text', text: '\n' })
     }
 
-    ops.push(...markdownTextToOps(q.statement, latexCache, tableCache))
+    ops.push(...markdownTextToOps(q.statement, latexCache, tableCache, undefined, commandVerbs))
     ops.push({ kind: 'text', text: '\n' })
 
     if (q.image?.approved) {
