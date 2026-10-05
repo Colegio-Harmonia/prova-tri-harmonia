@@ -59,7 +59,7 @@ function supportTextDefinesAssessedTerm(supportText: string, statement: string):
 export function correctSingleQuestion(
   q: ExamQuestion,
   curriculum: Pick<CurriculumSelection, 'segment' | 'gradeYear' | 'subject'>,
-  options: { allowMathReviewFallback?: boolean } = {},
+  options: { allowMathReviewFallback?: boolean; deferContentQualityToJev?: boolean } = {},
 ): { question: ExamQuestion; issues: string[]; warnings: string[] } {
   const issues: string[] = []
   const warnings: string[] = []
@@ -94,8 +94,11 @@ export function correctSingleQuestion(
     warnings.push(`Questão ${q.number}: modelo pediu imagem para uma disciplina não habilitada para imagens — corrigido para needsImage:false.`)
   }
 
-  const correctedSupportText = q.supportText && supportTextDefinesAssessedTerm(q.supportText, q.statement) ? null : q.supportText
-  if (q.supportText && !correctedSupportText) {
+  const exposesAnswer = Boolean(q.supportText && supportTextDefinesAssessedTerm(q.supportText, q.statement))
+  const correctedSupportText = exposesAnswer && !options.deferContentQualityToJev ? null : q.supportText
+  if (exposesAnswer && options.deferContentQualityToJev) {
+    issues.push(`Questão ${q.number}: o texto de apoio pode definir o conceito cobrado; encaminhar ao Jev para avaliação.`)
+  } else if (q.supportText && !correctedSupportText) {
     warnings.push(`Questão ${q.number}: texto de apoio definia o conceito cobrado e foi removido para não entregar a resposta.`)
   }
 

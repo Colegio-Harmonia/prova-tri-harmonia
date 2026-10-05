@@ -6,8 +6,9 @@ import { detectAlternativeAmbiguities } from '@/lib/generation/alternatives'
 import { diversityIssues } from '@/lib/generation/coherence'
 import { hasMissingRequiredVisual } from '@/lib/illustrations/recommendations'
 import type { ExamQualityIssue } from './examQualityAssembly'
-import { diagnosticFromIssue, humanReviewApprovalBlocks, unsupportedMathDiagnostics, type QualityDiagnostic } from './qualityDiagnostics'
+import { diagnosticFromIssue, diagnosticFromJevIssue, humanReviewApprovalBlocks, unsupportedMathDiagnostics, type QualityDiagnostic } from './qualityDiagnostics'
 import { missingRequiredSupportTextReason } from './supportTextIntegrity'
+import { getOfficialBnccSkill } from '@/lib/curriculum/officialBncc'
 
 type JudgeReport = {
   questionNumber: number
@@ -16,6 +17,7 @@ type JudgeReport = {
   checks: QualityCheck[]
   answerKeyAudit?: { declaredLetter: string | null; independentlyDerivedLetter: string | null; matchesDeclared: boolean; evidence: string } | null
   issues: Array<{ reason: string; severity: 'bloqueante' | 'alerta'; criterion?: string }>
+  diagnostics?: QualityDiagnostic[]
 }
 
 function normalized(value: string) { return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLocaleLowerCase('pt-BR').replace(/\s+/g, ' ') }
@@ -34,10 +36,8 @@ export type QualityReportResult = {
   diagnostics?: QualityDiagnostic[]
 }
 
-// Critérios que vetam a questão. Os critérios do juiz Jev (probabilidade com
-// limiar calibrado) entram aqui; `linguagem`/`alinhamento` são os critérios
-// legados do auditor LLM e continuam só como alerta em relatórios antigos.
-const AI_BLOCKING_CRITERIA = new Set(['gabarito', 'unicidade', 'cálculo_ou_dados', 'alinhamento_bncc', 'resposta_substantiva', 'copia_escopo_curricular', 'apoio_autossuficiente', 'alternativas_homogeneas', 'resposta_unica', 'fatos_corretos', 'correcao_objetiva'])
+// Critérios do parecer tipado do Jev que bloqueiam a aprovação.
+const JEV_BLOCKING_CRITERIA = new Set(['gabarito', 'unicidade', 'cálculo_ou_dados', 'alinhamento_bncc', 'resposta_substantiva', 'resposta_exposta_enunciado', 'informacao_suficiente', 'copia_escopo_curricular', 'apoio_autossuficiente', 'alternativas_homogeneas', 'alternativa_formato_outlier', 'alternativa_completa', 'objetiva_exige_desenvolvimento', 'alternativa_exibe_calculo', 'resposta_unica', 'fatos_corretos', 'correcao_objetiva'])
 
 // O modelo às vezes devolve status "reprovado" com uma evidência que, na
 // prática, diz que o critério NÃO se aplica (ex.: cálculo_ou_dados numa
@@ -80,7 +80,7 @@ function compoundInterestIssue(question: ExamQuestion): ExamQualityIssue | null 
   return null
 }
 
-/** Regras locais baratas; não substituem a revisão semântica da IA. */
+/** Conferências auxiliares; os resultados são enviados ao Jev como evidência. */
 export function deterministicQuestionQualityIssues(questions: ExamQuestion[], curriculum?: CurriculumSelection): ExamQualityIssue[] {
   const issues: ExamQualityIssue[] = diversityIssues(questions)
   for (const question of questions) {
@@ -106,12 +106,15 @@ export function deterministicQuestionQualityIssues(questions: ExamQuestion[], cu
   return issues
 }
 
-/** Habilidades BNCC declaradas pela questão, com a descrição oficial da planilha (ou o resumo salvo). */
+/** A habilidade vem do código BNCC; o tema e os fatos continuam vindo da planilha escolar. */
 export function skillsFor(curriculum: CurriculumSelection, question: Pick<ExamQuestion, 'bnccCodes' | 'bnccStatus' | 'bnccSummary'>): Array<{ code: string; description: string }> {
   if (question.bnccStatus !== 'mapeado') return []
   const known = new Map(curriculum.units.flatMap((unit) => unit.habilidades.status === 'mapeado' ? unit.habilidades.skills : []).map((skill) => [skill.code.toUpperCase(), skill.description?.trim() ?? '']))
   return question.bnccCodes.flatMap((code) => {
-    const description = known.get(code.toUpperCase()) || (question.bnccCodes.length === 1 ? question.bnccSummary?.trim() : '') || ''
+    const description = getOfficialBnccSkill(code)?.text
+      || known.get(code.toUpperCase())
+      || (question.bnccCodes.length === 1 ? question.bnccSummary?.trim() : '')
+      || ''
     return description ? [{ code: code.toUpperCase(), description }] : []
   })
 }
@@ -145,6 +148,9 @@ export function reportFromJudgeVerdict(question: ExamQuestion, verdict: QualityJ
     checks.push({ criterion: 'gabarito', status: key.matches ? 'aprovado' : 'reprovado', evidence })
   }
   const blocked = verdict.issues.filter((issue) => issue.severity === 'bloqueante')
+  if (verdict.alternativeOutlier && !verdict.issues.some((issue) => issue.criterion === 'alternativa_formato_outlier')) {
+    checks.push({ criterion: 'alternativa_formato_outlier', status: 'aprovado', evidence: `Jev apontou ${verdict.alternativeOutlier.letter} com confiança abaixo do limite de reprovação.` })
+  }
   return {
     questionNumber: question.number,
     approved: !blocked.length,
@@ -154,6 +160,7 @@ export function reportFromJudgeVerdict(question: ExamQuestion, verdict: QualityJ
     checks,
     answerKeyAudit,
     issues: verdict.issues.map((issue) => ({ severity: issue.severity, criterion: issue.criterion, reason: issue.reason })),
+    diagnostics: verdict.issues.map((issue) => diagnosticFromJevIssue(issue, question, verdict.answerKey)),
   }
 }
 
@@ -164,7 +171,11 @@ export function reportFromJudgeVerdict(question: ExamQuestion, verdict: QualityJ
  * cópia do escopo curricular, resposta tautológica, alternativas desiguais,
  * fatos incorretos e critérios de correção inúteis.
  */
-export async function runQuestionQualityTest(curriculum: CurriculumSelection, questions: ExamQuestion[]) {
+export async function runQuestionQualityTest(
+  curriculum: CurriculumSelection,
+  questions: ExamQuestion[],
+  generatedEvidence: Map<number, string[]> = new Map(),
+) {
   const deterministic = deterministicQuestionQualityIssues(questions, curriculum)
   const reports: JudgeReport[] = []
   const warnings: string[] = []
@@ -191,57 +202,70 @@ export async function runQuestionQualityTest(curriculum: CurriculumSelection, qu
       question,
       curriculumScope: curriculumScopeFor(curriculum, question),
       skills: skillsFor(curriculum, question),
+      verificationEvidence: [
+        ...(generatedEvidence.get(question.number) ?? []),
+        ...deterministic.filter((issue) => issue.questionNumbers.includes(question.number)).map((issue) => issue.reason),
+        ...unsupportedMathDiagnostics(question, curriculum.subject).map((diagnostic) => diagnostic.message),
+      ],
     })
     if (!verdict.available) {
       return {
         report: {
           questionNumber: question.number,
-          approved: true,
-          verdictReason: 'O juiz Jev não concluiu esta análise; a questão foi encaminhada para revisão humana.',
+          approved: false,
+          verdictReason: 'Sem parecer do Jev, a qualidade desta questão não pode ser aprovada.',
           checks: [],
           issues: verdict.issues.map((issue) => ({ severity: issue.severity, reason: issue.reason })),
+          diagnostics: [{
+            code: 'REGENERATE_QUESTION',
+            severity: 'revisao_humana',
+            repairAction: 'revisao_humana',
+            fields: [],
+            protectedFields: [],
+            message: 'O Jev não concluiu a avaliação. Reexecute a análise antes de aprovar esta questão.',
+            evidence: verdict.issues.map((issue) => issue.reason).join('; '),
+            blocksApproval: true,
+          }],
         },
         warnings: [`Questão ${question.number}: o juiz de qualidade (Jev) não respondeu nesta tentativa.`],
       }
     }
     return { report: reportFromJudgeVerdict(question, verdict), warnings: [] }
   }
-  // As questões são independentes; três julgamentos em paralelo respeitam o limite do provedor.
-  const concurrency = Math.max(1, Math.min(3, questions.length))
-  for (let offset = 0; offset < questions.length; offset += concurrency) {
-    const group = await Promise.all(questions.slice(offset, offset + concurrency).map(auditQuestion))
-    for (const item of group) {
-      reports.push(item.report)
-      warnings.push(...item.warnings)
-    }
+  // Cada julgamento é uma chamada externa independente. Envie a prova inteira
+  // em paralelo; o gargalo é a latência do provedor, não o processamento local.
+  const audited = await Promise.all(questions.map(auditQuestion))
+  for (const item of audited) {
+    reports.push(item.report)
+    warnings.push(...item.warnings)
   }
   const semantic: ExamQualityIssue[] = reports.flatMap((result) => result.issues.map((issue) => ({
     questionNumbers: [result.questionNumber],
     severity: issue.severity,
     reason: `Teste de qualidade${issue.criterion ? ` — ${issue.criterion}` : ''}: ${issue.reason}`,
   } satisfies ExamQualityIssue)))
-  const rejected = [...new Set([...deterministic, ...semantic].filter((issue) => issue.severity === 'bloqueante').flatMap((issue) => issue.questionNumbers))]
+  // Checks locais são apenas evidências que o Jev recebe no contexto. Só o
+  // parecer do Jev compõe a lista de questões reprovadas.
+  const rejected = [...new Set(semantic.filter((issue) => issue.severity === 'bloqueante').flatMap((issue) => issue.questionNumbers))]
   const report = questions.map((question) => {
     const semanticResult = reports.find((result) => result.questionNumber === question.number)
-    const localIssues = deterministic.filter((issue) => issue.questionNumbers.includes(question.number)).map((issue) => ({ severity: issue.severity, reason: issue.reason }))
     const semanticIssues = semantic.filter((issue) => issue.questionNumbers.includes(question.number)).map((issue) => ({ severity: issue.severity, reason: issue.reason }))
     const diagnostics = [
-      ...[...localIssues, ...semanticIssues].map((issue) => diagnosticFromIssue(issue)),
-      ...unsupportedMathDiagnostics(question, curriculum.subject),
+      ...(semanticResult?.diagnostics ?? semanticIssues.map((issue) => diagnosticFromIssue(issue))),
     ]
     return {
       questionNumber: question.number,
-      approved: ![...localIssues, ...semanticIssues].some((issue) => issue.severity === 'bloqueante'),
+      approved: semanticResult?.approved === true,
       verdictReason: semanticResult?.verdictReason,
       checks: semanticResult ? normalizeQualityChecks(semanticResult.checks) : undefined,
       // A aprovação final precisa desta evidência estruturada: sem ela a tela
       // pode mostrar "Aprovada", mas a barreira não tem como comprovar o gabarito.
       answerKeyAudit: semanticResult?.answerKeyAudit,
-      issues: [...localIssues, ...semanticIssues],
+      issues: semanticIssues,
       diagnostics,
     }
   })
-  return { issues: [...deterministic, ...semantic], warnings, rejected, checked: questions.map((question) => question.number), report }
+  return { issues: [...semantic], warnings, rejected, checked: questions.map((question) => question.number), report }
 }
 
 /**
@@ -256,8 +280,6 @@ export function qualityApprovalBlocks(payload: ExamGenerationResult): string[] {
 
   const blocks: string[] = []
   for (const question of payload.questions) {
-    const supportTextIssue = missingRequiredSupportTextReason(question)
-    if (supportTextIssue) blocks.push(`Questão ${question.number}: ${supportTextIssue}`)
     const result = latest.find((candidate) => candidate.questionNumber === question.number)
     if (!result) {
       blocks.push(`Questão ${question.number}: ausente do relatório final de qualidade.`)
@@ -265,9 +287,9 @@ export function qualityApprovalBlocks(payload: ExamGenerationResult): string[] {
     }
     // A leitura também normaliza ("reprovado" com evidência de não
     // aplicável não bloqueia) e ignora o booleano `approved` cru do modelo:
-    // o que bloqueia é evidência concreta.
+    // o que bloqueia é evidência concreta do Jev em um critério bloqueante.
     const checks = normalizeQualityChecks(result.checks)
-    const rejectedCheck = checks.find((check) => check.status === 'reprovado' && AI_BLOCKING_CRITERIA.has(check.criterion))
+    const rejectedCheck = checks.find((check) => check.status === 'reprovado' && JEV_BLOCKING_CRITERIA.has(check.criterion))
     const blockingIssue = result.issues.find((issue) => issue.severity === 'bloqueante' && !isNotApplicableEvidence(issue.reason))
     if (rejectedCheck || blockingIssue) {
       blocks.push(`Questão ${question.number}: o relatório de qualidade a reprovou.`)

@@ -2,15 +2,11 @@ import { z } from 'zod'
 import { generateValidatedStructuredContent, StructuredGenerationError } from '@/lib/gemini/structuredRepair'
 import type { ExamQuestion } from '@/lib/gemini/examSchema'
 import { canonicalDomainsForSubject, getCanonicalDomain, computeCanonicalDomain, comparableNumber } from './domains'
-import { buildDeterministicMathStatement } from './deterministicMathStatement'
 import { getRuleEngine, registeredRuleEngineIds } from './rules'
-import { answerProseContainsResult, defaultShuffle, assembleAlternatives, gateAnchoredClaim, gateAlternativePresentation, gateAlternativeShape, gateDistractors, gateInterpretiveSupport, gateMetadata, gateStatement, gateStrategy, gateTruth, gateVisualPlan, gateVisualReference } from './gates'
-import { detectAlternativeAmbiguities } from './alternatives'
+import { defaultShuffle, assembleAlternatives, gateAnchoredClaim, gateAlternativePresentation, gateAlternativeShape, gateDistractors, gateInterpretiveSupport, gateMetadata, gateStatement, gateStrategy, gateTruth, gateVisualPlan, gateVisualReference } from './gates'
 import { assembleExamQuestion } from './finalize'
-import { runLocalQualityGate } from './localQualityGate'
 import { curriculumLeakageIssues, normalizeQuestionPresentation } from './curriculumLeakage'
-import { judgeQuestionQuality } from '@/lib/ai/questionQualityDecision'
-import { recordUnifiedAttempt, recordUnifiedSuccess, recordUnifiedRejection, recordAuditSkipped, recordAuditTriggered } from './metrics'
+import { recordUnifiedAttempt, recordUnifiedSuccess } from './metrics'
 import { StageGateError } from './types'
 import type { AssembledQuestion, MetadataDraft, PipelineContext, QuestionPlan, TruthObject, VisualPlan } from './types'
 import { TRUTH_STRATEGIES } from './types'
@@ -143,18 +139,6 @@ const UNIFIED_RESPONSE_SCHEMA = {
   required: ['derivation', 'supportText', 'statement', 'visualPlan', 'bloomLevel', 'dok', 'soloExpected', 'selfConfidence'],
 }
 
-const distractorRepairSchema = z.object({
-  distractors: z.array(z.string().min(1)),
-})
-
-const DISTRACTOR_REPAIR_RESPONSE_SCHEMA = {
-  type: 'object',
-  properties: {
-    distractors: { type: 'array', items: { type: 'string' } },
-  },
-  required: ['distractors'],
-}
-
 // ---------------------------------------------------------------------------
 // Geração unificada (1 chamada IA por questão)
 // ---------------------------------------------------------------------------
@@ -176,15 +160,17 @@ A questão deve exigir a operação cognitiva do VERBO da habilidade aplicada ao
 }
 
 /** Regras que o juiz de qualidade aplica; o gerador as recebe antes de escrever. */
-const QUALITY_RULES = `REGRAS DE QUALIDADE (o juiz de qualidade barra a questão se violar qualquer uma):
+const QUALITY_RULES = `REGRAS DE QUALIDADE (o Jev avalia a questão pronta e direciona qualquer correção):
 1. A questão mede a habilidade BNCC-alvo (quando informada), não apenas o assunto.
 2. A resposta correta responde de fato à pergunta, com conteúdo da disciplina; nunca repete os termos da pergunta nem é um título/tópico.
 3. Nada de linguagem de planejamento ("o estudo de...", "o capítulo...", "o currículo..."). Escreva para o aluno.
-4. Objetiva: a alternativa correta tem o mesmo tamanho, formato e especificidade dos distratores — não pode ser a única longa nem a única que repete palavras do enunciado. Distratores são erros conceituais plausíveis de um aluno da série.
-5. Exatamente uma alternativa é defensável.
-6. Fatos corretos para a série. Em dúvida factual, use uma formulação mais simples e certa.
-7. O enunciado NÃO repete o texto de apoio (o aluno já o vê em caixa própria) nem duplica instruções; apenas pergunta.
-8. Descritiva: resposta esperada que realmente responde ao enunciado e critérios observáveis com pesos.
+4. Objetiva: primeiro resolva o enunciado por completo. A alternativa correta e cada distrator devem responder a TODOS os itens pedidos, na mesma ordem, com os mesmos componentes, unidades, notação e nível de detalhe. É proibido colocar somente um número ou uma fórmula quando a pergunta também pede interpretação, comparação, classificação ou justificativa.
+5. As cinco alternativas devem ter o mesmo padrão visual e gramatical. Nenhuma pode ser identificada como gabarito por ser a única composta por um número, frase, cálculo, unidade, explicação ou resposta completa. Distratores devem ser erros plausíveis, mas preencher os mesmos componentes da resposta.
+6. Objetiva de Matemática: o estudante faz o cálculo; as alternativas exibem a resposta final pedida, sem fórmula usada, conta armada, etapas de resolução ou justificativa do cálculo. Não peça no enunciado para mostrar cálculos ou justificar a conta em uma questão objetiva. Preserve fórmulas quando a própria expressão algébrica for explicitamente a resposta solicitada. Preserve interpretações e conclusões conceituais que o enunciado pedir, mas sem expor a resolução numérica.
+7. Exatamente uma alternativa é defensável.
+8. Fatos corretos para a série. Em dúvida factual, use uma formulação mais simples e certa.
+9. O enunciado NÃO repete o texto de apoio (o aluno já o vê em caixa própria) nem duplica instruções; apenas pergunta.
+10. Descritiva: resposta esperada que realmente responde ao enunciado e critérios observáveis com pesos.
 Exemplo RUIM: "Qual é um combustível renovável?" com alternativa correta "Combustíveis renováveis". Exemplo BOM: "Uma cidade troca ônibus a diesel por elétricos. Com base nos dados, qual argumento avalia a vantagem e a limitação da troca?" com alternativas de mesmo formato.
 `
 
@@ -202,7 +188,8 @@ Domínio: ${domain.id} — ${domain.title}.
 Entradas obrigatórias em "values" (todas numéricas): ${keyList}.
 ${domain.inputDescription}
 Escolha valores plausíveis e devolva em "values". O resultado oficial será recalculado por código.
-NÃO invente números no enunciado que não estejam nos values.${ctx.questionType === 'descritiva' ? `
+NÃO invente números no enunciado que não estejam nos values.${ctx.questionType === 'objetiva' ? `
+OBJETIVA CALCULÁVEL: em "claim", escreva a resposta correta completa ao enunciado, cobrindo todos os itens pedidos. Use o resultado calculado, mas não devolva apenas o valor numérico se a questão também pede comparação, interpretação, classificação ou outra conclusão. Em "distractors", escreva opções incorretas plausíveis que preencham os mesmos itens, na mesma ordem e com apresentação equivalente à de "claim". O Jev conferirá cada alternativa e o gabarito independentemente.` : ''}${ctx.questionType === 'descritiva' ? `
 DESCRITIVA CALCULÁVEL: o enunciado DEVE pedir explicitamente a grandeza que o domínio calcula (${domain.title}) a partir dos valores de "values"; itens adicionais (justificar, interpretar, representar) são permitidos, mas esse item é obrigatório e não pode ser trocado por outra tarefa. Em "expectedAnswer", responda a TODOS os itens do enunciado, na ordem, e escreva o resultado numérico do cálculo; ele será conferido contra o recálculo por código e a questão é rejeitada se divergir.` : ''}`
   } else if (slot.truthStrategy === 'regra_deterministica' && engine) {
     strategyInstructions = `ESTRATÉGIA: REGRA DETERMINÍSTICA.
@@ -249,7 +236,7 @@ ${QUALITY_RULES}
 ${strategyInstructions}
 ${ctx.contentPlanInstruction ? `Instrução adicional: ${ctx.contentPlanInstruction}` : ''}
 
-${ctx.questionType === 'objetiva' ? `Gere exatamente ${distCount} distratores em "distractors". Cada distrator deve representar um erro típico plausível, NUNCA a resposta correta. Use o MESMO formato/tamanho da resposta: se a resposta correta for uma palavra ou expressão curta, todos devem ser formas curtas; se for uma frase, todos devem ser frases completas. NÃO repita distratores.` : 'Questão descritiva: não gere distratores. Preencha OBRIGATORIAMENTE "expectedAnswer" (resposta-modelo de 3–6 frases que um aluno nota 10 escreveria, respondendo ao enunciado) e "gradingCriteria" (3–5 critérios observáveis, cada um com seu peso em %, somando 100%).'}
+${ctx.questionType === 'objetiva' ? `Gere "claim" como a resposta correta e exatamente ${distCount} distratores em "distractors". Todos devem responder aos mesmos itens do enunciado, na mesma ordem e com os mesmos componentes e unidades. Para cálculos numéricos, apresente nas opções somente os resultados finais solicitados, sem fórmulas utilizadas, contas armadas, etapas ou justificativas de cálculo. Se a pergunta pedir explicitamente uma expressão algébrica, essa expressão é a resposta final e deve permanecer. Não peça para mostrar cálculos ou justificar a resolução no enunciado objetivo. Preserve as interpretações conceituais que forem pedidas, sem incluir a conta que levou ao resultado. Cada distrator representa um erro plausível, nunca a resposta correta. Não repita opções.` : 'Questão descritiva: não gere distratores. Preencha OBRIGATORIAMENTE "expectedAnswer" (resposta-modelo de 3–6 frases que um aluno nota 10 escreveria, respondendo ao enunciado) e "gradingCriteria" (3–5 critérios observáveis, cada um com seu peso em %, somando 100%).'}
 
 O nome supportText é interno ao sistema e NUNCA pode aparecer no enunciado. Se houver texto de apoio, escreva "Leia o texto a seguir" ou "Considere o trecho abaixo"; nunca escreva nomes de campos, payload ou JSON para o estudante.
 
@@ -258,91 +245,6 @@ ${visualInstructions}
 Preencha também: bloomLevel, bnccCodes/bnccStatus (nunca invente código BNCC), dok, soloExpected com justificativa citando literalmente o enunciado.
 
 Defina selfConfidence (0–1) indicando o quão confiante você está na qualidade e unicidade da questão.`
-}
-
-/**
- * Um erro puramente local nas alternativas não deve invalidar enunciado,
- * gabarito e metadados que já passaram pelos demais gates. Este reparo usa
- * uma resposta pequena e volta pelo mesmo gate determinístico antes de ser
- * aceito; se não resolver, o fluxo normal ainda regenera a questão inteira.
- */
-async function repairDistractorsLocally(params: {
-  ctx: PipelineContext
-  slot: BlueprintSlot
-  plan: QuestionPlan
-  truth: TruthObject
-  statement: string
-  supportText: string | null
-  bnccCodes: string[]
-  correctAnswerText: string
-  distractors: string[]
-  failure: StageGateError
-}): Promise<{ distractors: string[]; warnings: string[] }> {
-  const expectedCount = params.distractors.length
-  const prompt = `Você corrige SOMENTE os distratores de uma questão objetiva escolar.
-
-CONTEXTO
-Disciplina: ${params.ctx.subject}. Série: ${params.ctx.gradeYear}º ano (${params.ctx.segment}).
-BNCC: ${params.bnccCodes.join(', ') || 'não mapeada'}.
-Estratégia de verdade: ${params.slot.truthStrategy}.
-Material curricular: ${params.ctx.curriculumContent.slice(0, 3000)}
-
-QUESTÃO APROVADA
-Enunciado: ${params.statement}
-${params.supportText ? `Texto de apoio: ${params.supportText}` : ''}
-Resposta correta (NÃO incluir nem alterar): ${params.correctAnswerText}
-Distratores atuais: ${JSON.stringify(params.distractors)}
-
-DIAGNÓSTICO DETERMINÍSTICO
-Código: ${params.failure.gate}
-Erro: ${params.failure.message}
-
-DEVOLVA APENAS JSON: {"distractors":[...]}
-- Gere exatamente ${expectedCount} distratores novos.
-- Eles precisam ser todos distintos mesmo ignorando acentos, maiúsculas e espaços.
-- Nenhum pode reproduzir, equivaler ou conter a resposta correta.
-- Preserve o tema, o nível e o formato das respostas. Não altere enunciado, texto de apoio, BNCC ou gabarito.
-- Cada distrator deve ter forma e extensão comparáveis às da resposta correta ("${params.correctAnswerText}"): se ela é um valor ou expressão curta, use somente valores ou expressões curtas, sem frases explicativas.`
-
-  const generated = await generateValidatedStructuredContent({
-    context: `generation/unified-distractor-repair-${params.ctx.questionNumber}`,
-    prompt,
-    responseSchema: DISTRACTOR_REPAIR_RESPONSE_SCHEMA,
-    zodSchema: distractorRepairSchema,
-    maxAttempts: 2,
-    validate: (candidate) => {
-      if (candidate.distractors.length !== expectedCount) {
-        return {
-          value: candidate,
-          issues: [`Esperados ${expectedCount} distratores, recebidos ${candidate.distractors.length}.`],
-          repairInstructions: [{ code: 'DISTRACTOR_COUNT', fields: ['distractors'], message: `Devolva exatamente ${expectedCount} distratores.` }],
-        }
-      }
-      try {
-        gateAlternativeShape(params.correctAnswerText, candidate.distractors)
-        gateDistractors(params.plan, params.truth, candidate.distractors, params.correctAnswerText)
-        gateInterpretiveSupport(params.plan, params.truth, candidate.distractors)
-        return { value: candidate, issues: [] }
-      } catch (error) {
-        if (!(error instanceof StageGateError)) throw error
-        return {
-          value: candidate,
-          issues: [`[${error.gate}] ${error.message}`],
-          repairInstructions: [{
-            code: error.gate === 'distractor_duplicate' ? 'DUPLICATE_ALTERNATIVE' : 'DISTRACTOR_INVALID',
-            fields: ['distractors'],
-            message: error.message,
-            protectedFields: ['statement', 'supportText', 'correctAnswerText', 'bnccCodes'],
-          }],
-        }
-      }
-    },
-  })
-
-  return {
-    distractors: generated.value.distractors,
-    warnings: generated.warnings,
-  }
 }
 
 export type UnifiedGenerationResult = {
@@ -397,7 +299,7 @@ export async function generateUnifiedQuestion(
       prompt,
       responseSchema: UNIFIED_RESPONSE_SCHEMA,
       zodSchema: unifiedSchema,
-      maxAttempts: 3,
+      maxAttempts: 2,
       validate: (parsed) => {
         const plan: QuestionPlan = {
           truthStrategy: slot.truthStrategy,
@@ -409,7 +311,9 @@ export async function generateUnifiedQuestion(
           strategy: slot.truthStrategy,
           domain: slot.domain as TruthObject['domain'],
           values: Object.fromEntries(Object.entries(parsed.values ?? {}).filter(([, value]) => typeof value === 'number')) as Record<string, number>,
-          derivedAnswer: parsed.claim,
+          // Em questões calculáveis, claim é a resposta redigida completa;
+          // derivedAnswer fica reservado ao resultado canônico do recálculo.
+          derivedAnswer: slot.truthStrategy === 'calculavel' ? undefined : parsed.claim,
           derivation: parsed.derivation,
           sourceEvidence: parsed.sourceEvidence,
           textEvidence: parsed.sourceEvidence,
@@ -419,36 +323,8 @@ export async function generateUnifiedQuestion(
 
         try {
           verifyTruth(ctx, plan, truth, parsed.supportText)
-          const targetCodes = (ctx.targetSkills ?? []).map((skill) => skill.code.toUpperCase())
-          if (targetCodes.length && !parsed.bnccCodes.some((code) => targetCodes.includes(code.trim().toUpperCase()))) {
-            return {
-              value: parsed,
-              issues: [`bnccCodes deve conter uma das habilidades-alvo (${targetCodes.join(', ')}).`],
-              repairInstructions: [{ code: 'BNCC_TARGET_MISSING', fields: ['bnccCodes', 'bnccStatus'], message: `Devolva em bnccCodes exatamente uma destas habilidades: ${targetCodes.join(', ')}, com bnccStatus "mapeado", e garanta que a questão a avalia.`, protectedFields: ['statement', 'supportText'] }],
-            }
-          }
-          const missingDiscursive = ctx.questionType === 'descritiva'
-            && (!parsed.expectedAnswer || parsed.expectedAnswer.trim().length < 20 || !parsed.gradingCriteria?.length)
-          if (missingDiscursive) {
-            return {
-              value: parsed,
-              issues: ['Questão descritiva sem resposta esperada ou critérios de correção próprios.'],
-              repairInstructions: [{ code: 'DISCURSIVE_KEY_MISSING', fields: ['expectedAnswer', 'gradingCriteria'], message: 'Escreva expectedAnswer (resposta-modelo que responda a TODOS os itens do enunciado, 3–6 frases) e gradingCriteria (3–5 critérios com pesos em %).', protectedFields: ['statement', 'supportText', 'bnccCodes'] }],
-            }
-          }
-          // Descritiva calculável: a resposta-modelo da IA é mantida (cobre todos os
-          // itens do enunciado), mas o resultado numérico dela precisa bater com o recálculo.
-          if (ctx.questionType === 'descritiva' && plan.truthStrategy === 'calculavel' && plan.domain) {
-            const computation = computeCanonicalDomain(plan.domain, truth.values)
-            if (!computation.answer.category && Number.isFinite(computation.answer.numeric)
-              && !answerProseContainsResult(parsed.expectedAnswer ?? '', computation.answer.numeric)) {
-              return {
-                value: parsed,
-                issues: [`A resposta-modelo não contém o resultado recalculado (${computation.answer.display}).`],
-                repairInstructions: [{ code: 'EXPECTED_ANSWER_RESULT_MISMATCH', fields: ['expectedAnswer'], message: `A resposta-modelo precisa incluir o resultado do cálculo conferido por código: ${computation.answer.display}. Refaça a resolução com os valores de "values" e responda a todos os itens do enunciado.`, protectedFields: ['statement', 'supportText', 'values', 'bnccCodes'] }],
-              }
-            }
-          }
+          // Resposta, habilidade e completude serão avaliadas pelo Jev depois
+          // que a questão inteira estiver montada.
           return { value: parsed, issues: [] }
         } catch (error) {
           if (!(error instanceof StageGateError)) throw error
@@ -456,6 +332,11 @@ export async function generateUnifiedQuestion(
           const unavailableRule = slot.truthStrategy === 'regra_deterministica'
             && (error.gate === 'rule_engine_missing' || /n[aã]o implementada/i.test(error.message))
           const evidenceFailure = error.gate === 'evidence_not_found' || error.gate === 'evidence_missing'
+          if (!unavailableRule) {
+            // Um cálculo ou uma evidência que não bateu vira contexto para o
+            // Jev avaliar; não rejeitamos a candidata dentro do gerador.
+            return { value: parsed, issues: [] }
+          }
           return {
             value: parsed,
             issues: [message],
@@ -510,7 +391,7 @@ export async function generateUnifiedQuestion(
     strategy: slot.truthStrategy,
     domain: slot.domain as TruthObject['domain'],
     values: Object.fromEntries(Object.entries(parsed.values ?? {}).filter(([, value]) => typeof value === 'number')) as Record<string, number>,
-    derivedAnswer: parsed.claim,
+    derivedAnswer: slot.truthStrategy === 'calculavel' ? undefined : parsed.claim,
     derivation: parsed.derivation,
     sourceEvidence: parsed.sourceEvidence,
     textEvidence: parsed.sourceEvidence,
@@ -525,6 +406,17 @@ export async function generateUnifiedQuestion(
   } catch (error) {
     if (error instanceof StageGateError) {
       issues.push({ severity: 'bloqueante', reason: `[truth] ${error.message}` })
+      if (plan.truthStrategy === 'calculavel' && plan.domain) {
+        try {
+          const computation = computeCanonicalDomain(plan.domain, truth.values)
+          truth.answerNumeric = computation.answer.numeric
+          truth.derivedAnswer = computation.answer.display
+          truth.derivation = computation.derivation
+        } catch {
+          // Mantém a candidata; a evidência informa ao Jev que o cálculo
+          // não pôde ser conferido com os dados estruturados recebidos.
+        }
+      }
     } else throw error
   }
 
@@ -550,80 +442,44 @@ export async function generateUnifiedQuestion(
   let alternatives: Array<{ letter: string; text: string }> | null = null
   let correctLetter: string | null = null
 
-  const correctAnswerText = plan.truthStrategy === 'calculavel' && plan.domain
-    ? (getCanonicalDomain(plan.domain)?.compute(truth.values).answer.choiceDisplay ?? truth.derivedAnswer ?? '')
-    : (truth.derivedAnswer ?? truth.claim ?? '')
+  // A alternativa correta precisa responder ao enunciado inteiro. O valor
+  // canônico continua em derivedAnswer/answerNumeric para evidência e auditoria.
+  let correctAnswerText = truth.claim?.trim() || truth.derivedAnswer || ''
+  if (plan.truthStrategy === 'calculavel' && plan.domain) {
+    try {
+      const canonicalAnswer = getCanonicalDomain(plan.domain)?.compute(truth.values).answer.choiceDisplay
+      correctAnswerText = truth.claim?.trim() || canonicalAnswer || truth.derivedAnswer || ''
+    } catch (error) {
+      issues.push({
+        severity: 'bloqueante',
+        reason: `[truth:recompute] O cálculo não pôde ser conferido antes do Jev: ${error instanceof Error ? error.message : 'dados inválidos'}.`,
+      })
+    }
+  }
 
-  if (ctx.questionType === 'objetiva' && parsed.distractors) {
-    let distractors = parsed.distractors
+  if (ctx.questionType === 'objetiva') {
+    const distractors = parsed.distractors ?? []
     try {
       gateAlternativePresentation(correctAnswerText)
       gateAlternativeShape(correctAnswerText, distractors)
     } catch (error) {
-      if (error instanceof StageGateError) {
-        // Forma diferente da resposta é um defeito só dos distratores (ex.: resposta
-        // numérica curta com distratores em frase): tenta o reparo local antes de
-        // reprovar a questão inteira.
-        let shapeRepaired = false
-        if (error.gate === 'alternative_shape') {
-          try {
-            const repaired = await repairDistractorsLocally({
-              ctx, slot, plan, truth,
-              statement: parsed.statement,
-              supportText: parsed.supportText,
-              bnccCodes: parsed.bnccCodes,
-              correctAnswerText,
-              distractors,
-              failure: error,
-            })
-            distractors = repaired.distractors
-            shapeRepaired = true
-            issues.push({ severity: 'alerta', reason: `[distratores] Reparo local aplicado: ${error.message}` })
-            issues.push(...repaired.warnings.map((warning) => ({ severity: 'alerta' as const, reason: `[distratores] ${warning}` })))
-          } catch (repairError) {
-            if (!(repairError instanceof StructuredGenerationError)) throw repairError
-          }
-        }
-        if (!shapeRepaired) issues.push({ severity: 'bloqueante', reason: `[alternativas] ${error.message}` })
-      }
+      if (error instanceof StageGateError) issues.push({ severity: 'bloqueante', reason: `[alternativas:${error.gate}] ${error.message}` })
     }
-
+    const expectedCount = (ctx.segment === 'anos-iniciais' ? 4 : 5) - 1
+    if (distractors.length !== expectedCount) {
+      issues.push({ severity: 'bloqueante', reason: `[alternativas:quantidade] Esperados ${expectedCount} distratores, recebidos ${distractors.length}.` })
+    }
     try {
-      const expectedCount = (ctx.segment === 'anos-iniciais' ? 4 : 5) - 1
-      if (distractors.length !== expectedCount) {
-        issues.push({ severity: 'bloqueante', reason: `Esperados ${expectedCount} distratores, recebidos ${distractors.length}.` })
-      } else {
-        gateDistractors(plan, truth, distractors, correctAnswerText)
-        gateInterpretiveSupport(plan, truth, distractors)
-        const assembled = assembleAlternatives(distractors, correctAnswerText, shuffle)
-        alternatives = assembled.alternatives
-        correctLetter = assembled.correctLetter
-      }
+      gateDistractors(plan, truth, distractors, correctAnswerText)
+      gateInterpretiveSupport(plan, truth, distractors)
     } catch (error) {
-      if (error instanceof StageGateError) {
-        if (error.gate === 'distractor_duplicate' || error.gate === 'distractor_equals_answer' || error.gate === 'alternative_ambiguity') {
-          const repaired = await repairDistractorsLocally({
-            ctx,
-            slot,
-            plan,
-            truth,
-            statement: parsed.statement,
-            supportText: parsed.supportText,
-            bnccCodes: parsed.bnccCodes,
-            correctAnswerText,
-            distractors,
-            failure: error,
-          })
-          const assembled = assembleAlternatives(repaired.distractors, correctAnswerText, shuffle)
-          alternatives = assembled.alternatives
-          correctLetter = assembled.correctLetter
-          issues.push({ severity: 'alerta', reason: `[distratores] Reparo local aplicado: ${error.message}` })
-          issues.push(...repaired.warnings.map((warning) => ({ severity: 'alerta' as const, reason: `[distratores] ${warning}` })))
-        } else {
-          issues.push({ severity: 'bloqueante', reason: `[distratores] ${error.message}` })
-        }
-      } else throw error
+      if (error instanceof StageGateError) issues.push({ severity: 'bloqueante', reason: `[distratores:${error.gate}] ${error.message}` })
+      else throw error
     }
+    // Mantém a candidata completa para que o Jev faça a primeira avaliação.
+    const assembled = assembleAlternatives(distractors, correctAnswerText, shuffle)
+    alternatives = assembled.alternatives
+    correctLetter = assembled.correctLetter
   }
 
   // --- Validar enunciado ---
@@ -677,43 +533,19 @@ export async function generateUnifiedQuestion(
     metadata,
   }
 
-  const hasBlocking = issues.some(i => i.severity === 'bloqueante')
-  if (hasBlocking) {
-    recordUnifiedRejection(ctx.subject, 'gate_failure', issues.filter(i => i.severity === 'bloqueante').map(i => i.reason).join('; '))
-    // Lança erro para o chamador regenerar
-    throw new StageGateError('stage0', 'unified_gate', issues.filter(i => i.severity === 'bloqueante').map(i => i.reason).join(' | '))
-  }
-
   const built = assembleExamQuestion(ctx, assembled)
   // O aluno já vê o texto de apoio na caixa própria: o enunciado não o repete.
-  const question = normalizeQuestionPresentation(built)
+  let question = normalizeQuestionPresentation(built)
 
   // --- Gate determinístico contra vazamento do escopo curricular ---
   const leakage = curriculumLeakageIssues(question, ctx.curriculumContent)
   issues.push(...leakage)
-  const blockingLeak = leakage.filter((issue) => issue.severity === 'bloqueante')
-  if (blockingLeak.length) {
-    recordUnifiedRejection(ctx.subject, 'curriculum_leak', blockingLeak.map((issue) => issue.reason).join('; '))
-    throw new StageGateError('stage3', 'curriculum_leak', blockingLeak.map((issue) => issue.reason).join(' | '))
-  }
 
-  // --- Juiz de qualidade (Jev): toda questão, não só amostra ---
-  recordAuditTriggered(ctx.subject, slot.truthStrategy)
-  const verdict = await judgeQuestionQuality({
-    subject: ctx.subject,
-    gradeYear: ctx.gradeYear,
-    segment: ctx.segment,
-    question,
-    curriculumScope: ctx.curriculumContent,
-    skills: (ctx.targetSkills ?? []).flatMap((skill) => skill.description ? [{ code: skill.code, description: skill.description }] : []),
-  })
-  issues.push(...verdict.issues.map((issue) => ({ severity: issue.severity, reason: `[jev:${issue.criterion}] ${issue.reason}` })))
-  if (verdict.blocked) {
-    const reasons = verdict.issues.filter((issue) => issue.severity === 'bloqueante').map((issue) => issue.reason)
-    recordUnifiedRejection(ctx.subject, 'jev_quality', reasons.join('; '))
-    throw new StageGateError('stage5', 'jev_quality', reasons.join(' | '))
-  }
-  const needsAudit = verdict.available
+  // A auditoria Jev roda uma vez, depois que a questão está montada e
+  // normalizada com o mesmo contexto que será persistido no relatório final.
+  // Se bloquear, o diagnóstico orienta o reparo e apenas a versão corrigida
+  // volta ao Jev.
+  const needsAudit = true
 
   const durationMs = Date.now() - startMs
   recordUnifiedSuccess(ctx.subject, slot.truthStrategy, durationMs)

@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import type { ExamGenerationResult, ExamQuestion } from '@/lib/gemini/examSchema'
+import type { AnswerKeyCheck, QualityJudgeIssue } from '@/lib/ai/questionQualityDecision'
+import { MULTIPLE_CORRECT_ALTERNATIVES, NO_CORRECT_ALTERNATIVE } from '@/lib/ai/questionQualityContract'
 
 // Diagnósticos são o contrato entre validação, reparo e revisão humana. A
 // mensagem continua legível, mas o fluxo nunca precisa tomar decisões a
@@ -10,7 +12,16 @@ export const QUALITY_DIAGNOSTIC_CODES = [
   'DUPLICATE_ALTERNATIVE',
   'DISTRACTOR_EQUALS_ANSWER',
   'ALTERNATIVE_AMBIGUITY',
+  'ALTERNATIVE_FORMAT_OUTLIER',
+  'ALTERNATIVE_CONTENT_INCOMPLETE',
+  'OBJECTIVE_CALCULATION_REQUEST',
+  'ALTERNATIVE_EXPOSES_CALCULATION',
   'ANSWER_KEY_MISMATCH',
+  'ANSWER_EXPOSED_IN_STATEMENT',
+  'NO_CORRECT_ALTERNATIVE',
+  'MISSING_SUPPORT_TEXT',
+  'FACTUAL_INCONSISTENCY',
+  'GRADING_CRITERIA',
   'EVIDENCE_NOT_FOUND',
   'INSUFFICIENT_INFORMATION',
   'INVENTED_NUMBER',
@@ -34,6 +45,7 @@ export const qualityDiagnosticSchema = z.object({
   protectedFields: z.array(z.string()).default([]),
   message: z.string().min(1),
   evidence: z.string().nullable().optional(),
+  alternativeLetter: z.string().regex(/^[A-E]$/).nullable().optional(),
   blocksApproval: z.boolean().default(false),
 })
 
@@ -47,6 +59,60 @@ function diagnostic(params: Omit<QualityDiagnostic, 'protectedFields'> & { prote
   return {
     ...params,
     protectedFields: params.protectedFields ?? BASE_PROTECTED,
+  }
+}
+
+/** Converte a decisão tipada do Jev sem inferir ações a partir de prosa. */
+export function diagnosticFromJevIssue(
+  issue: QualityJudgeIssue,
+  question: ExamQuestion,
+  answerKey: AnswerKeyCheck | null,
+): QualityDiagnostic {
+  const common = { severity: issue.severity, evidence: issue.reason, blocksApproval: issue.severity === 'bloqueante' }
+  switch (issue.criterion) {
+    case 'objetiva_exige_desenvolvimento':
+      return diagnostic({ ...common, code: 'OBJECTIVE_CALCULATION_REQUEST', repairAction: 'reparo_local', fields: ['statement'], protectedFields: ['supportText', 'alternatives', 'correctLetter'], message: 'Em questão objetiva, ajuste somente o comando para pedir os resultados finais, sem solicitar que o aluno mostre cálculos ou justifique a resolução.' })
+    case 'alternativa_exibe_calculo':
+      return diagnostic({ ...common, code: 'ALTERNATIVE_EXPOSES_CALCULATION', repairAction: 'reparo_local', fields: issue.alternativeLetter ? [`alternatives.${issue.alternativeLetter}`] : ['alternatives'], alternativeLetter: issue.alternativeLetter ?? null, protectedFields: ['statement', 'supportText', 'correctLetter'], message: issue.alternativeLetter ? `Reescreva somente a alternativa ${issue.alternativeLetter} para exibir o resultado final pedido, sem fórmulas de resolução, contas ou etapas.` : issue.reason })
+    case 'resposta_exposta_enunciado':
+      return diagnostic({ ...common, code: 'ANSWER_EXPOSED_IN_STATEMENT', repairAction: 'reparo_local', fields: ['statement'], message: 'O enunciado entrega a resposta e deve ser reescrito sem alterar o restante da questão.' })
+    case 'informacao_suficiente':
+      return diagnostic({ ...common, code: 'INSUFFICIENT_INFORMATION', repairAction: 'reparo_local', fields: ['statement'], protectedFields: ['supportText', 'alternatives', 'correctLetter'], message: 'O enunciado não permite resolver a questão com os dados disponíveis. Reescreva somente o enunciado para perguntar algo que os dados existentes permitam responder, sem acrescentar fatos ou números.' })
+    case 'apoio_autossuficiente':
+      return diagnostic({ ...common, code: question.supportText?.trim() ? 'INSUFFICIENT_INFORMATION' : 'MISSING_SUPPORT_TEXT', repairAction: 'reparo_local', fields: ['supportText', 'statement'], message: 'Falta contexto suficiente; é necessário criar ou corrigir o texto de apoio e ajustar o enunciado.' })
+    case 'alternativas_homogeneas':
+    case 'resposta_unica':
+      return diagnostic({ ...common, code: 'ALTERNATIVE_AMBIGUITY', repairAction: 'reparo_local', fields: ['alternatives'], message: 'As alternativas devem ser refeitas preservando a resposta correta e o restante da questão.' })
+    case 'alternativa_formato_outlier':
+      return diagnostic({ ...common, code: 'ALTERNATIVE_FORMAT_OUTLIER', repairAction: 'reparo_local', fields: ['alternatives'], alternativeLetter: issue.alternativeLetter ?? null, message: issue.alternativeLetter ? `Reescreva somente a alternativa ${issue.alternativeLetter} para seguir o padrão das demais e responder integralmente à questão.` : issue.reason })
+    case 'alternativa_completa':
+      return diagnostic({ ...common, code: 'ALTERNATIVE_CONTENT_INCOMPLETE', repairAction: 'reparo_local', fields: ['alternatives'], alternativeLetter: issue.alternativeLetter ?? null, message: issue.alternativeLetter ? `Complete somente a alternativa ${issue.alternativeLetter} com todos os componentes pedidos no enunciado.` : issue.reason })
+    case 'gabarito':
+      return diagnostic({
+        ...common,
+        code: answerKey?.independentLetter === NO_CORRECT_ALTERNATIVE ? 'NO_CORRECT_ALTERNATIVE' : answerKey?.independentLetter === MULTIPLE_CORRECT_ALTERNATIVES ? 'ALTERNATIVE_AMBIGUITY' : 'ANSWER_KEY_MISMATCH',
+        repairAction: answerKey?.independentLetter === MULTIPLE_CORRECT_ALTERNATIVES || answerKey?.independentLetter === NO_CORRECT_ALTERNATIVE ? 'reparo_local' : 'regenerar_questao',
+        fields: answerKey?.independentLetter === NO_CORRECT_ALTERNATIVE ? ['alternatives', 'correctLetter'] : ['alternatives'],
+        message: answerKey?.independentLetter === NO_CORRECT_ALTERNATIVE ? 'Nenhuma alternativa é correta; refaça somente as alternativas e o gabarito.' : issue.reason,
+      })
+    case 'correcao_objetiva':
+      return diagnostic({ ...common, code: 'GRADING_CRITERIA', repairAction: 'reparo_local', fields: ['expectedAnswer', 'gradingCriteria'], message: 'A resposta-modelo e os critérios de correção devem ser refeitos sem mudar o enunciado.' })
+    case 'fatos_corretos':
+      return diagnostic({ ...common, code: 'FACTUAL_INCONSISTENCY', repairAction: 'regenerar_questao', fields: ['statement', 'supportText', 'alternatives', 'expectedAnswer'], message: 'Há possível erro factual; a questão precisa ser refeita a partir da fonte curricular.' })
+    case 'alinhamento_bncc':
+      return diagnostic({
+        ...common,
+        code: 'BNCC_MAPPING',
+        repairAction: 'reparo_local',
+        fields: ['statement', 'supportText', 'alternatives', 'correctLetter', 'expectedAnswer', 'gradingCriteria'],
+        protectedFields: ['number', 'source', 'type', 'curriculumUnitRowIndex', 'bnccCodes', 'bnccStatus'],
+        message: 'A questão não mede a habilidade BNCC indicada. Reescreva a tarefa para exigir a operação cognitiva da habilidade, mantendo o tema e os fatos do currículo escolar.',
+      })
+    case 'copia_escopo_curricular':
+    case 'resposta_substantiva':
+      return diagnostic({ ...common, code: 'CURRICULUM_LEAK', repairAction: 'regenerar_questao', fields: ['statement', 'supportText', 'alternatives', 'expectedAnswer'], message: issue.reason })
+    default:
+      return diagnostic({ ...common, code: 'REGENERATE_QUESTION', repairAction: issue.severity === 'bloqueante' ? 'regenerar_questao' : 'nenhuma', fields: [], message: issue.reason })
   }
 }
 

@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 05/10/2026 (título da unidade numérica no planejamento importado).
+> Última atualização: 05/10/2026 (PR #43 integrado e reparo de cálculos expostos em objetivas).
 
 ## 1. Fonte da verdade
 
@@ -396,6 +396,73 @@ Fica de fora: planejamentos já importados não mudam sozinhos. Rascunho existen
 bloqueia nova importação; os 8 de Inglês precisam ter os títulos atualizados em
 separado. Colunas sem campo no modelo (Aulas bimestrais, datas, Status, Professor,
 Livro) continuam não importadas.
+
+## 2.15 Velocidade e reparo de qualidade da geração (05/10/2026)
+
+Ao gerar uma prova, as questões passam a ser produzidas simultaneamente e a
+auditoria Jev final também avalia todos os itens em paralelo. A auditoria foi
+centralizada depois da montagem da questão para evitar o julgamento duplicado
+no gerador e no relatório final. Erros estruturais de resposta continuam com
+uma tentativa de reparo do JSON; erros locais não repetem automaticamente a
+mesma geração três vezes.
+
+Quando o Jev bloqueia `alinhamento_bncc`, o diagnóstico agora roteia para um
+reparo dirigido da questão: o prompt inclui o código, a descrição oficial e o
+contexto da habilidade via `@bncc/dados`, além do tema e conteúdo da unidade
+escolhida na planilha escolar. A planilha segue como única fonte dos temas e
+fatos de ensino; o dataset BNCC serve para definir a habilidade cognitiva que a
+questão precisa medir. Depois do reparo, o Jev avalia novamente o item.
+
+Se uma questão continuar bloqueada depois do reparo dirigido e uma
+substituição, a prova é preservada para revisão humana, com aprovação bloqueada
+pelo relatório de qualidade, em vez de descartar o pedido inteiro. A fila
+mostra separadamente espera e tempo de geração. Ações na fila permitem repetir
+uma prova concluída usando a mesma configuração em um clique.
+
+Dependência adicionada: `@bncc/dados@0.6.0` (código MIT; dataset CC BY 4.0,
+embutido sem consulta de rede). A fonte e a versão do registro oficial entram
+no prompt e nos avisos do reparo. Não há migration. Typecheck executado; testes
+automatizados não foram executados nesta alteração.
+
+## 2.16 Resposta completa nas alternativas e parecer do Jev por letra (05/10/2026)
+
+No pipeline unificado, `claim` permanece como a resposta redigida da questão,
+enquanto `derivedAnswer` guarda o resultado canônico recalculado. Para
+objetivas calculáveis, o prompt exige que gabarito e distratores cubram todos
+os componentes do enunciado, na mesma ordem, com unidades e notação
+equivalentes. Isso evita montar a alternativa correta apenas com o número do
+recálculo quando a pergunta também pede comparação ou interpretação.
+
+O Jev agora responde, para cada alternativa, se ela é completa e se destoa
+visualmente do conjunto. A resposta independente do gabarito continua sendo
+uma decisão separada. Diagnóstico de incompletude ou formato registra a letra
+e direciona um prompt que altera somente essa opção; as demais alternativas,
+enunciado, apoio e gabarito são protegidos. O Jev avalia de novo após o reparo.
+Se a opção continuar reprovada, o sistema mantém a pendência para revisão em
+vez de trocar a questão por uma geração completa adicional.
+
+A versão do contrato Jev foi incrementada para invalidar cache dos pareceres
+anteriores. Sem migration. Typecheck executado; testes automatizados e
+calibração com chamadas reais do Jev ainda precisam ocorrer antes do merge e
+deploy. O código local não foi publicado.
+
+## 2.17 Respostas finais em objetivas de cálculo (05/10/2026)
+
+O prompt do gerador agora orienta que questões objetivas matemáticas peçam
+somente o resultado ou os produtos finais: não pedir ao aluno que mostre
+fórmula usada, contas, etapas ou justificativa. Fórmulas que sejam a própria
+resposta algébrica e interpretações conceituais solicitadas continuam válidas.
+
+O Jev passou a classificar o comando do enunciado e cada alternativa
+matemática. Quando encontrar desenvolvimento exposto, emite diagnóstico
+tipado com o campo/ letra afetado. Um único reparo dirigido recebe todos os
+alvos do parecer, altera somente o enunciado e/ou as alternativas marcadas e
+preserva os demais campos. A questão passa por nova decisão exclusiva do Jev;
+se continuar bloqueada, fica pendente para revisão sem regeneração integral
+automática. A versão do contrato foi incrementada para invalidar cache antigo.
+
+Sem migration. Typecheck executado com sucesso; testes automatizados e
+calibração com chamadas reais do Jev não foram executados.
 
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 

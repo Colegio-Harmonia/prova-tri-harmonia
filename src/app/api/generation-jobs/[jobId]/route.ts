@@ -7,11 +7,10 @@ import { generationJobs, users } from '@/db/schema'
 import { isStaffSuperuser } from '@/lib/auth/roles'
 import { cancelJob, retryJob } from '@/lib/queue/claim'
 
-// Ações do usuário sobre um job da fila: cancelar (só 'pendente') e
-// reenfileirar (só 'erro' — zera as tentativas). Dono do job ou
-// coordenação/direção.
+// Ações do usuário sobre um job da fila: cancelar, reenfileirar ou repetir a
+// configuração de uma prova concluída. Dono do job ou coordenação/direção.
 
-const bodySchema = z.object({ action: z.enum(['cancelar', 'reenfileirar']) })
+const bodySchema = z.object({ action: z.enum(['cancelar', 'reenfileirar', 'repetir']) })
 
 export async function PATCH(req: NextRequest, props: { params: Promise<{ jobId: string }> }) {
   const session = await auth()
@@ -44,6 +43,19 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ jobId: 
       return NextResponse.json({ error: 'Só é possível cancelar um job que ainda está pendente.' }, { status: 409 })
     }
     return NextResponse.json({ id: jobId, status: 'cancelado' })
+  }
+
+  if (parsed.data.action === 'repetir') {
+    if (job.jobType !== 'gerar_prova' || !['concluido', 'erro'].includes(job.status)) {
+      return NextResponse.json({ error: 'Só é possível repetir a configuração de uma prova concluída ou com erro.' }, { status: 409 })
+    }
+    const [created] = await db.insert(generationJobs).values({
+      jobType: 'gerar_prova',
+      payload: job.payload,
+      requestedBy: currentUser.id,
+      priority: job.priority,
+    }).returning({ id: generationJobs.id })
+    return NextResponse.json({ id: created.id, status: 'pendente' }, { status: 201 })
   }
 
   const ok = await retryJob(jobId)

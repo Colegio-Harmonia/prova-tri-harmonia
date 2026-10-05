@@ -59,12 +59,22 @@ function formatDateTime(value: string | null): string {
   return new Date(value).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
-function JobActions({ job, busy, onCancel, onRetry, singularLabel }: { job: JobRow; busy: boolean; onCancel: (id: number) => void; onRetry: (id: number) => void; singularLabel: string }) {
+function formatElapsed(start: string | null, end: string | null): string | null {
+  if (!start) return null
+  const totalSeconds = Math.max(0, Math.floor(((end ? new Date(end).getTime() : Date.now()) - new Date(start).getTime()) / 1000))
+  if (totalSeconds < 60) return `${totalSeconds}s`
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return seconds ? `${minutes}min ${seconds}s` : `${minutes}min`
+}
+
+function JobActions({ job, busy, onCancel, onRetry, onRepeat, singularLabel }: { job: JobRow; busy: boolean; onCancel: (id: number) => void; onRetry: (id: number) => void; onRepeat: (id: number) => void; singularLabel: string }) {
   if (job.status === 'concluido' && job.resultExamId) {
     return (
-      <Link href={`/gerar/${job.resultExamId}/revisar`} className="text-xs font-medium text-harmonia-green underline">
-        Revisar {singularLabel}
-      </Link>
+      <span className="flex flex-wrap items-center gap-3">
+        <Link href={`/gerar/${job.resultExamId}/revisar`} className="text-xs font-medium text-harmonia-green underline">Revisar {singularLabel}</Link>
+        {job.jobType === 'gerar_prova' && <button onClick={() => onRepeat(job.id)} disabled={busy} className="text-xs font-medium text-content-secondary underline disabled:opacity-50">Gerar novamente</button>}
+      </span>
     )
   }
   if (job.status === 'pendente') {
@@ -76,9 +86,10 @@ function JobActions({ job, busy, onCancel, onRetry, singularLabel }: { job: JobR
   }
   if (job.status === 'erro') {
     return (
-      <button onClick={() => onRetry(job.id)} disabled={busy} className="text-xs font-medium text-harmonia-green underline disabled:opacity-50">
-        Tentar de novo
-      </button>
+      <span className="flex flex-wrap items-center gap-3">
+        <button onClick={() => onRetry(job.id)} disabled={busy} className="text-xs font-medium text-harmonia-green underline disabled:opacity-50">Retomar</button>
+        {job.jobType === 'gerar_prova' && <button onClick={() => onRepeat(job.id)} disabled={busy} className="text-xs font-medium text-content-secondary underline disabled:opacity-50">Gerar novamente</button>}
+      </span>
     )
   }
   return <span className="text-xs text-content-muted">—</span>
@@ -88,6 +99,7 @@ export default function QueueList({ isSuperuser, jobTypes, collectionLabel, sing
   const [jobs, setJobs] = useState<JobRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [actioningId, setActioningId] = useState<number | null>(null)
 
   const fetchJobs = useCallback(async () => {
@@ -120,7 +132,7 @@ export default function QueueList({ isSuperuser, jobTypes, collectionLabel, sing
     return () => clearInterval(interval)
   }, [hasActive, fetchJobs])
 
-  async function patchJob(jobId: number, action: 'cancelar' | 'reenfileirar') {
+  async function patchJob(jobId: number, action: 'cancelar' | 'reenfileirar' | 'repetir') {
     setActioningId(jobId)
     try {
       const res = await fetch(`/api/generation-jobs/${jobId}`, {
@@ -130,7 +142,10 @@ export default function QueueList({ isSuperuser, jobTypes, collectionLabel, sing
       })
       const data = await res.json()
       if (!res.ok) setError(data.error ?? 'Erro ao atualizar o job.')
-      else setError(null)
+      else {
+        setError(null)
+        setNotice(action === 'repetir' ? 'Nova prova adicionada à fila com a mesma configuração.' : null)
+      }
       await fetchJobs()
     } catch {
       setError('Falha de rede ao atualizar o job.')
@@ -155,6 +170,7 @@ export default function QueueList({ isSuperuser, jobTypes, collectionLabel, sing
       </div>
 
       {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+      {notice && <p role="status" className="text-sm text-harmonia-green">{notice}</p>}
       {loading && <p role="status" aria-live="polite" className="text-sm text-neutral-500">Carregando…</p>}
       {!loading && !jobs.length && (
         <p className="text-sm text-neutral-500">
@@ -198,6 +214,7 @@ export default function QueueList({ isSuperuser, jobTypes, collectionLabel, sing
                       <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${JOB_STATUS_COLORS[job.status] ?? 'bg-neutral-100'}`}>
                         {JOB_STATUS_LABELS[job.status] ?? job.status}
                       </span>
+                      {job.startedAt && <p className="mt-1 text-[11px] text-content-muted">Fila {formatElapsed(job.createdAt, job.startedAt)} · geração {formatElapsed(job.startedAt, job.finishedAt)}</p>}
                       {(job.status === 'erro' || job.attempts > 1) && (
                         <p className="mt-1 text-[11px] text-content-muted" title="Este contador mostra execuções do job. A geração ou o reparo de cada questão podem realizar tentativas internas adicionais.">execução do job {job.attempts}/{job.maxAttempts}</p>
                       )}
@@ -205,7 +222,7 @@ export default function QueueList({ isSuperuser, jobTypes, collectionLabel, sing
                     {isSuperuser && <td className="px-4 py-3 text-content-secondary">{job.requesterName}</td>}
                     <td className="whitespace-nowrap px-4 py-3 text-content-secondary">{formatDateTime(job.createdAt)}</td>
                     <td className="whitespace-nowrap px-4 py-3">
-                      <JobActions job={job} busy={actioningId === job.id} onCancel={(id) => patchJob(id, 'cancelar')} onRetry={(id) => patchJob(id, 'reenfileirar')} singularLabel={singularLabel} />
+                      <JobActions job={job} busy={actioningId === job.id} onCancel={(id) => patchJob(id, 'cancelar')} onRetry={(id) => patchJob(id, 'reenfileirar')} onRepeat={(id) => patchJob(id, 'repetir')} singularLabel={singularLabel} />
                     </td>
                   </tr>
                 ))}
@@ -233,8 +250,8 @@ export default function QueueList({ isSuperuser, jobTypes, collectionLabel, sing
                   <p className="mt-2 text-xs text-red-600">{job.errorMessage}</p>
                 )}
                 <div className="mt-3 flex items-center justify-between border-t border-border pt-3 text-xs text-content-muted">
-                  <span>{isSuperuser ? `${job.requesterName} · ` : ''}{formatDateTime(job.createdAt)}</span>
-                  <JobActions job={job} busy={actioningId === job.id} onCancel={(id) => patchJob(id, 'cancelar')} onRetry={(id) => patchJob(id, 'reenfileirar')} singularLabel={singularLabel} />
+                  <span>{isSuperuser ? `${job.requesterName} · ` : ''}{formatDateTime(job.createdAt)}{job.startedAt && <span className="block pt-1">Fila {formatElapsed(job.createdAt, job.startedAt)} · geração {formatElapsed(job.startedAt, job.finishedAt)}</span>}</span>
+                  <JobActions job={job} busy={actioningId === job.id} onCancel={(id) => patchJob(id, 'cancelar')} onRetry={(id) => patchJob(id, 'reenfileirar')} onRepeat={(id) => patchJob(id, 'repetir')} singularLabel={singularLabel} />
                 </div>
               </article>
             ))}

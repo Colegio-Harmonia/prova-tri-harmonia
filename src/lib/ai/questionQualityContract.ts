@@ -1,0 +1,11 @@
+/** Valores tipados compartilhados entre o juiz no servidor e a UI/diagnósticos. */
+export const NO_CORRECT_ALTERNATIVE = '__nenhuma_alternativa__'
+export const MULTIPLE_CORRECT_ALTERNATIVES = '__mais_de_uma_alternativa__'
+export const ALTERNATIVE_COMPLETE = '__responde_a_todos_os_itens__'
+export const ALTERNATIVE_INCOMPLETE = '__nao_responde_a_todos_os_itens__'
+export const ALTERNATIVE_FORMAT_STANDARD = '__segue_o_padrao__'
+export const ALTERNATIVE_FORMAT_OUTLIER = '__destoa_do_padrao__'
+export const OBJECTIVE_ANSWER_ONLY = '__pede_somente_respostas_finais__'
+export const OBJECTIVE_ASKS_WORK = '__pede_mostrar_calculo_ou_justificar__'
+export const ALTERNATIVE_FINAL_ONLY = '__mostra_somente_resposta_final__'
+export const ALTERNATIVE_EXPOSES_WORK = '__expoe_formula_ou_etapas_de_calculo__'
