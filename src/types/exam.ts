@@ -26,6 +26,8 @@ export type CurricularUnit = {
   rowIndex: number
   bimestre: string | null
   tituloCapitulo: string
+  /** Nome da unidade quando a aba a traz separada do capítulo (ex.: Inglês) e há coluna de bimestre/trimestre. */
+  unidade?: string | null
   conteudo: string | null
   habilidades: HabilidadesParseResult
   objetivos: ObjectiveSentence[]

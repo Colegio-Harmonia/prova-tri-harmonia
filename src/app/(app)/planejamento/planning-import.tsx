@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { composePlanUnitTitle } from '@/lib/curriculum/planUnitTitle'
 import { SEGMENT_GRADES, SEGMENT_LABELS, SEGMENT_SUBJECTS } from '@/config/subjects'
 import type { CurriculumSelection, ParsedHabilidade, Segment } from '@/types/exam'
 import { descriptionCheckKey, type DescriptionCheck, type DescriptionCheckStatus } from '@/lib/curriculum/skillDescriptionTypes'
@@ -72,7 +73,7 @@ export default function PlanningImport() {
     {preview && <section className="rounded border border-border bg-surface p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-semibold">Planejamento encontrado na planilha</h2><p className="text-sm text-content-secondary">Origem: {preview.tabName} · {preview.units.length} unidades · {preview.units.reduce((sum, unit) => sum + unit.habilidades.skills.length, 0)} habilidades</p></div><div className="max-w-sm text-right"><button type="button" disabled={loading} onClick={importSnapshot} className="rounded bg-harmonia-green px-4 py-2 text-sm font-semibold text-action-primary-foreground disabled:opacity-50">Importar planejamento do {bimester}º bimestre</button><p className="mt-2 text-xs text-content-muted">Salva no Prova TRI uma versão deste planejamento para comparar habilidades planejadas e avaliadas. A planilha original não será alterada.</p></div></div>
       {preview.unmappedWarnings.length > 0 && <div className="mt-4 rounded bg-status-warning-surface p-3 text-sm text-status-warning-content"><p className="font-semibold">Pendências encontradas ({preview.unmappedWarnings.length})</p><ul className="mt-2 space-y-1">{preview.unmappedWarnings.map((warning) => <li key={warning}>• {warning}</li>)}</ul></div>}
       <DescriptionCheckSummary checks={preview.descriptionChecks} />
-      <div className="mt-4 space-y-2">{preview.units.map((unit) => <div key={unit.rowIndex} className="rounded border border-border p-3"><p className="font-medium">{unit.tituloCapitulo || 'Sem título'}</p><p className="mt-1 text-sm text-content-secondary">{unit.conteudo || 'Conteúdo não informado'}</p>{unit.habilidades.skills.length ? <ul className="mt-3 space-y-2">{unit.habilidades.skills.map((skill, index) => <SkillRow key={`${skill.code}-${index}`} skill={skill} check={skill.description?.trim() ? checksByKey.get(descriptionCheckKey(skill.code, skill.description)) : undefined} />)}</ul> : <p className="mt-2 text-xs text-content-muted">BNCC não mapeada</p>}</div>)}</div>
+      <div className="mt-4 space-y-2">{preview.units.map((unit) => <div key={unit.rowIndex} className="rounded border border-border p-3"><p className="font-medium">{composePlanUnitTitle(unit, 'Sem título')}</p><p className="mt-1 text-sm text-content-secondary">{unit.conteudo || 'Conteúdo não informado'}</p>{unit.habilidades.skills.length ? <ul className="mt-3 space-y-2">{unit.habilidades.skills.map((skill, index) => <SkillRow key={`${skill.code}-${index}`} skill={skill} check={skill.description?.trim() ? checksByKey.get(descriptionCheckKey(skill.code, skill.description)) : undefined} />)}</ul> : <p className="mt-2 text-xs text-content-muted">BNCC não mapeada</p>}</div>)}</div>
     </section>}
     <CoveragePanel scope={{ academicYear, segment, gradeYear, subject, bimester }} refreshToken={coverageRefresh} />
   </div>

@@ -8,6 +8,7 @@ import { curriculumPlans, curriculumPlanSkills, curriculumPlanStatusHistory, cur
 import { isStaffSuperuser } from '@/lib/auth/roles'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
 import { resolveBnccDescriptions } from '@/lib/curriculum/bnccDescriptions'
+import { composePlanUnitTitle } from '@/lib/curriculum/planUnitTitle'
 import { BNCC_CODE_PATTERN, canReceiveNewDraft } from '@/lib/curriculum/planningPolicy'
 
 const schema = z.object({
@@ -65,7 +66,7 @@ export async function POST(req: NextRequest) {
     if (!canReceiveNewDraft(allVersions)) return { planId: plan.id, versionId: previous!.id, versionNumber: previous!.versionNumber, unchanged: true, blocked: true }
     const [version] = await tx.insert(curriculumPlanVersions).values({ planId: plan.id, versionNumber: (previous?.versionNumber ?? 0) + 1, status: 'rascunho', source: 'planilha', sourceReference: selection.tabName, sourceHash, createdBy: manager.id }).returning()
     for (const [position, unit] of selection.units.entries()) {
-      const [savedUnit] = await tx.insert(curriculumPlanUnits).values({ versionId: version.id, position, title: unit.tituloCapitulo || `Unidade ${position + 1}`, content: unit.conteudo, objectives: unit.objetivos.map((objective) => objective.text).join('\n') || null }).returning()
+      const [savedUnit] = await tx.insert(curriculumPlanUnits).values({ versionId: version.id, position, title: composePlanUnitTitle(unit, `Unidade ${position + 1}`), content: unit.conteudo, objectives: unit.objetivos.map((objective) => objective.text).join('\n') || null }).returning()
       if (unit.habilidades.status === 'mapeado' && unit.habilidades.skills.length) {
         await tx.insert(curriculumPlanSkills).values(unit.habilidades.skills.map((skill, skillPosition) => ({ unitId: savedUnit.id, code: skill.code.trim().toUpperCase(), description: skill.description ?? descriptions.get(skill.code.trim().toUpperCase()) ?? null, position: skillPosition })))
       }

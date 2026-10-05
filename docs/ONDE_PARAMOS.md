@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 03/10/2026 (importação em lote do 4º bimestre e validador de código BNCC).
+> Última atualização: 05/10/2026 (nome da unidade na importação do planejamento).
 
 ## 1. Fonte da verdade
 
@@ -374,6 +374,26 @@ Não importados (8), com causa:
 Ainda sem revisão: o 3º ano do EM está fora da importação; vários planejamentos
 têm conteúdo curto na planilha (2º, 5º ano e Ensino Médio), o que dá pouco
 material para a IA. O #9 foi o único enriquecido à mão.
+## 2.14 Correção (05/10/2026): importação do planejamento perdia o nome da "Unidade" (Inglês)
+
+Auditoria da importação em lote do 4º bimestre/2026 (80 abas, 340 unidades):
+conteúdo e objetivos importados batem exatamente com a planilha; planejamento
+curto é planilha curta. Perda real encontrada: abas como a de Inglês trazem a
+**Unidade** ("7. Necessity is the mother of invention") separada do **capítulo**
+("1. A great inventor"), mas o leitor tratava "Unidade" como divisão do período e a
+descartava quando havia coluna de bimestre. Resultado: capítulos "1" e "2" de
+unidades diferentes ficavam sem rótulo (8 planejamentos de Inglês).
+
+Correção: `CurricularUnit` ganha `unidade` (só preenchida quando a aba tem coluna de
+bimestre ou trimestre; sem elas, "Unidade" continua sendo o próprio período) e a
+importação grava o título como `<unidade> — <capítulo>`
+(`composePlanUnitTitle`, também na prévia da tela). O título do capítulo usado na
+geração por planilha não muda, porque o conteúdo enriquecido é cruzado por ele.
+
+Fica de fora: planejamentos já importados não mudam sozinhos. Rascunho existente
+bloqueia nova importação; os 8 de Inglês precisam ter os títulos atualizados em
+separado. Colunas sem campo no modelo (Aulas bimestrais, datas, Status, Professor,
+Livro) continuam não importadas.
 
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 
