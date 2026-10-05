@@ -6,7 +6,7 @@ import { generatedExams, users, EXAM_STATUSES } from '@/db/schema'
 import { auth } from '@/auth/auth'
 import { generateExamDocs } from '@/lib/docs/generateExamDocs'
 import { sendChatAssignmentNotification, sendChatReviewReadyNotification } from '@/lib/notifications/googleChat'
-import { singleQuestionResultSchema, SINGLE_QUESTION_RESPONSE_SCHEMA, type ExamGenerationResult, type ExamQuestion, type SingleQuestionResult } from '@/lib/gemini/examSchema'
+import type { ExamGenerationResult, ExamQuestion } from '@/lib/gemini/examSchema'
 import { isStaffSuperuser } from '@/lib/auth/roles'
 import { findDiscursiveWithoutReferenceAnswer, referenceAnswerMissingMessage } from '@/lib/exams/referenceAnswer'
 import { isSelfManagedActivity } from '@/lib/exams/activityWorkflow'
@@ -16,9 +16,8 @@ import { qualityApprovalBlocks, runQuestionQualityTest } from '@/lib/exams/quest
 import { latestQualityReport, normalizeStoredQualityReport, qualityReportNeedsNormalization, qualityReportNeedsRecompute, recomputeQualityReport } from '@/lib/exams/qualityReport'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
 import { planIdFromExamPayload } from '@/lib/curriculum/planCurriculum'
-import { buildSingleQuestionPrompt } from '@/lib/gemini/promptBuilder'
-import { generateValidatedStructuredContent, StructuredGenerationError } from '@/lib/gemini/structuredRepair'
-import { correctSingleQuestion } from '@/lib/gemini/examValidator'
+import { generateQuestionWithUnifiedFlow } from '@/lib/exams/unifiedQuestionGeneration'
+import { AiBudgetExceededError } from '@/lib/ai/operationBudget'
 
 const bodySchema = z.object({
   action: z.enum(['atribuir', 'iniciar_revisao', 'aprovar_prova', 'concluir_revisao', 'aprovar', 'marcar_impresso', 'marcar_aplicado', 'marcar_corrigido', 'finalizar_atividade', 'marcar_atividade_aplicada']),
@@ -75,32 +74,34 @@ async function replaceRejectedQuestionsAutomatically(exam: typeof generatedExams
     const original = questions[index]
     if (!original || original.source === 'enem_bank') throw new Error(`A questão ${questionNumber} não pode ser substituída automaticamente.`)
     let replacement: ExamQuestion | null = null
-    // Cada candidata recebe até dois reparos estruturados. Se o modelo ainda
-    // errar cálculo, alternativas ou metadados, iniciamos uma candidata nova
-    // (em vez de devolver a falha bruta para quem clicou em Aprovar).
+    // Mesmo pipeline da troca manual ("Trocar só essa questão") e da geração
+    // principal. O caminho antigo (prompt avulso + schema de 1 questão) caía no
+    // teto padrão de tokens do contexto e voltava sempre `empty_response`: em
+    // produção nunca produziu uma substituta (0 sucessos, 83 falhas desde
+    // 30/09/2026), deixando a prova impossível de aprovar.
+    // Cada candidata passa pela mesma auditoria da questão; se ainda houver
+    // problema bloqueante ou a IA errar o contrato, iniciamos outra candidata.
     for (let candidateNumber = 1; candidateNumber <= 3 && !replacement; candidateNumber++) {
-      const prompt = await buildSingleQuestionPrompt(curriculum, {
-        type: original.type,
-        questionNumber,
-        avoidStatement: `${original.statement}\nNão repita nem reutilize a questão anterior.`,
-        reviewFeedback: `Substituição automática ${candidateNumber}/3: crie uma questão nova com cálculo, alternativas e gabarito verificáveis.`,
-      })
       try {
-        const generated = await generateValidatedStructuredContent<SingleQuestionResult, ExamQuestion>({
-          context: `exams/automatic-quality-replacement-${questionNumber}-${candidateNumber}`,
-          prompt,
-          responseSchema: SINGLE_QUESTION_RESPONSE_SCHEMA,
-          zodSchema: singleQuestionResultSchema,
-          maxAttempts: 2,
-          validate: async (candidate) => {
-            const { question, issues, warnings } = correctSingleQuestion({ ...candidate.question, number: questionNumber }, curriculum)
-            const quality = await runQuestionQualityTest(curriculum, [question])
-            return { value: question, issues: [...issues, ...quality.issues.filter((issue) => issue.severity === 'bloqueante').map((issue) => issue.reason)], warnings: [...warnings, ...quality.warnings] }
-          },
+        const generated = await generateQuestionWithUnifiedFlow({
+          curriculum,
+          questionNumber,
+          type: original.type,
+          targetSkillCodes: original.bnccStatus === 'mapeado' ? original.bnccCodes : undefined,
+          instruction: [
+            `substituir a questão ${questionNumber}; tipo ${original.type}`,
+            `substituição automática ${candidateNumber}/3: crie uma questão nova com cálculo, alternativas e gabarito verificáveis`,
+            `não repita nem reutilize o enunciado anterior: ${original.statement.slice(0, 300)}`,
+          ].join('; '),
         })
-        replacement = generated.value
+        const quality = await runQuestionQualityTest(curriculum, [generated.question])
+        if (quality.issues.some((issue) => issue.severity === 'bloqueante')) continue
+        replacement = generated.question
       } catch (error) {
-        if (!(error instanceof StructuredGenerationError)) throw error
+        // Falha de contrato/validação/IA numa candidata não derruba a
+        // aprovação: tenta outra. Só o teto de orçamento de IA interrompe.
+        if (error instanceof AiBudgetExceededError) throw error
+        console.warn(`[exams/status] substituta automática ${candidateNumber}/3 da questão ${questionNumber} falhou:`, error instanceof Error ? error.message.slice(0, 300) : error)
       }
     }
     if (!replacement) throw new Error(`Não foi possível criar uma substituta aprovada para a questão ${questionNumber}; a prova permanece sem aprovação para preservar a integridade do conteúdo.`)
