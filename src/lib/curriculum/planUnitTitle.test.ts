@@ -9,6 +9,11 @@ describe('composePlanUnitTitle', () => {
       .toBe('7. Necessity is the mother of invention — 1. A great inventor')
   })
 
+  it('escreve "Unidade N" quando a planilha numera a unidade só com o dígito', () => {
+    expect(composePlanUnitTitle({ tituloCapitulo: '1. Surrealismo', unidade: '4' }, 'x')).toBe('Unidade 4 — 1. Surrealismo')
+    expect(composePlanUnitTitle({ tituloCapitulo: '1. Surrealismo', unidade: ' 12 ' }, 'x')).toBe('Unidade 12 — 1. Surrealismo')
+  })
+
   it('mantém o título quando não há unidade, ela repete o capítulo ou o capítulo está vazio', () => {
     expect(composePlanUnitTitle({ tituloCapitulo: '10. Doenças infecciosas', unidade: null }, 'Unidade 2')).toBe('10. Doenças infecciosas')
     expect(composePlanUnitTitle({ tituloCapitulo: 'Unit 3', unidade: ' unit  3 ' }, 'x')).toBe('Unit 3')

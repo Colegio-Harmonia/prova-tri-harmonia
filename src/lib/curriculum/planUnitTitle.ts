@@ -11,7 +11,9 @@ const squash = (value: string | null | undefined) => (value ?? '').replace(/\s+/
  */
 export function composePlanUnitTitle(unit: Pick<CurricularUnit, 'tituloCapitulo' | 'unidade'>, fallback: string): string {
   const chapter = squash(unit.tituloCapitulo)
-  const group = squash(unit.unidade)
+  const rawGroup = squash(unit.unidade)
+  // Planilhas que numeram a unidade só com o dígito ("4") ficariam como "4 — 1. Capítulo".
+  const group = /^\d{1,3}$/.test(rawGroup) ? `Unidade ${rawGroup}` : rawGroup
   if (!group) return chapter || fallback
   if (!chapter) return group
   if (group.toLowerCase() === chapter.toLowerCase()) return chapter
