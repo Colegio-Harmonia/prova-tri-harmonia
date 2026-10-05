@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 05/10/2026 (PR #43 integrado e reparo de cálculos expostos em objetivas).
+> Última atualização: 05/10/2026 (PR #43 em produção; substituição automática da aprovação corrigida).
 
 ## 1. Fonte da verdade
 
@@ -463,6 +463,43 @@ automática. A versão do contrato foi incrementada para invalidar cache antigo.
 
 Sem migration. Typecheck executado com sucesso; testes automatizados e
 calibração com chamadas reais do Jev não foram executados.
+
+## 2.11 Correção (05/10/2026): aprovação não gerava documentos (substituição automática sempre vazia)
+
+Sintoma: prova #405 (Matemática, 4º ano) revisada, mas "Aprovar" não gerava
+Prova/Gabarito/Mapa: `Não foi possível criar uma substituta aprovada para a
+questão 3`. A auditoria da aprovação recusa um item e
+`replaceRejectedQuestionsAutomatically` (`status/route.ts`) precisa substituí-lo.
+
+Causa: essa função gerava a substituta com `buildSingleQuestionPrompt` + schema
+de 1 questão, num contexto `exams/automatic-quality-replacement-*` que cai no
+teto padrão de 4.000 tokens de `completionOptionsFor` (a seção 2.8 já apontava
+que esse teto não foi tocado). Com o modelo atual o raciocínio consome o teto e
+a resposta volta `empty_response`. `ai_operations`: **0 sucessos e 83 falhas
+`empty_response`** (+15 `validation_rejected`) desde 30/09/2026: qualquer prova
+com um item recusado na auditoria ficava impossível de aprovar. Não tem relação
+com o PR #43 (a questão 3 da #405 é objetiva).
+
+Correção (PR #45): a substituição passa a usar `generateQuestionWithUnifiedFlow`,
+o mesmo caminho da troca manual e da geração principal, com até 3 candidatas,
+cada uma auditada por `runQuestionQualityTest`. Erro de contrato/validação numa
+candidata tenta a próxima; só `AiBudgetExceededError` interrompe a aprovação.
+
+Como confirmar: aprovar a #405 (ou outra prova com item recusado) e ver os 3
+documentos gerados; em `ai_operations`, as chamadas
+`generation/unified-*` com `exams/automatic...` não devem mais aparecer como
+`empty_response`.
+
+Também entrou em produção (PR #43, 05/10/2026): descritiva sem `expectedAnswer`
+é rejeitada na geração e bloqueia concluir revisão/aprovar/sugerir nota por IA
+(`src/lib/exams/referenceAnswer.ts`); verbos de comando do enunciado em negrito
+no Google Docs da Prova do Fundamental 1 e 2 (`src/lib/docs/commandVerbs.ts`).
+Detalhes em `docs/RESPOSTA_ESPERADA_E_VERBOS_DE_COMANDO.md`.
+
+Ainda aberto: a prova #405 foi recusada na questão 3 pela auditoria Jev
+(`calculo_ou_dados` e `correcao_objetiva`, ambos como alerta); o cálculo da
+questão está correto (divisão proporcional da taxa), então vale revisar se o
+juiz está sendo rígido demais com divisão proporcional de valores monetários.
 
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 
