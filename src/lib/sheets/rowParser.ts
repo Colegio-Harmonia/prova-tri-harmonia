@@ -37,6 +37,8 @@ export function parseCurriculumRows(rows: string[][], roles: ColumnRoles, segmen
       rowIndex: i,
       bimestre: resolvePeriodo(row, roles),
       tituloCapitulo: tituloCapitulo ?? '',
+      // Sem coluna de bimestre/trimestre, "Unidade" é a própria divisão do período (ver resolvePeriodo).
+      unidade: roles.bimestreIdx !== null || roles.trimestreIdx !== null ? cell(row, roles.unidadeIdx) : null,
       conteudo,
       habilidades: parseHabilidades(habilidadesRaw, segment),
       objetivos,
