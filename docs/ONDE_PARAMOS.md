@@ -341,6 +341,39 @@ automática de ASCII para LaTeX: a correção depende de o modelo obedecer à
 instrução. Se ainda escapar ASCII, o próximo passo é um normalizador
 determinístico, com cuidado para não alterar texto que não é fórmula.
 
+## 2.13 Importação em lote do 4º bimestre/2026 e correção do validador de código BNCC
+
+Importação (03/10/2026, feita por script no servidor, porque a rota
+`/api/curriculum/plans/import` exige sessão de gestor; o script reproduz a rota e
+não está no repositório). Todos os planejamentos de 2026, 4º bimestre, de todas
+as séries com planilha configurada, **exceto o 3º ano do Ensino Médio** (decisão
+do coordenador). Resultado: **87 rascunhos** (10 de Matemática, planejamentos #13
+a #22, e 77 das demais disciplinas) e 2 aprovados que já existiam (#4, Ciências
+do 6º ano, e #9, Matemática do 8º ano). Rascunho não gera prova: só versão
+aprovada é usada (seção 2.11); a aprovação continua sendo passo humano. Nos anos
+iniciais a Língua Portuguesa usa o nome "Língua Portuguesa" (não "Português"),
+como já era nos planejamentos existentes, para não duplicar o recorte.
+
+Não importados (8), com causa:
+- **Código BNCC rejeitado indevidamente (4):** Língua Portuguesa e Literatura do 1º e do
+  2º ano do EM. Os códigos `EM13LP01` a `EM13LP54` têm "LP" + 2 dígitos, mas o
+  validador (`BNCC_CODE_PATTERN` e uma cópia na rota de importação) só aceitava
+  3 letras + 3 dígitos, enquanto o leitor da planilha (`habilidadesParser.ts`) já
+  os aceitava. Corrigido neste PR, com a cópia da rota removida: depois do
+  deploy, reimportar esses 4 recortes. Antes disso o editor do planejamento
+  também recusaria salvar qualquer unidade com esses códigos.
+- **Código duplicado na mesma unidade (2):** Língua Portuguesa do 3º ano
+  (`EF15LP11`) e do 4º ano (`EF35LP08`), nos anos iniciais. A regra existe de
+  propósito; é correção na planilha.
+- **Aba ambígua (2):** Inglês do 1º e do 2º ano do EM. O resolvedor de abas
+  encontra duas abas ("1° Ing" ou "Inglês" e também "Língua Portuguesa") e
+  recusa. A saída prevista é uma linha em `curriculum_tab_overrides` por série;
+  ainda não criada. Efeito colateral: a geração por planilha dessas séries
+  também falha com o mesmo erro.
+
+Ainda sem revisão: o 3º ano do EM está fora da importação; vários planejamentos
+têm conteúdo curto na planilha (2º, 5º ano e Ensino Médio), o que dá pouco
+material para a IA. O #9 foi o único enriquecido à mão.
 ## 2.14 Correção (05/10/2026): importação do planejamento perdia o nome da "Unidade" (Inglês)
 
 Auditoria da importação em lote do 4º bimestre/2026 (80 abas, 340 unidades):

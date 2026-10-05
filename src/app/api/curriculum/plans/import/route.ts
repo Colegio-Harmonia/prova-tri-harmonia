@@ -9,7 +9,7 @@ import { isStaffSuperuser } from '@/lib/auth/roles'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
 import { resolveBnccDescriptions } from '@/lib/curriculum/bnccDescriptions'
 import { composePlanUnitTitle } from '@/lib/curriculum/planUnitTitle'
-import { canReceiveNewDraft } from '@/lib/curriculum/planningPolicy'
+import { BNCC_CODE_PATTERN, canReceiveNewDraft } from '@/lib/curriculum/planningPolicy'
 
 const schema = z.object({
   academicYear: z.number().int().min(2020).max(2100),
@@ -18,8 +18,6 @@ const schema = z.object({
   subject: z.string().trim().min(1),
   bimester: z.number().int().min(1).max(4),
 })
-
-const BNCC_CODE = /^(EF\d{2}[A-Z]{2}\d{2}|EM13[A-Z]{3}\d{3}|EI\d{2}[A-Z]{2}\d{2})$/
 
 async function requireManager() {
   const session = await auth()
@@ -44,7 +42,7 @@ export async function POST(req: NextRequest) {
     const seen = new Set<string>()
     for (const skill of unit.habilidades.skills) {
       const code = skill.code.trim().toUpperCase()
-      if (!BNCC_CODE.test(code)) invalidCodes.add(code)
+      if (!BNCC_CODE_PATTERN.test(code)) invalidCodes.add(code)
       if (seen.has(code)) duplicateCodes.push(`${unit.tituloCapitulo}: ${code}`)
       seen.add(code)
     }

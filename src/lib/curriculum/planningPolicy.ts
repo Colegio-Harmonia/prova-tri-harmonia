@@ -80,7 +80,9 @@ export function canReceiveNewDraft(versions: VersionLike[]) {
   return openVersion(versions) === null
 }
 
-export const BNCC_CODE_PATTERN = /^(EF\d{2}[A-Z]{2}\d{2}|EM13[A-Z]{3}\d{3}|EI\d{2}[A-Z]{2}\d{2})$/
+// Ensino Médio: áreas (LGG, MAT, CNT, CHS) têm 3 letras + 3 dígitos; Língua Portuguesa tem
+// "LP" + 2 dígitos (EM13LP01 a EM13LP54) e também é código BNCC válido.
+export const BNCC_CODE_PATTERN = /^(EF\d{2}[A-Z]{2}\d{2}|EM13(?:[A-Z]{3}\d{3}|LP\d{2})|EI\d{2}[A-Z]{2}\d{2})$/
 
 export type PlanUnitInput = {
   title: string
