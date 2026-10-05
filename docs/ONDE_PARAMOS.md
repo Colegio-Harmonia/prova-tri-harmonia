@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 05/10/2026 (nome da unidade na importação do planejamento).
+> Última atualização: 05/10/2026 (título da unidade numérica no planejamento importado).
 
 ## 1. Fonte da verdade
 
@@ -389,6 +389,8 @@ bimestre ou trimestre; sem elas, "Unidade" continua sendo o próprio período) e
 importação grava o título como `<unidade> — <capítulo>`
 (`composePlanUnitTitle`, também na prévia da tela). O título do capítulo usado na
 geração por planilha não muda, porque o conteúdo enriquecido é cruzado por ele.
+
+Quando a planilha numera a unidade só com o dígito ("4"), o título sai "Unidade 4 — 1. Capítulo".
 
 Fica de fora: planejamentos já importados não mudam sozinhos. Rascunho existente
 bloqueia nova importação; os 8 de Inglês precisam ter os títulos atualizados em
