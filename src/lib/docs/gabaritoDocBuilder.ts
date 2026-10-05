@@ -30,7 +30,7 @@ export function buildGabaritoBody(exam: ExamGenerationResult): { text: string; b
       // o LaTeX cru como texto (ex: "3 \cdot 2^{n-1}"). Legível o
       // suficiente pro professor conferir a resposta, mesmo sem ficar
       // bonito como no documento da prova.
-      text += `Resposta esperada: ${stripLatexDelimiters(q.expectedAnswer ?? '—')}\n`
+      text += `Resposta esperada: ${q.expectedAnswer?.trim() ? stripLatexDelimiters(q.expectedAnswer) : 'NÃO CADASTRADA — definir antes de corrigir'}\n`
       text += `   Critérios de correção: ${stripLatexDelimiters(q.gradingCriteria ?? '—')}\n`
     }
   }

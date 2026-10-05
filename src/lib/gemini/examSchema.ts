@@ -217,8 +217,8 @@ export const GEMINI_RESPONSE_SCHEMA = {
             },
           },
           correctLetter: { type: 'string', nullable: true },
-          expectedAnswer: { type: 'string', nullable: true },
-          gradingCriteria: { type: 'string', nullable: true },
+          expectedAnswer: { type: 'string', nullable: true, description: 'OBRIGATÓRIO para type "descritiva": resposta esperada completa e concreta (uma parte por item a/b/c). null só em objetivas.' },
+          gradingCriteria: { type: 'string', nullable: true, description: 'OBRIGATÓRIO para type "descritiva": critérios objetivos de correção em itens. null só em objetivas.' },
           solutionBlueprint: {
             type: 'object', nullable: true,
             properties: {

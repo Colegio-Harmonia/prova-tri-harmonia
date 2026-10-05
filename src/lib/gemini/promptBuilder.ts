@@ -158,6 +158,16 @@ ${catalog}
 O sistema recalcula derivedAnswer em código a partir de values; a alternativa correctLetter deve conter exatamente o resultado recalculado. Em descritivas, expectedAnswer e gradingCriteria devem usar a mesma solução. Se o estudante precisa desenhar o gráfico, visualSpec deve ser blank_coordinate_plane: nunca desenhe a solução para ele.`
 }
 
+/**
+ * Pedido direto (05/10/2026): descritivas estavam saindo sem resposta de
+ * referência, e sem ela a correção (gabarito do professor + nota sugerida
+ * por IA) fica sem base. O validador rejeita descritiva sem expectedAnswer
+ * (ver examValidator.ts) — esta instrução evita o retrabalho de reparo.
+ */
+function buildReferenceAnswerInstruction(): string {
+  return `TODA questão descritiva SEMPRE traz "expectedAnswer" (resposta esperada completa e concreta, no nível de detalhe que um aluno da série deveria dar — com valores, conceitos e/ou argumentos específicos, nunca "resposta pessoal", "varia" ou uma descrição vaga do tipo de resposta) e "gradingCriteria" (critérios objetivos de correção, em itens, indicando o que vale ponto e o que é aceito como equivalente). Questão com várias partes (a, b, c) precisa de resposta esperada para CADA parte. A expectedAnswer não pode aparecer no statement nem no supportText.`
+}
+
 function buildPedagogicalClassificationInstruction(): string {
   return `Para TODA questão gerada por IA, preencha pedagogicalClassification com metadados pedagógicos estruturados. Não use uma confiança única para tudo: DOK e SOLO_EXPECTED precisam ter confidence, justification e evidence próprios.
 - pedagogicalClassification.dok.categoryCode deve ser exatamente um destes: DOK_1, DOK_2, DOK_3, DOK_4. DOK mede profundidade de raciocínio, não dificuldade nem tamanho do texto.
@@ -214,6 +224,7 @@ export async function buildExamPrompt(curriculum: CurriculumSelection, params: E
 REGRAS FIXAS (não negociáveis):
 - Gere exatamente ${params.questionCount} questões: ${split.objectiveCount} objetivas (múltipla escolha, ${alternativesCount} alternativas cada, letras A-${String.fromCharCode(64 + alternativesCount)}) e ${split.discursiveCount} descritivas (abertas).
 - Questões descritivas NUNCA têm "alternatives" ou "correctLetter" preenchidos.
+- ${buildReferenceAnswerInstruction()}
 - Questões objetivas SEMPRE têm exatamente ${alternativesCount} alternativas e um "correctLetter" válido, com distratores plausíveis (não óbvios).
 - ${bloomGuidance(segment, gradeYear)}
 ${selectedBnccInstruction ? `- ${selectedBnccInstruction}\n` : ''}${activity ? '- A atividade deve ser apropriada à faixa etária, contextualizada e pronta para revisão docente antes da publicação.\n' : ''}- Para capítulos marcados "NENHUMA" habilidade BNCC abaixo: gere a questão normalmente a partir do capítulo/conteúdo, mas retorne bnccCodes:[] e bnccStatus:"nao_mapeado" — NUNCA invente um código BNCC — e NUNCA use descritor SAEB/Prova Brasil (D1, D2, D26) em bnccCodes; código BNCC segue o formato EF08MA01, EM13MAT101 ou EI03ET01.
@@ -272,7 +283,7 @@ export async function buildSingleQuestionPrompt(curriculum: CurriculumSelection,
   const typeRule =
     opts.type === 'objetiva'
       ? `múltipla escolha, exatamente ${alternativesCount} alternativas, letras A-${String.fromCharCode(64 + alternativesCount)}, com "correctLetter" válido e distratores plausíveis (não óbvios)`
-      : `aberta — NUNCA preencha "alternatives" ou "correctLetter"`
+      : `aberta — NUNCA preencha "alternatives" ou "correctLetter"; "expectedAnswer" e "gradingCriteria" são OBRIGATÓRIOS`
 
   const feedbackLine = opts.reviewFeedback
     ? `\n- MOTIVO DA TROCA (feedback do professor revisor): "${opts.reviewFeedback}" — a nova questão precisa resolver esse problema específico, não só ser diferente.`
@@ -294,7 +305,7 @@ export async function buildSingleQuestionPrompt(curriculum: CurriculumSelection,
 REGRAS FIXAS (não negociáveis):
 - Gere exatamente 1 questão, tipo "${opts.type}": ${typeRule}.
 - ${bloomGuidance(segment, gradeYear)}
-- Para capítulos marcados "NENHUMA" habilidade BNCC abaixo: gere a questão normalmente a partir do capítulo/conteúdo, mas retorne bnccCodes:[] e bnccStatus:"nao_mapeado" — NUNCA invente um código BNCC — e NUNCA use descritor SAEB/Prova Brasil (D1, D2, D26) em bnccCodes; código BNCC segue o formato EF08MA01, EM13MAT101 ou EI03ET01.
+${opts.type === 'descritiva' ? `- ${buildReferenceAnswerInstruction()}\n` : ''}- Para capítulos marcados "NENHUMA" habilidade BNCC abaixo: gere a questão normalmente a partir do capítulo/conteúdo, mas retorne bnccCodes:[] e bnccStatus:"nao_mapeado" — NUNCA invente um código BNCC — e NUNCA use descritor SAEB/Prova Brasil (D1, D2, D26) em bnccCodes; código BNCC segue o formato EF08MA01, EM13MAT101 ou EI03ET01.
 - bnccSummary: uma frase curta resumindo a habilidade testada pela questão.
 - ${saebInstruction}
 - QUESTÃO ORIGINAL A SUBSTITUIR: "${opts.avoidStatement}". Nunca a copie nem a reformule superficialmente.${replacementLine}${feedbackLine}${avoidContextLine}

@@ -7,6 +7,7 @@ import { normalizeAndValidateQuestionText } from '@/lib/math/mathTextIntegrity'
 import { isMathSubject, validateSolutionBlueprint } from '@/lib/math/solutionBlueprint'
 import { isCanonicalDomainId } from '@/lib/generation/domains'
 import { missingRequiredSupportTextReason } from '@/lib/exams/supportTextIntegrity'
+import { hasReferenceAnswer, MIN_REFERENCE_ANSWER_LENGTH } from '@/lib/exams/referenceAnswer'
 
 export type ValidationResult = {
   corrected: ExamGenerationResult
@@ -108,6 +109,13 @@ export function correctSingleQuestion(
   } else {
     if (q.alternatives?.length || q.correctLetter) {
       issues.push(`Questão ${q.number} (descritiva): não deveria ter alternatives/correctLetter.`)
+    }
+    // Obrigatória: é a base da correção (gabarito + nota sugerida por IA).
+    if (!hasReferenceAnswer(q)) {
+      issues.push(`Questão ${q.number} (descritiva): expectedAnswer ausente ou vazia — toda descritiva precisa de uma resposta esperada concreta (mínimo ${MIN_REFERENCE_ANSWER_LENGTH} caracteres), nunca "resposta pessoal"/genérica.`)
+    }
+    if (!(q.gradingCriteria ?? '').trim()) {
+      warnings.push(`Questão ${q.number} (descritiva): sem critérios de correção (gradingCriteria) — a nota sugerida pela IA fica menos precisa.`)
     }
   }
 

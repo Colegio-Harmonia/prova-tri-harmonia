@@ -166,3 +166,32 @@ describe('tipografia do corpo da prova', () => {
     expect(boldUpdates.every((bold) => bold === false)).toBe(true)
   })
 })
+
+describe('negrito nos verbos de comando do enunciado', () => {
+  const boldTexts = (ops: ReturnType<typeof buildProvaOps>) =>
+    ops.filter((op): op is { kind: 'text'; text: string; bold?: boolean } => op.kind === 'text' && !!op.bold).map((op) => op.text)
+
+  function discursive(statement: string, supportText?: string): ExamQuestion {
+    return { ...objectiveQuestion(1, []), source: 'ia', type: 'descritiva', alternatives: null, correctLetter: null, statement, supportText }
+  }
+
+  it('Fundamental: negrita só os verbos de comando do enunciado e preserva o texto', () => {
+    const exam = examWith([discursive('Leia o texto e explique o que o autor quis dizer.', 'Texto: cite as palavras do poeta.')])
+    exam.metadata.segment = 'anos-finais'
+    const ops = buildProvaOps(exam, new Map(), new Map())
+    expect(boldTexts(ops)).toEqual(['Leia', 'explique'])
+    expect(renderedText(ops)).toContain('1. Texto: cite as palavras do poeta.\nLeia o texto e explique o que o autor quis dizer.')
+  })
+
+  it('Ensino Médio: sem negrito', () => {
+    const exam = examWith([discursive('Explique o fenômeno.')])
+    expect(boldTexts(buildProvaOps(exam, new Map(), new Map()))).toEqual([])
+  })
+
+  it('não negrita alternativas', () => {
+    const q = { ...objectiveQuestion(1, [{ letter: 'A', text: 'Cite o autor' }]), statement: 'Assinale a correta.' }
+    const exam = examWith([q])
+    exam.metadata.segment = 'anos-iniciais'
+    expect(boldTexts(buildProvaOps(exam, new Map(), new Map()))).toEqual(['Assinale'])
+  })
+})

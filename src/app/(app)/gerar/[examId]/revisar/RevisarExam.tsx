@@ -837,7 +837,13 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
 
             {q.type === 'descritiva' && (
               <div className="mt-2 space-y-1 text-neutral-600">
-                {q.expectedAnswer && <p><span className="font-medium">Resposta esperada:</span> <MathText text={q.expectedAnswer} /></p>}
+                {q.expectedAnswer ? (
+                  <p><span className="font-medium">Resposta esperada:</span> <MathText text={q.expectedAnswer} /></p>
+                ) : (
+                  <p role="alert" className="font-medium text-red-700">
+                    Sem resposta esperada cadastrada — a correção fica sem base. Use &quot;Trocar só essa questão&quot; para regenerar antes de concluir a revisão.
+                  </p>
+                )}
                 {q.gradingCriteria && <p><span className="font-medium">Critérios:</span> <MathText text={q.gradingCriteria} /></p>}
               </div>
             )}

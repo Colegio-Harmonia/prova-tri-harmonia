@@ -7,6 +7,7 @@ import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import type { CorrectionAnswer } from '@/types/correction'
 import { suggestGrade } from '@/lib/gemini/gradeSuggestion'
 import { isStaffSuperuser } from '@/lib/auth/roles'
+import { findDiscursiveWithoutReferenceAnswer, referenceAnswerMissingMessage } from '@/lib/exams/referenceAnswer'
 import { aiFailureResponse } from '@/lib/ai/routeFailure'
 import { questionMaxGrade } from '@/lib/corrections/gradeNormalization'
 
@@ -79,6 +80,15 @@ export async function POST(
       .where(eq(examCorrections.id, correctionId))
       .returning()
     return NextResponse.json({ correction: updated, suggested: 0 })
+  }
+
+  // Sem resposta esperada a IA corrigiria sem base: melhor recusar do que
+  // sugerir uma nota inventada.
+  const withoutReference = findDiscursiveWithoutReferenceAnswer(
+    pending.flatMap((a) => payload.questions.filter((q) => q.number === a.questionNumber)),
+  )
+  if (withoutReference.length) {
+    return NextResponse.json({ error: 'missing_reference_answer', message: referenceAnswerMissingMessage(withoutReference), questions: withoutReference }, { status: 422 })
   }
 
   let suggestions: Array<{ questionNumber: number; suggestion: Awaited<ReturnType<typeof suggestGrade>> }>
