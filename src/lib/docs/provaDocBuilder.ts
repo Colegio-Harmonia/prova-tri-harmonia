@@ -8,6 +8,9 @@ import { buildLatexImageCache, type LatexImageCache } from './latexImageCache'
 import { buildMarkdownTableImageCache, splitMarkdownTables, type MarkdownTableImageCache } from './markdownTableImageCache'
 
 const BLANK_LINE = '_'.repeat(60)
+// Figura de alternativa do ENEM: menor que a imagem de apoio, pra caber as
+// 5 alternativas sem empurrar a questão por várias páginas.
+const ALTERNATIVE_IMAGE_SIZE = { widthPt: 150, heightPt: 110 }
 
 type ProvaOp =
   | { kind: 'text'; text: string; bold?: boolean }
@@ -99,7 +102,8 @@ export function buildProvaOps(exam: ExamGenerationResult, latexCache: LatexImage
         ops.push({ kind: 'text', text: `${alt.letter}) ` })
         // Alternativa-imagem do ENEM chega com text null: marca em vez de
         // imprimir em branco (e o markdownTextToOps já é null-safe).
-        ops.push(...markdownTextToOps(alt.text || IMAGE_ALTERNATIVE_PLACEHOLDER, latexCache, tableCache))
+        if (alt.image) ops.push({ kind: 'image', driveFileId: alt.image.driveFileId, size: ALTERNATIVE_IMAGE_SIZE })
+        else ops.push(...markdownTextToOps(alt.text || IMAGE_ALTERNATIVE_PLACEHOLDER, latexCache, tableCache))
         ops.push({ kind: 'text', text: '\n' })
       }
     } else {

@@ -829,7 +829,13 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
               <ul className="mt-2 space-y-1">
                 {q.alternatives.map((a) => (
                   <li key={a.letter} className={a.letter === q.correctLetter ? 'font-medium text-harmonia-green' : ''}>
-                    {a.letter}) <MathText text={a.text || IMAGE_ALTERNATIVE_PLACEHOLDER} />
+                    {a.letter}){' '}
+                    {a.image ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={questionImageUrl(exam.id, a.image.driveFileId)} alt={`Alternativa ${a.letter} da questão ${q.number}`} className="inline-block max-h-40 w-auto max-w-full rounded border border-border align-top" />
+                    ) : (
+                      <MathText text={a.text || IMAGE_ALTERNATIVE_PLACEHOLDER} />
+                    )}
                   </li>
                 ))}
               </ul>

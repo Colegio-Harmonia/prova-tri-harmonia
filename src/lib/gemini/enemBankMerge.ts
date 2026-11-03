@@ -9,7 +9,7 @@ type BankRow = {
   year: number
   context: string | null
   alternatives_introduction: string | null
-  alternatives: Array<{ letter: string; text: string; isCorrect: boolean }>
+  alternatives: Array<{ letter: string; text: string; isCorrect: boolean; file?: string | null }>
   correct_alternative: string
   bloom_level: string | null
   skill_code: string | null
@@ -64,11 +64,23 @@ export async function buildBankExamQuestions(questionIds: number[], startNumber:
     questionIds.map(async (id, i) => {
       const r = byId.get(id)
       if (!r) return null // questão removida do banco entre a seleção e a geração — não trava, só cai fora
-      const alternatives = (r.alternatives ?? []).map((a) => ({ letter: a.letter, text: a.text }))
+      // Alternativa-figura do ENEM (ex: 2013/151, "Qual destas figuras...")
+      // vem com text null e a figura em `file`. Antes só o texto era
+      // copiado e a prova mostrava 5 placeholders sem conteúdo nenhum.
+      const alternatives = await Promise.all((r.alternatives ?? []).map(async (a) => {
+        if (a.text || !a.file) return { letter: a.letter, text: a.text }
+        try {
+          const resolved = await importImageFromUrl(a.file, 'enem')
+          return { letter: a.letter, text: a.text, image: { driveFileId: resolved.driveFileId, previewUrl: resolved.previewUrl, sourceUrl: a.file } }
+        } catch (err) {
+          console.warn(`[enemBankMerge] falha ao importar imagem da alternativa ${a.letter} da questão ${r.id} (${a.file}):`, err instanceof Error ? err.message : err)
+          return { letter: a.letter, text: a.text }
+        }
+      }))
       const text = [
         r.context,
         r.alternatives_introduction,
-        alternatives.map((alternative) => `${alternative.letter}) ${alternative.text}`).join('\n'),
+        alternatives.map((alternative) => `${alternative.letter}) ${alternative.text ?? "[figura]"}`).join('\n'),
       ].filter(Boolean).join('\n\n')
       const inferred = inferDokAndSoloExpected({
         text,

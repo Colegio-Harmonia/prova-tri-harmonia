@@ -61,7 +61,14 @@ export const examQuestionSchema = z.object({
   bloomLevel: z.enum(BLOOM_LEVELS),
   statement: z.string(),
   supportText: z.string().nullable().optional(),
-  alternatives: z.array(z.object({ letter: z.string(), text: z.string() })).nullable().optional(),
+  alternatives: z.array(z.object({
+    letter: z.string(),
+    text: z.string(),
+    // Só questões do banco ENEM: alternativa que é figura (gráfico, estrutura
+    // química) chega com `text` nulo e a figura original em `image`, já
+    // importada pro Drive — nunca preenchido pela IA.
+    image: z.object({ driveFileId: z.string(), previewUrl: z.string(), sourceUrl: z.string().nullable().optional() }).nullable().optional(),
+  })).nullable().optional(),
   correctLetter: z.string().nullable().optional(),
   expectedAnswer: z.string().nullable().optional(),
   gradingCriteria: z.string().nullable().optional(),

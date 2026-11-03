@@ -21,7 +21,7 @@ const pedagogical: ExamQuestion['pedagogicalClassification'] = {
   soloExpected: { categoryCode: 'MULTIESTRUTURAL', confidence: 0.7, justification: 'teste', evidence: 'teste' },
 }
 
-function objectiveQuestion(number: number, alternatives: { letter: string; text: string }[]): ExamQuestion {
+function objectiveQuestion(number: number, alternatives: NonNullable<ExamQuestion['alternatives']>): ExamQuestion {
   return {
     number,
     source: 'enem_bank',
@@ -111,6 +111,18 @@ describe('geração de documento com alternativa-imagem (text null)', () => {
     const allText = renderedText(buildProvaOps(exam, new Map(), new Map()))
     expect(allText).toContain(IMAGE_ALTERNATIVE_PLACEHOLDER)
     expect(allText).toContain('alternativa com texto')
+  })
+
+  it('insere a figura original da alternativa quando o banco ENEM trouxe a imagem (exam #586, ENEM 2013/151)', () => {
+    const exam = examWith([
+      objectiveQuestion(7, [
+        { letter: 'A', text: NULL_TEXT, image: { driveFileId: 'alt-a', previewUrl: 'https://drive/alt-a' } },
+        { letter: 'B', text: 'alternativa com texto' },
+      ]),
+    ])
+    const ops = buildProvaOps(exam, new Map(), new Map())
+    expect(ops).toContainEqual(expect.objectContaining({ kind: 'image', driveFileId: 'alt-a' }))
+    expect(renderedText(ops)).not.toContain(IMAGE_ALTERNATIVE_PLACEHOLDER)
   })
 })
 
