@@ -56,6 +56,8 @@ export type CurricularUnit = {
   objetivosColumnMissing: boolean
   /** Só Ensino Médio — habilidades ENEM planejadas (C:H). Ausente/vazio fora do EM. */
   enemSkills?: EnemSkillsParseResult
+  /** Texto original das habilidades ENEM (para importar no planejamento sem perder peso/origem). */
+  enemSkillsRaw?: string | null
   /** Conteúdo enriquecido do banco (Programação Trimestral / Manual do Professor) */
   enrichedContent?: string | null
   /** Objetivos detalhados do banco */

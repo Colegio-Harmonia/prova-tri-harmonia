@@ -2,7 +2,7 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 05/10/2026 (PR #43 em produção; substituição automática da aprovação corrigida).
+> Última atualização: 09/11/2026 (Ensino Médio planejado pela Matriz do ENEM, seção 2.18).
 
 ## 1. Fonte da verdade
 
@@ -500,6 +500,30 @@ Ainda aberto: a prova #405 foi recusada na questão 3 pela auditoria Jev
 (`calculo_ou_dados` e `correcao_objetiva`, ambos como alerta); o cálculo da
 questão está correto (divisão proporcional da taxa), então vale revisar se o
 juiz está sendo rígido demais com divisão proporcional de valores monetários.
+
+## 2.18 Novo (09/11/2026): Ensino Médio planejado pela Matriz do ENEM (C:H)
+
+Motivação: Inglês do 1º ano EM vem do material com `C2:H5 (Unesp-2022)` por
+questão, sem BNCC. Agora a Matriz do ENEM é cidadã de primeira classe no
+planejamento e na geração, sem substituir a BNCC (as duas convivem).
+
+- **Planejamento interno** (`/planejamento`): campo "Habilidades ENEM" por
+  unidade (só EM), texto livre `C2:H5 (origem)` uma por linha; repetir o código
+  = peso. Coluna nova `curriculum_plan_units.enem_skills` (**migration 0048**,
+  aditiva e anulável — aplicar com `psql -f` antes do deploy). Cópia de versão
+  e importação da planilha preservam o campo.
+- **Planilha**: coluna opcional "Habilidades ENEM" (ou C:H colado em
+  "Habilidades"), mesmo parser (`src/lib/sheets/enemSkillsParser.ts`).
+- **Validação**: par C:H conferido contra a fronteira oficial da área
+  (`src/config/enemMatrix.ts`); inexistente vira aviso, nunca palpite.
+- **Geração (pipeline unificado)**: `pickTargetEnemSkill` escolhe a habilidade
+  de cada questão por código (rodízio ponderado pelo peso); entra no prompt como
+  HABILIDADE ENEM-ALVO e `finalize.ts` grava `saeb = C2:H5 — <descrição>`,
+  `approximate:false`. Troca de questão mantém a habilidade da original.
+- Deploy precisa de `web` **e** `worker` (a geração roda no worker).
+
+Ainda não: painel de desempenho por habilidade ENEM; pré-seleção do filtro do
+banco ENEM.
 
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 

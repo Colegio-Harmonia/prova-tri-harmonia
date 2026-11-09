@@ -7,7 +7,7 @@ import { StatusBadge } from '../planning-list'
 import PlanOperations from './plan-operations'
 
 type Skill = { code: string; description: string | null; targetMasteryPercent: number }
-type Unit = { title: string; content: string | null; objectives: string | null; skills: Skill[] }
+type Unit = { title: string; content: string | null; objectives: string | null; enemSkills?: string | null; skills: Skill[] }
 type Detail = {
   plan: { id: number; academicYear: number; segment: string; gradeYear: number; subject: string; bimester: number }
   versions: Array<{ id: number; versionNumber: number; status: PlanningStatus; source: string; sourceReference: string | null; updatedAt: string }>
@@ -32,7 +32,7 @@ function transitionLabel(from: PlanningStatus, to: PlanningStatus) {
   return PLANNING_STATUS_LABELS[to]
 }
 
-function UnitEditor({ unit, index, total, onChange, onMove, onRemove }: { unit: Unit; index: number; total: number; onChange: (unit: Unit) => void; onMove: (delta: number) => void; onRemove: () => void }) {
+function UnitEditor({ unit, index, total, showEnem, onChange, onMove, onRemove }: { unit: Unit; index: number; total: number; showEnem: boolean; onChange: (unit: Unit) => void; onMove: (delta: number) => void; onRemove: () => void }) {
   const setSkill = (skillIndex: number, patch: Partial<Skill>) => onChange({ ...unit, skills: unit.skills.map((skill, i) => i === skillIndex ? { ...skill, ...patch } : skill) })
   return <fieldset className="rounded border border-border p-3">
     <legend className="px-1 text-xs font-semibold text-content-secondary">Unidade {index + 1}</legend>
@@ -54,6 +54,8 @@ function UnitEditor({ unit, index, total, onChange, onMove, onRemove }: { unit: 
       <button type="button" onClick={() => onChange({ ...unit, skills: unit.skills.filter((_, i) => i !== skillIndex) })} className={button} aria-label={`Remover ${skill.code || 'habilidade'}`}>×</button>
     </div>)}</div>
     <button type="button" onClick={() => onChange({ ...unit, skills: [...unit.skills, { code: '', description: null, targetMasteryPercent: 100 }] })} className={`${button} mt-2`}>+ Habilidade</button>
+    {showEnem && <label className="mt-3 block text-xs text-content-secondary"><span className="font-semibold">Habilidades ENEM</span> (uma por linha, ex.: C2:H5 (Unesp-2022) — repetir o código aumenta o peso na prova)
+      <textarea rows={4} placeholder={'C2:H5 (Unesp-2022)\nC2:H7 (PUC Minas-2019)'} value={unit.enemSkills ?? ''} onChange={(e) => onChange({ ...unit, enemSkills: e.target.value })} className={`${input} mt-1 font-mono`} /></label>}
   </fieldset>
 }
 
@@ -63,6 +65,7 @@ function ReadOnlyUnits({ units }: { units: Unit[] }) {
     <p className="font-medium text-content-primary">{index + 1}. {unit.title}</p>
     {unit.content && <p className="mt-1 whitespace-pre-line text-sm text-content-secondary"><span className="font-semibold">Conteúdos:</span> {unit.content}</p>}
     {unit.objectives && <p className="mt-1 whitespace-pre-line text-sm text-content-secondary"><span className="font-semibold">Objetivos:</span> {unit.objectives}</p>}
+    {unit.enemSkills && <p className="mt-1 whitespace-pre-line text-sm text-content-secondary"><span className="font-semibold">Habilidades ENEM:</span> <span className="font-mono">{unit.enemSkills}</span></p>}
     {unit.skills.length > 0 && <ul className="mt-2 space-y-1 text-sm">{unit.skills.map((skill) => <li key={skill.code}><span className="font-mono font-semibold">{skill.code}</span> <span className="text-content-secondary">{skill.description ?? 'Descrição não informada'}</span>{skill.targetMasteryPercent !== 100 && <span className="text-xs text-content-muted"> · meta {skill.targetMasteryPercent}%</span>}</li>)}</ul>}
   </li>)}</ol>
 }
@@ -196,7 +199,7 @@ export default function PlanEditor({ planId }: { planId: number }) {
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">
       <section className="space-y-3">
         {permissions.edit ? <>
-          {units.map((unit, index) => <UnitEditor key={index} unit={unit} index={index} total={units.length}
+          {units.map((unit, index) => <UnitEditor key={index} unit={unit} index={index} total={units.length} showEnem={detail.plan.segment === 'ensino-medio'}
             onChange={(next) => updateUnits(units.map((item, i) => i === index ? next : item))}
             onMove={(delta) => { const next = [...units]; const [moved] = next.splice(index, 1); next.splice(index + delta, 0, moved); updateUnits(next) }}
             onRemove={() => { if (window.confirm(`Remover a unidade "${unit.title || index + 1}"?`)) updateUnits(units.filter((_, i) => i !== index)) }} />)}

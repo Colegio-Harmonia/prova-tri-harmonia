@@ -7,6 +7,7 @@ const unit = z.object({
   title: z.string(),
   content: z.string().nullable().optional(),
   objectives: z.string().nullable().optional(),
+  enemSkills: z.string().max(4000).nullable().optional(),
   skills: z.array(z.object({ code: z.string(), description: z.string().nullable().optional(), targetMasteryPercent: z.number().int().optional() })).max(60),
 })
 

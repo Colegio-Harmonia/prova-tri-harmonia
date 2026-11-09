@@ -45,7 +45,7 @@ async function versionContent(versionId: number, tx: Tx | typeof db = db) {
   const units = await tx.select().from(curriculumPlanUnits).where(eq(curriculumPlanUnits.versionId, versionId)).orderBy(asc(curriculumPlanUnits.position))
   const skills = units.length ? await tx.select().from(curriculumPlanSkills).where(inArray(curriculumPlanSkills.unitId, units.map((unit) => unit.id))).orderBy(asc(curriculumPlanSkills.position)) : []
   return units.map((unit) => ({
-    title: unit.title, content: unit.content, objectives: unit.objectives,
+    title: unit.title, content: unit.content, objectives: unit.objectives, enemSkills: unit.enemSkills,
     skills: skills.filter((skill) => skill.unitId === unit.id).map((skill) => ({ code: skill.code, description: skill.description, targetMasteryPercent: skill.targetMasteryPercent })),
   }))
 }
@@ -58,7 +58,7 @@ async function writeContent(tx: Tx, versionId: number, units: PlanUnitInput[]) {
   const enriched = missing.length ? new Map((await enrichBnccDescriptions(missing)).map((skill) => [skill.code, skill.description])) : new Map()
   await tx.delete(curriculumPlanUnits).where(eq(curriculumPlanUnits.versionId, versionId))
   for (const [position, unit] of normalized.entries()) {
-    const [saved] = await tx.insert(curriculumPlanUnits).values({ versionId, position, title: unit.title, content: unit.content, objectives: unit.objectives }).returning()
+    const [saved] = await tx.insert(curriculumPlanUnits).values({ versionId, position, title: unit.title, content: unit.content, objectives: unit.objectives, enemSkills: unit.enemSkills }).returning()
     if (unit.skills.length) await tx.insert(curriculumPlanSkills).values(unit.skills.map((skill, skillPosition) => ({ unitId: saved.id, code: skill.code, description: skill.description ?? enriched.get(skill.code) ?? null, position: skillPosition, targetMasteryPercent: skill.targetMasteryPercent })))
   }
   await tx.update(curriculumPlanVersions).set({ updatedAt: new Date() }).where(eq(curriculumPlanVersions.id, versionId))

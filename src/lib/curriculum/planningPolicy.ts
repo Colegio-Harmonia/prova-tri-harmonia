@@ -1,4 +1,5 @@
 import type { UserRole } from '@/lib/auth/roles'
+import { parseEnemSkills } from '@/lib/sheets/enemSkillsParser'
 import { isStaffSuperuser } from '@/lib/auth/roles'
 
 export const PLANNING_STATUSES = ['rascunho', 'em_revisao', 'aprovado', 'encerrado'] as const
@@ -88,6 +89,8 @@ export type PlanUnitInput = {
   title: string
   content?: string | null
   objectives?: string | null
+  /** Ensino Médio: habilidades ENEM no formato "C2:H5 (origem)", uma por linha. */
+  enemSkills?: string | null
   skills: Array<{ code: string; description?: string | null; targetMasteryPercent?: number }>
 }
 
@@ -95,6 +98,7 @@ export type NormalizedPlanUnit = {
   title: string
   content: string | null
   objectives: string | null
+  enemSkills: string | null
   skills: Array<{ code: string; description: string | null; targetMasteryPercent: number }>
 }
 
@@ -114,7 +118,11 @@ export function normalizePlanUnits(units: PlanUnitInput[]): { units: NormalizedP
       if (!Number.isInteger(target) || target < 0 || target > 100) errors.push(`Unidade ${index + 1}: meta de ${code} deve ser de 0 a 100.`)
       return { code, description: skill.description?.trim() || null, targetMasteryPercent: target }
     }).filter((skill) => skill.code)
-    return { title, content: unit.content?.trim() || null, objectives: unit.objectives?.trim() || null, skills }
+    const enemSkills = unit.enemSkills?.trim() || null
+    if (enemSkills && !parseEnemSkills(enemSkills, null).skills.length) {
+      errors.push(`Unidade ${index + 1}: nenhum código ENEM reconhecido em "Habilidades ENEM" (use o formato C2:H5, um por linha).`)
+    }
+    return { title, content: unit.content?.trim() || null, objectives: unit.objectives?.trim() || null, enemSkills, skills }
   })
   return { units: normalized, errors }
 }

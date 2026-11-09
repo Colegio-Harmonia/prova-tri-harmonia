@@ -1,9 +1,9 @@
 import type { ColumnRoles, CurricularUnit, Segment } from '@/types/exam'
 import { parseHabilidades } from './habilidadesParser'
 import { parseObjetivos, estimateObjectiveFromContent } from './objetivosParser'
-import { parseEnemSkills } from './enemSkillsParser'
+import { extractEnemCode, parseEnemSkills } from './enemSkillsParser'
 import { getEnemAreaForSubject } from '@/config/enemAreaMap'
-import { isEnemAreaCode } from '@/config/enemMatrix'
+import { isEnemAreaCode, type EnemAreaCode } from '@/config/enemMatrix'
 
 function cell(row: string[], idx: number | null): string | null {
   if (idx === null) return null
@@ -20,6 +20,15 @@ function resolvePeriodo(row: string[], roles: ColumnRoles): string | null {
  * content columns (dates filled but no Ano/Bimestre/conteúdo) per the root
  * CLAUDE.md's "linhas vazias" rule — silently, not as an error.
  */
+function enemSkillsFields(enemCell: string | null, habilidadesCell: string | null, area: EnemAreaCode | null) {
+  const enemSkills = parseEnemSkills([enemCell, habilidadesCell].filter(Boolean).join('\n'), area)
+  // Texto cru só com as linhas que têm código C:H — é o que vai para o planejamento interno.
+  const raw = enemSkills.skills.length
+    ? [enemCell, habilidadesCell].filter(Boolean).join('\n').split(/\r?\n/).filter((line) => extractEnemCode(line)).map((line) => line.trim()).join('\n')
+    : null
+  return { enemSkills, enemSkillsRaw: raw }
+}
+
 export function parseCurriculumRows(rows: string[][], roles: ColumnRoles, segment: Segment, subject?: string): CurricularUnit[] {
   const units: CurricularUnit[] = []
   const enemAreaRaw = subject ? getEnemAreaForSubject(subject) : null
@@ -53,7 +62,7 @@ export function parseCurriculumRows(rows: string[][], roles: ColumnRoles, segmen
       // C:H colados direto em "Habilidades" (quando a aba ainda não tem a
       // coluna própria). BNCC e ENEM convivem — um não substitui o outro.
       ...(segment === 'ensino-medio'
-        ? { enemSkills: parseEnemSkills([habilidadesEnemRaw, habilidadesRaw].filter(Boolean).join('\n'), enemArea) }
+        ? enemSkillsFields(habilidadesEnemRaw, habilidadesRaw, enemArea)
         : {}),
     })
   })

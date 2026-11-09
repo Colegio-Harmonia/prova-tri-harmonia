@@ -2,6 +2,9 @@ import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/db/client'
 import { curriculumPlanSkills, curriculumPlanUnits, curriculumPlanVersions, curriculumPlans } from '@/db/schema'
 import { parseObjetivos } from '@/lib/sheets/objetivosParser'
+import { parseEnemSkills } from '@/lib/sheets/enemSkillsParser'
+import { getEnemAreaForSubject } from '@/config/enemAreaMap'
+import { isEnemAreaCode } from '@/config/enemMatrix'
 import type { CurricularUnit, CurriculumSelection, Segment } from '@/types/exam'
 
 export class CurriculumPlanError extends Error {
@@ -18,6 +21,8 @@ export type PlanUnitRow = {
   title: string
   content: string | null
   objectives: string | null
+  /** Ensino Médio: habilidades ENEM "C2:H5 (origem)", uma por linha. */
+  enemSkills?: string | null
   skills: Array<{ code: string; description: string | null }>
 }
 
@@ -40,6 +45,8 @@ export function buildCurriculumFromPlan(
   tabName: string,
   rows: PlanUnitRow[],
 ): CurriculumSelection {
+  const enemAreaRaw = getEnemAreaForSubject(scope.subject)
+  const enemArea = isEnemAreaCode(enemAreaRaw) ? enemAreaRaw : null
   const units: CurricularUnit[] = [...rows]
     .sort((a, b) => a.position - b.position)
     .map((row) => {
@@ -59,12 +66,21 @@ export function buildCurriculumFromPlan(
         // os objetivos do planejamento entram por aqui para chegarem à IA.
         enrichedContent: objectives ? `Objetivos de aprendizagem do planejamento:\n${objectives}` : null,
         enrichedObjectives: objectives,
+        ...(scope.segment === 'ensino-medio' && row.enemSkills?.trim()
+          ? { enemSkills: parseEnemSkills(row.enemSkills, enemArea), enemSkillsRaw: row.enemSkills.trim() }
+          : {}),
       }
     })
 
-  const unmappedWarnings = units
-    .filter((unit) => unit.habilidades.status === 'nao_mapeado')
-    .map((unit) => `"${unit.tituloCapitulo}": habilidade BNCC não mapeada (${unit.habilidades.reason}).`)
+  const unmappedWarnings = [
+    ...units
+      .filter((unit) => unit.enemSkills?.invalid.length)
+      .map((unit) => `"${unit.tituloCapitulo}": código(s) ENEM inexistente(s) na matriz da área, ignorado(s): ${unit.enemSkills!.invalid.join(', ')}.`),
+    // No EM planejado pela Matriz do ENEM, faltar BNCC não é lacuna do planejamento.
+    ...units
+      .filter((unit) => unit.habilidades.status === 'nao_mapeado' && !unit.enemSkills?.skills.length)
+      .map((unit) => `"${unit.tituloCapitulo}": habilidade BNCC não mapeada (${unit.habilidades.reason}).`),
+  ]
 
   return { segment: scope.segment, gradeYear: scope.gradeYear, subject: scope.subject, bimester: scope.bimester, tabName, units, unmappedWarnings }
 }
@@ -105,6 +121,6 @@ export async function getCurriculumFromPlan(planId: number, scope: CurriculumSco
   return buildCurriculumFromPlan(
     { ...scope, bimester: scope.bimester ?? plan.bimester },
     `Planejamento interno #${planId} (versão ${version.versionNumber})`,
-    units.map((unit) => ({ position: unit.position, title: unit.title, content: unit.content, objectives: unit.objectives, skills: skillsByUnit.get(unit.id) ?? [] })),
+    units.map((unit) => ({ position: unit.position, title: unit.title, content: unit.content, objectives: unit.objectives, enemSkills: unit.enemSkills, skills: skillsByUnit.get(unit.id) ?? [] })),
   )
 }
