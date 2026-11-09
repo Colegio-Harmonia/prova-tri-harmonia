@@ -81,6 +81,15 @@ function UnitList({ units, bnccFilter }: { units: CurriculumSelection['units']; 
             ) : (
               <span className="rounded bg-neutral-100 px-2 py-0.5 text-xs text-neutral-500">BNCC não mapeada</span>
             )}
+            {unit.enemSkills?.skills.map((s) => (
+              <span
+                key={`enem-${s.code}`}
+                title={s.description ?? undefined}
+                className="rounded border border-harmonia-green/40 px-2 py-0.5 text-xs text-harmonia-green"
+              >
+                ENEM {s.code}{s.count > 1 ? ` ×${s.count}` : ''}
+              </span>
+            ))}
           </div>
         </div>
       ))}

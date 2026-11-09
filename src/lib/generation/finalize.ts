@@ -65,7 +65,16 @@ export function assembleExamQuestion(ctx: PipelineContext, assembled: AssembledQ
     bnccStatus: metadata.bnccStatus,
     bnccSummary: metadata.bnccSummary,
     pedagogicalClassification: metadata.pedagogicalClassification,
-    saeb: { applicable: false, source: null, value: null, approximate: false },
+    // Matriz do ENEM: só quando o planejamento definiu a habilidade-alvo (por
+    // código, não pela IA). Sem isso, nada é inventado.
+    saeb: ctx.targetEnemSkill
+      ? {
+          applicable: true,
+          source: 'enem',
+          value: ctx.targetEnemSkill.description ? `${ctx.targetEnemSkill.code} — ${ctx.targetEnemSkill.description}` : ctx.targetEnemSkill.code,
+          approximate: false,
+        }
+      : { applicable: false, source: null, value: null, approximate: false },
     needsImage: visualPlan.required,
     imageQuery: visualPlan.required ? visualPlan.rationale : null,
     whatIfImage: visualPlan.whatIfImage ?? null,

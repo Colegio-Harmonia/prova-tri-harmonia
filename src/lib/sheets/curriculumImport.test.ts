@@ -14,6 +14,7 @@ describe('importacao curricular', () => {
       tituloCapituloIdx: 0,
       conteudoIdx: 1,
       habilidadesIdx: 2,
+      habilidadesEnemIdx: null,
       objetivosIdx: null,
       bimestreIdx: 3,
       trimestreIdx: null,
@@ -82,5 +83,26 @@ describe('importacao curricular', () => {
         { code: 'EF08GE03', description: null },
       ],
     })
+  })
+
+  it('ensino medio le a coluna Habilidades ENEM ao lado da BNCC', () => {
+    const roles = resolveColumnRoles(['Capítulo', 'Habilidades', 'Habilidades ENEM', 'Bimestre'])
+    expect(roles.habilidadesEnemIdx).toBe(2)
+    const [unit] = parseCurriculumRows([
+      ['Leading is changing', '', 'C2:H5 (UFT-2019)\nC2:H5 (UFT-2019)\nC6:H18 (IFSULDEMINAS-2022)', '1'],
+    ], roles, 'ensino-medio', 'Inglês')
+
+    expect(unit?.habilidades.status).toBe('nao_mapeado')
+    expect(unit?.enemSkills?.skills.map((s) => [s.code, s.count])).toEqual([['C2:H5', 2], ['C6:H18', 1]])
+  })
+
+  it('ensino medio reconhece C:H colado na propria coluna Habilidades', () => {
+    const roles = resolveColumnRoles(['Capítulo', 'Habilidades', 'Bimestre'])
+    const [unit] = parseCurriculumRows([
+      ['Self-knowledge to thrive', 'EM13LGG401 C7:H24 (PUC Goiás-2020)', '1'],
+    ], roles, 'ensino-medio', 'Inglês')
+
+    expect(unit?.habilidades).toEqual({ status: 'mapeado', skills: [{ code: 'EM13LGG401', description: null }] })
+    expect(unit?.enemSkills?.skills.map((s) => s.code)).toEqual(['C7:H24'])
   })
 })

@@ -124,6 +124,8 @@ export async function repairQuestionFromDiagnostics(params: {
       bnccCodes: [code],
       bnccStatus: 'mapeado',
       bnccSummary: officialSkill?.text ?? params.question.bnccSummary ?? null,
+      // Reparo de BNCC não troca a habilidade ENEM planejada da questão.
+      saeb: params.question.saeb,
       review: null,
     }, unitCurriculum, { allowMathReviewFallback: true, deferContentQualityToJev: true })
     return {

@@ -55,3 +55,44 @@ describe('correctSingleQuestion', () => {
     })
   })
 })
+
+describe('habilidade ENEM planejada (Ensino Médio)', () => {
+  const units = [{
+    rowIndex: 0, bimestre: '1', tituloCapitulo: 'Leading is changing', conteudo: null,
+    habilidades: { status: 'nao_mapeado' as const, skills: [] },
+    objetivos: [], objetivosColumnMissing: true,
+    enemSkills: {
+      invalid: [],
+      skills: [
+        { code: 'C2:H5', competency: 2, skill: 5, count: 8, sources: [], description: null },
+        { code: 'C6:H18', competency: 6, skill: 18, count: 1, sources: [], description: null },
+      ],
+    },
+  }]
+  const curriculum = { segment: 'ensino-medio' as const, gradeYear: 1, subject: 'Inglês', units }
+  const enem = (value: string) => question({ supportText: null, saeb: { applicable: true, source: 'enem', value, approximate: true } })
+
+  it('código planejado vira valor canônico com descrição oficial e não aproximado', () => {
+    const result = correctSingleQuestion(enem('C2-H5'), curriculum)
+    expect(result.question.saeb).toMatchObject({ approximate: false })
+    expect(result.question.saeb.value).toMatch(/^C2:H5 — Associar vocábulos/)
+    expect(result.warnings).toEqual([])
+  })
+
+  it('código fora do planejamento fica aproximado e avisa o revisor', () => {
+    const result = correctSingleQuestion(enem('C7:H24'), curriculum)
+    expect(result.question.saeb.approximate).toBe(true)
+    expect(result.warnings[0]).toMatch(/fora das habilidades ENEM planejadas/)
+  })
+
+  it('par inexistente na matriz é sinalizado, nunca corrigido por palpite', () => {
+    const result = correctSingleQuestion(enem('C2:H14'), curriculum)
+    expect(result.question.saeb).toMatchObject({ value: 'C2:H14', approximate: true })
+    expect(result.warnings[0]).toMatch(/não existe na matriz ENEM/)
+  })
+
+  it('sem planejamento ENEM mantém o comportamento antigo', () => {
+    const result = correctSingleQuestion(enem('C2-H7'), { ...curriculum, units: [] })
+    expect(result.question.saeb).toEqual({ applicable: true, source: 'enem', value: 'C2-H7', approximate: true })
+  })
+})

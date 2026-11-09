@@ -145,8 +145,14 @@ const UNIFIED_RESPONSE_SCHEMA = {
 
 /** Habilidade BNCC-alvo: o gerador precisa saber o que a questão deve MEDIR, não só o assunto. */
 export function buildSkillBlock(ctx: PipelineContext): string {
+  const enem = ctx.targetEnemSkill
+  const enemBlock = enem
+    ? `HABILIDADE ENEM-ALVO (Matriz de Referência do ENEM, definida no planejamento — é o que a questão deve MEDIR): ${enem.code}${enem.description ? ` — ${enem.description}` : ''}
+A tarefa do aluno precisa exigir exatamente essa habilidade, no formato de item do ENEM (texto-base autêntico + comando). O código ENEM é registrado pelo sistema; não o escreva no enunciado.
+`
+    : ''
   const skills = ctx.targetSkills ?? []
-  if (!skills.length) return ''
+  if (!skills.length) return enemBlock
   const lines = skills.map((skill) => {
     const bloom = skill.description ? inferBloomFromVerb(skill.description) : null
     return `- ${skill.code}${skill.description ? ` — ${skill.description}` : ''}${bloom ? ` (verbo da habilidade → nível de Bloom esperado: ${bloom})` : ''}`
@@ -156,7 +162,7 @@ export function buildSkillBlock(ctx: PipelineContext): string {
 ${lines.join('\n')}
 ${skills.length > 1 ? 'Escolha UMA delas e devolva exatamente esse código em "bnccCodes" com bnccStatus "mapeado".' : 'Devolva este código em "bnccCodes" com bnccStatus "mapeado".'}
 A questão deve exigir a operação cognitiva do VERBO da habilidade aplicada ao objeto de conhecimento dela (ex.: "discutir/avaliar" pede julgar vantagens e limitações com base em dados do texto; "comparar" pede relacionar duas situações; "identificar" pode ser direto). Lembrar um fato isolado do assunto NÃO atende a uma habilidade de nível superior. Ajuste "bloomLevel" ao verbo.${objectives.length ? `\nObjetivos de aprendizagem do capítulo: ${objectives.join(' | ')}` : ''}
-`
+${enemBlock}`
 }
 
 /** Regras que o juiz de qualidade aplica; o gerador as recebe antes de escrever. */

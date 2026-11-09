@@ -2,7 +2,10 @@ import type { CurriculumPlanItem, CurriculumSelection, Segment } from '@/types/e
 import type { ExamGenerationResult, ExamQuestion } from './examSchema'
 import { getSaebApplicability } from '@/config/saebApplicability'
 import { isImageEligibleSubject } from '@/config/imageEligibleSubjects'
-import { computeQuestionSplit } from './promptBuilder'
+import { collectPlannedEnemSkills, computeQuestionSplit } from './promptBuilder'
+import { getEnemAreaForSubject } from '@/config/enemAreaMap'
+import { getEnemSkillDescription, isEnemAreaCode, isValidEnemPair } from '@/config/enemMatrix'
+import { extractEnemCode } from '@/lib/sheets/enemSkillsParser'
 import { normalizeAndValidateQuestionText } from '@/lib/math/mathTextIntegrity'
 import { isMathSubject, validateSolutionBlueprint } from '@/lib/math/solutionBlueprint'
 import { isCanonicalDomainId } from '@/lib/generation/domains'
@@ -51,6 +54,41 @@ function supportTextDefinesAssessedTerm(supportText: string, statement: string):
 }
 
 /**
+ * Questão gerada por IA marcada com a Matriz do ENEM: confere o par C:H
+ * contra a matriz oficial da área e contra o planejamento do capítulo.
+ * Código válido e planejado → valor canônico "C2:H5 — <descrição>" e
+ * approximate:false. Qualquer outra coisa vira approximate:true com aviso
+ * pro revisor — nunca some silenciosamente nem é "corrigida" por palpite.
+ */
+function checkEnemSkill(
+  q: ExamQuestion,
+  saeb: ExamQuestion['saeb'],
+  curriculum: Pick<CurriculumSelection, 'subject'> & Partial<Pick<CurriculumSelection, 'units'>>,
+  warnings: string[],
+): ExamQuestion['saeb'] {
+  if (q.source === 'enem_bank' || !saeb.applicable || saeb.source !== 'enem') return saeb
+  const planned = curriculum.units ? collectPlannedEnemSkills({ units: curriculum.units }).map((p) => p.code) : []
+  const parsed = extractEnemCode(saeb.value)
+  if (!parsed) {
+    if (planned.length) warnings.push(`Questão ${q.number}: habilidade ENEM sem código C:H reconhecível ("${saeb.value ?? ''}") — revisar.`)
+    return planned.length ? { ...saeb, approximate: true } : saeb
+  }
+  const areaRaw = getEnemAreaForSubject(curriculum.subject)
+  const area = isEnemAreaCode(areaRaw) ? areaRaw : null
+  if (area && !isValidEnemPair(area, parsed.competency, parsed.skill)) {
+    warnings.push(`Questão ${q.number}: ${parsed.code} não existe na matriz ENEM da área — revisar a habilidade.`)
+    return { ...saeb, value: parsed.code, approximate: true }
+  }
+  if (planned.length && !planned.includes(parsed.code)) {
+    warnings.push(`Questão ${q.number}: ${parsed.code} está fora das habilidades ENEM planejadas (${planned.join(', ')}).`)
+    return { ...saeb, approximate: true }
+  }
+  if (!planned.length) return saeb
+  const description = area ? getEnemSkillDescription(area, parsed.skill) : null
+  return { ...saeb, value: description ? `${parsed.code} — ${description}` : parsed.code, approximate: false }
+}
+
+/**
  * Corrige UMA questão contra as mesmas regras hard-override da prova
  * inteira (nunca confiar em SAEB/imagem fora do gate mecânico) — extraído
  * pra ser reaproveitado tanto no map() abaixo quanto em
@@ -58,7 +96,7 @@ function supportTextDefinesAssessedTerm(supportText: string, statement: string):
  */
 export function correctSingleQuestion(
   q: ExamQuestion,
-  curriculum: Pick<CurriculumSelection, 'segment' | 'gradeYear' | 'subject'>,
+  curriculum: Pick<CurriculumSelection, 'segment' | 'gradeYear' | 'subject'> & Partial<Pick<CurriculumSelection, 'units'>>,
   options: { allowMathReviewFallback?: boolean; deferContentQualityToJev?: boolean } = {},
 ): { question: ExamQuestion; issues: string[]; warnings: string[] } {
   const issues: string[] = []
@@ -83,7 +121,9 @@ export function correctSingleQuestion(
     }
   }
 
-  const correctedSaeb = !saebGate.applicable ? { applicable: false, source: null, value: null, approximate: false } : q.saeb
+  const correctedSaeb = !saebGate.applicable
+    ? { applicable: false, source: null, value: null, approximate: false }
+    : checkEnemSkill(q, q.saeb, curriculum, warnings)
   if (!saebGate.applicable && (q.saeb.applicable || q.saeb.value)) {
     warnings.push(`Questão ${q.number}: modelo preencheu SAEB/ENEM para uma disciplina sem matriz oficial — corrigido para "N/A".`)
   }

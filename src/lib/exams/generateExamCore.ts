@@ -16,7 +16,7 @@ import { persistGeneratedQuestionClassifications } from '@/lib/pedagogical/gener
 import { buildPlannedQuestionSlots, shouldRequireVisualAid, validateCurriculumPlan, type PlannedQuestionSlot } from '@/lib/exams/contentPlan'
 import { assembleBestExamCandidates, compactQuestionContext, validateExamAssembly, type QuestionCandidate } from '@/lib/exams/examQualityAssembly'
 import { runQuestionQualityTest } from '@/lib/exams/questionQualityTest'
-import { cognitiveObjectives, pickTargetSkills } from '@/lib/exams/targetSkills'
+import { cognitiveObjectives, pickTargetEnemSkill, pickTargetSkills } from '@/lib/exams/targetSkills'
 import { resolveBnccDescriptions } from '@/lib/curriculum/bnccDescriptions'
 import { buildActivityBnccSlots, type ActivityBnccPlanItem, type ActivityBnccSlot } from '@/lib/exams/activityBnccPlan'
 import { QUALITY_REPORT_VERSION } from '@/lib/exams/qualityReport'
@@ -342,7 +342,12 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
               forcedCodes: activityBnccSlots[slot.number - 1] ? [activityBnccSlots[slot.number - 1]!.code] : undefined,
               descriptions: skillDescriptions,
             })
+            const targetEnemSkill = pickTargetEnemSkill({
+              unit,
+              slotIndexInUnit: slots.filter((other) => other.unitRowIndex === slot.unitRowIndex && other.number < slot.number).length,
+            })
             const unified = await generateUnifiedQuestion({
+              targetEnemSkill,
               questionNumber: slot.number,
               subject: params.subject,
               gradeYear: params.gradeYear,

@@ -68,6 +68,13 @@ function unitToPromptBlock(unit: CurriculumSelection['units'][number]): string {
         .join(' | ')
     : '(sem objetivos cognitivos explícitos)'
 
+  const enemSkills = unit.enemSkills?.skills ?? []
+  const enemText = enemSkills.length
+    ? enemSkills
+        .map((s) => `${s.code}${s.count > 1 ? ` (peso ${s.count})` : ''}${s.description ? `: ${s.description}` : ''}`)
+        .join('; ')
+    : null
+
   const enrichmentBlock = unit.enrichedContent
     ? `  CONTEÚDO DETALHADO (do planejamento pedagógico): ${unit.enrichedContent}`
     : null
@@ -77,10 +84,22 @@ function unitToPromptBlock(unit: CurriculumSelection['units'][number]): string {
     unit.conteudo ? `  Conteúdo: ${unit.conteudo}` : null,
     enrichmentBlock,
     `  Habilidades BNCC: ${skillsText}`,
+    enemText ? `  Habilidades ENEM planejadas: ${enemText}` : null,
     `  Objetivos: ${objetivosText}`,
   ]
     .filter(Boolean)
     .join('\n')
+}
+
+/** Habilidades ENEM planejadas em todas as unidades da seleção, somando os pesos. */
+export function collectPlannedEnemSkills(curriculum: Pick<CurriculumSelection, 'units'>): { code: string; count: number }[] {
+  const totals = new Map<string, number>()
+  for (const unit of curriculum.units) {
+    for (const skill of unit.enemSkills?.skills ?? []) {
+      totals.set(skill.code, (totals.get(skill.code) ?? 0) + skill.count)
+    }
+  }
+  return [...totals.entries()].map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count)
 }
 
 export function buildSaebInstruction(curriculum: CurriculumSelection): string {
@@ -92,6 +111,10 @@ export function buildSaebInstruction(curriculum: CurriculumSelection): string {
     return `Esta disciplina (${subject}) NÃO possui matriz SAEB/ENEM oficial para o ${gradeYear}º ano do segmento ${segment}. Para TODA questão, retorne saeb.applicable:false, saeb.source:null, saeb.value:null — nunca preencha esses campos mesmo que pareça óbvio.`
   }
   if (saeb.matrixType === 'enem') {
+    const planned = collectPlannedEnemSkills(curriculum)
+    if (planned.length) {
+      return `Esta disciplina usa a Matriz de Referência do ENEM e o planejamento já define as habilidades ENEM de cada capítulo (linha "Habilidades ENEM planejadas"). Para TODA questão: saeb.applicable:true, saeb.source:"enem", saeb.value com EXATAMENTE um destes códigos no formato "C<n>:H<n>" — ${planned.map((p) => p.code).join(', ')} — escolhido entre os do capítulo que a questão cobre, e saeb.approximate:false. Nunca use um código fora dessa lista. Distribua as questões entre as habilidades proporcionalmente ao peso indicado (as mais frequentes no planejamento recebem mais questões), cobrindo cada habilidade planejada pelo menos uma vez quando o número de questões permitir. A questão precisa de fato exigir a habilidade escolhida, conforme a descrição oficial dela no bloco de conteúdo.`
+    }
     return `Esta disciplina usa a Matriz de Referência do ENEM. Preencha saeb.source:"enem" e saeb.value com "Competência + Habilidade ENEM" aproximada (ex: "C2-H7"), marcando saeb.approximate:true a menos que a correspondência seja claramente exata.`
   }
   return `Esta disciplina tem matriz SAEB oficial (transcrita direto do INEP)${saeb.adapted ? ` — ADAPTADA: o SAEB avalia formalmente só o ano de referência dessa matriz (2º/5º/9º, conforme a disciplina), então marque approximate:true pra esse ${gradeYear}º ano` : ''}. Descritores oficiais disponíveis — escolha o código mais específico que a questão testa de verdade, nunca um genérico: ${

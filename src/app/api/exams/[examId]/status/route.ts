@@ -17,6 +17,7 @@ import { latestQualityReport, normalizeStoredQualityReport, qualityReportNeedsNo
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
 import { planIdFromExamPayload } from '@/lib/curriculum/planCurriculum'
 import { generateQuestionWithUnifiedFlow } from '@/lib/exams/unifiedQuestionGeneration'
+import { extractEnemCode } from '@/lib/sheets/enemSkillsParser'
 import { AiBudgetExceededError } from '@/lib/ai/operationBudget'
 
 const bodySchema = z.object({
@@ -88,6 +89,7 @@ async function replaceRejectedQuestionsAutomatically(exam: typeof generatedExams
           questionNumber,
           type: original.type,
           targetSkillCodes: original.bnccStatus === 'mapeado' ? original.bnccCodes : undefined,
+          targetEnemCode: original.saeb?.source === 'enem' ? extractEnemCode(original.saeb.value)?.code : undefined,
           instruction: [
             `substituir a questão ${questionNumber}; tipo ${original.type}`,
             `substituição automática ${candidateNumber}/3: crie uma questão nova com cálculo, alternativas e gabarito verificáveis`,

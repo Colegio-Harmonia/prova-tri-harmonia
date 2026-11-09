@@ -20,6 +20,7 @@ import { mergeQualityResults } from '@/lib/exams/qualityReport'
 import { diagnosticsForQuestion } from '@/lib/exams/qualityDiagnostics'
 import { repairQuestionFromDiagnostics } from '@/lib/exams/repairQuestion'
 import { generateQuestionWithUnifiedFlow } from '@/lib/exams/unifiedQuestionGeneration'
+import { extractEnemCode } from '@/lib/sheets/enemSkillsParser'
 import {
   MAX_FULL_QUESTION_GENERATION_ATTEMPTS,
   shouldRetryQuestionGeneration,
@@ -120,6 +121,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
             questionNumber: original.number,
             type: original.type,
             targetSkillCodes: original.bnccStatus === 'mapeado' && replacement?.strategy !== 'outro_tema_planejamento' ? original.bnccCodes : undefined,
+            targetEnemCode: original.saeb?.source === 'enem' && replacement?.strategy !== 'outro_tema_planejamento' ? extractEnemCode(original.saeb.value)?.code : undefined,
             instruction: [
               `substituir a questão ${original.number}; tipo ${original.type}`,
               attempt > 1 ? 'a tentativa anterior não gerou um JSON válido; gere uma nova questão completa, autocontida e conforme o contrato' : null,

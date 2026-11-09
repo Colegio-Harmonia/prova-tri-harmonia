@@ -1,7 +1,7 @@
 import type { ExamQuestion } from '@/lib/gemini/examSchema'
 import { correctSingleQuestion } from '@/lib/gemini/examValidator'
 import { generateExamBlueprint, generateUnifiedQuestion } from '@/lib/generation'
-import { cognitiveObjectives, pickTargetSkills } from '@/lib/exams/targetSkills'
+import { cognitiveObjectives, pickTargetEnemSkill, pickTargetSkills } from '@/lib/exams/targetSkills'
 import { resolveBnccDescriptions } from '@/lib/curriculum/bnccDescriptions'
 import type { CurriculumSelection, CurricularUnit } from '@/types/exam'
 
@@ -14,6 +14,8 @@ type Params = {
   unit?: CurricularUnit
   /** Habilidades BNCC que a questão substituta deve continuar medindo. */
   targetSkillCodes?: string[]
+  /** Habilidade ENEM (C:H) que a questão substituta deve continuar medindo. */
+  targetEnemCode?: string
 }
 
 /**
@@ -52,6 +54,7 @@ export async function generateQuestionWithUnifiedFlow(params: Params): Promise<{
   const missingCodes = unit.habilidades.status === 'mapeado' ? unit.habilidades.skills.filter((skill) => !skill.description?.trim()).map((skill) => skill.code) : []
   const descriptions = missingCodes.length ? await resolveBnccDescriptions(missingCodes) : new Map<string, string>()
   const generated = await generateUnifiedQuestion({
+    targetEnemSkill: pickTargetEnemSkill({ unit, slotIndexInUnit: params.questionNumber - 1, forcedCode: params.targetEnemCode }),
     targetSkills: pickTargetSkills({ unit, slotIndexInUnit: params.questionNumber - 1, forcedCodes: params.targetSkillCodes, descriptions }),
     objectives: cognitiveObjectives(unit),
     questionNumber: params.questionNumber,
