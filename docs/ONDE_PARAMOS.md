@@ -509,7 +509,7 @@ planejamento e na geração, sem substituir a BNCC (as duas convivem).
 
 - **Planejamento interno** (`/planejamento`): campo "Habilidades ENEM" por
   unidade (só EM), texto livre `C2:H5 (origem)` uma por linha; repetir o código
-  = peso. Coluna nova `curriculum_plan_units.enem_skills` (**migration 0048**,
+  = peso. Coluna nova `curriculum_plan_units.enem_skills` (**migration 0054**,
   aditiva e anulável — aplicar com `psql -f` antes do deploy). Cópia de versão
   e importação da planilha preservam o campo.
 - **Planilha**: coluna opcional "Habilidades ENEM" (ou C:H colado em

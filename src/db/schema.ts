@@ -627,7 +627,7 @@ export const curriculumPlanUnits = pgTable('curriculum_plan_units', {
   title: text('title').notNull(),
   content: text('content'),
   objectives: text('objectives'),
-  /** Só Ensino Médio: habilidades ENEM "C2:H5 (origem)", uma por linha (migration 0048). */
+  /** Só Ensino Médio: habilidades ENEM "C2:H5 (origem)", uma por linha (migration 0054). */
   enemSkills: text('enem_skills'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),

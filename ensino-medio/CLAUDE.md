@@ -45,7 +45,7 @@ Disciplinas do EM podem ser planejadas direto pela Matriz do ENEM
 - **Planejamento interno** (`/planejamento`, caminho usado hoje pelo Inglês
   do EM — a geração por planilha dessas séries falha por aba ambígua): campo
   "Habilidades ENEM" por unidade, coluna `curriculum_plan_units.enem_skills`
-  (migration 0048), mesmo formato e mesmo parser da planilha.
+  (migration 0054), mesmo formato e mesmo parser da planilha.
 - **Planilha**: coluna opcional `Habilidades ENEM` (sinônimos em
   `headerResolver.ts`: `Matriz ENEM`, `ENEM`, `Habilidades INEP`…). Se a
   aba não tiver essa coluna, códigos `C<n>:H<n>` colados dentro de
