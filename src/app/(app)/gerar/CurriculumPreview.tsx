@@ -78,7 +78,8 @@ function UnitList({ units, bnccFilter }: { units: CurriculumSelection['units']; 
                   {s.code}
                 </span>
               ))
-            ) : (
+            ) : unit.enemSkills?.skills.length ? null : (
+              // Capítulo mapeado pela Matriz do ENEM não é lacuna de planejamento.
               <span className="rounded bg-neutral-100 px-2 py-0.5 text-xs text-neutral-500">BNCC não mapeada</span>
             )}
             {unit.enemSkills?.skills.map((s) => (

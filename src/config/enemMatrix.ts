@@ -3,9 +3,10 @@
  * área (H1-H30 de cada área), usadas para validar códigos "C2:H5" vindos
  * do planejamento do Ensino Médio (coluna "Habilidades ENEM" da planilha).
  *
- * Os textos de Linguagens são os mesmos já semeados em `enem_skills` por
- * `scripts/setup-enem-schema.ts` — repetidos aqui para o parser/prompt
- * funcionarem sem ida ao banco. As demais áreas só têm as fronteiras (o
+ * Os textos de Linguagens seguem a Matriz de Referência oficial do INEP —
+ * repetidos aqui para o parser/prompt funcionarem sem ida ao banco. Atenção:
+ * `scripts/setup-enem-schema.ts` semeou H1 com o texto da H4 (erro do seed);
+ * aqui está o texto oficial de H1. As demais áreas só têm as fronteiras (o
  * suficiente para validar o par C:H); o texto oficial delas continua
  * vindo do banco quando necessário.
  */
@@ -32,7 +33,7 @@ const COMPETENCY_RANGES: Record<EnemAreaCode, readonly CompetencyRange[]> = {
 }
 
 const LINGUAGENS_SKILLS: Record<number, string> = {
-  1: 'Reconhecer posições críticas aos usos sociais que são feitos das linguagens e aos sistemas de comunicação e informação.',
+  1: 'Identificar as diferentes linguagens e seus recursos expressivos como elementos de caracterização dos sistemas de comunicação.',
   2: 'Recorrer aos conhecimentos sobre as linguagens dos sistemas de comunicação e informação para resolver problemas.',
   3: 'Relacionar informações geradas nos sistemas de comunicação e informação, considerando a função social desses sistemas.',
   4: 'Reconhecer posições críticas aos usos sociais que são feitos das linguagens e aos sistemas de comunicação e informação.',

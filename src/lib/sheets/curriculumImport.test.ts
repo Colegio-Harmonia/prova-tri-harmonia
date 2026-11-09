@@ -105,4 +105,12 @@ describe('importacao curricular', () => {
     expect(unit?.habilidades).toEqual({ status: 'mapeado', skills: [{ code: 'EM13LGG401', description: null }] })
     expect(unit?.enemSkills?.skills.map((s) => s.code)).toEqual(['C7:H24'])
   })
+
+  it('ensino medio nao conta em dobro quando a coluna ENEM existe e Habilidades repete os codigos', () => {
+    const roles = resolveColumnRoles(['Capítulo', 'Habilidades', 'Habilidades ENEM', 'Bimestre'])
+    const [unit] = parseCurriculumRows([
+      ['Leading is changing', 'C2:H5 C2:H5', 'C2:H5 (UFT-2019)\nC2:H5 (UFT-2019)', '1'],
+    ], roles, 'ensino-medio', 'Inglês')
+    expect(unit?.enemSkills?.skills.map((s) => [s.code, s.count])).toEqual([['C2:H5', 2]])
+  })
 })

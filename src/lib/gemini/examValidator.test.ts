@@ -96,3 +96,32 @@ describe('habilidade ENEM planejada (Ensino Médio)', () => {
     expect(result.question.saeb).toEqual({ applicable: true, source: 'enem', value: 'C2-H7', approximate: true })
   })
 })
+
+describe('habilidade ENEM por capítulo (revisão Codex)', () => {
+  const planned = {
+    rowIndex: 0, bimestre: '1', tituloCapitulo: 'Leading is changing', conteudo: null,
+    habilidades: { status: 'nao_mapeado' as const, skills: [] }, objetivos: [], objetivosColumnMissing: true,
+    enemSkills: { invalid: [], skills: [{ code: 'C2:H5', competency: 2, skill: 5, count: 8, sources: [], description: null }] },
+  }
+  const unplanned = { ...planned, rowIndex: 1, tituloCapitulo: 'Sem ENEM', enemSkills: { invalid: [], skills: [] } }
+  const invalid = { ...planned, rowIndex: 2, tituloCapitulo: 'Inválido', enemSkills: { invalid: ['C2:H14'], skills: [] } }
+  const curriculum = { segment: 'ensino-medio' as const, gradeYear: 1, subject: 'Inglês', units: [planned, unplanned, invalid] }
+  const q = (rowIndex: number, saeb: ExamQuestion['saeb']) => question({ supportText: null, curriculumUnitRowIndex: rowIndex, saeb })
+
+  it('capítulo sem planejamento não recebe imposição dos códigos de outro capítulo', () => {
+    const result = correctSingleQuestion(q(1, { applicable: true, source: 'enem', value: 'C7:H24', approximate: true }), curriculum)
+    expect(result.question.saeb).toMatchObject({ value: 'C7:H24', approximate: true })
+    expect(result.warnings).toEqual([])
+  })
+
+  it('capítulo planejado sem metadado ENEM gera aviso', () => {
+    const result = correctSingleQuestion(q(0, { applicable: false, source: null, value: null, approximate: false }), curriculum)
+    expect(result.warnings[0]).toMatch(/tem habilidades ENEM planejadas \(C2:H5\), mas a questão não registrou/)
+  })
+
+  it('planejamento inválido não é substituído por código inferido', () => {
+    const result = correctSingleQuestion(q(2, { applicable: true, source: 'enem', value: 'C2:H5', approximate: false }), curriculum)
+    expect(result.question.saeb.approximate).toBe(true)
+    expect(result.warnings[0]).toMatch(/planejamento ENEM do capítulo é inválido/)
+  })
+})

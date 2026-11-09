@@ -84,7 +84,11 @@ function unitToPromptBlock(unit: CurriculumSelection['units'][number]): string {
     unit.conteudo ? `  Conteúdo: ${unit.conteudo}` : null,
     enrichmentBlock,
     `  Habilidades BNCC: ${skillsText}`,
-    enemText ? `  Habilidades ENEM planejadas: ${enemText}` : null,
+    enemText
+      ? `  Habilidades ENEM planejadas: ${enemText}`
+      : unit.enemSkills?.invalid.length
+        ? `  Habilidades ENEM planejadas: PLANEJAMENTO INVÁLIDO (${unit.enemSkills.invalid.join(', ')} não existem na matriz) — para questões deste capítulo, saeb.applicable:false; NÃO infira outro código`
+        : null,
     `  Objetivos: ${objetivosText}`,
   ]
     .filter(Boolean)
@@ -112,8 +116,14 @@ export function buildSaebInstruction(curriculum: CurriculumSelection): string {
   }
   if (saeb.matrixType === 'enem') {
     const planned = collectPlannedEnemSkills(curriculum)
-    if (planned.length) {
-      return `Esta disciplina usa a Matriz de Referência do ENEM e o planejamento já define as habilidades ENEM de cada capítulo (linha "Habilidades ENEM planejadas"). Para TODA questão: saeb.applicable:true, saeb.source:"enem", saeb.value com EXATAMENTE um destes códigos no formato "C<n>:H<n>" — ${planned.map((p) => p.code).join(', ')} — escolhido entre os do capítulo que a questão cobre, e saeb.approximate:false. Nunca use um código fora dessa lista. Distribua as questões entre as habilidades proporcionalmente ao peso indicado (as mais frequentes no planejamento recebem mais questões), cobrindo cada habilidade planejada pelo menos uma vez quando o número de questões permitir. A questão precisa de fato exigir a habilidade escolhida, conforme a descrição oficial dela no bloco de conteúdo.`
+    const hasInvalidPlanning = curriculum.units.some((unit) => unit.enemSkills?.invalid.length && !unit.enemSkills.skills.length)
+    if (planned.length || hasInvalidPlanning) {
+      // A regra estrita vale por capítulo: só o capítulo com planejamento ENEM
+      // impõe seus códigos; capítulo sem planejamento segue a regra antiga.
+      return `Esta disciplina usa a Matriz de Referência do ENEM e o planejamento define habilidades ENEM POR CAPÍTULO (linha "Habilidades ENEM planejadas" de cada capítulo). Regras, conforme o capítulo da questão:
+  (a) Capítulo com habilidades planejadas: saeb.applicable:true, saeb.source:"enem", saeb.value com EXATAMENTE um dos códigos DAQUELE capítulo no formato "C<n>:H<n>", saeb.approximate:false. Nunca use código de outro capítulo nem fora da lista. Distribua as questões do capítulo pelo peso indicado (as mais frequentes recebem mais questões). A questão precisa de fato exigir a habilidade escolhida, conforme a descrição oficial dela.
+  (b) Capítulo marcado "PLANEJAMENTO INVÁLIDO": saeb.applicable:false, saeb.source:null, saeb.value:null — não infira código.
+  (c) Capítulo sem linha "Habilidades ENEM planejadas": saeb.source:"enem" e saeb.value com "Competência + Habilidade ENEM" aproximada (ex: "C2:H7"), saeb.approximate:true.`
     }
     return `Esta disciplina usa a Matriz de Referência do ENEM. Preencha saeb.source:"enem" e saeb.value com "Competência + Habilidade ENEM" aproximada (ex: "C2-H7"), marcando saeb.approximate:true a menos que a correspondência seja claramente exata.`
   }

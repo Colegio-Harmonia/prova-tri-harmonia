@@ -66,8 +66,24 @@ function checkEnemSkill(
   curriculum: Pick<CurriculumSelection, 'subject'> & Partial<Pick<CurriculumSelection, 'units'>>,
   warnings: string[],
 ): ExamQuestion['saeb'] {
-  if (q.source === 'enem_bank' || !saeb.applicable || saeb.source !== 'enem') return saeb
-  const planned = curriculum.units ? collectPlannedEnemSkills({ units: curriculum.units }).map((p) => p.code) : []
+  if (q.source === 'enem_bank') return saeb
+  const units = curriculum.units ?? []
+  // Planejamento do capítulo da questão — nunca a união de capítulos (um
+  // capítulo planejado não pode impor seus códigos a outro sem planejamento).
+  const unit = units.find((candidate) => candidate.rowIndex === q.curriculumUnitRowIndex)
+    ?? (units.length === 1 ? units[0] : undefined)
+  const scope = unit ? [unit] : units.every((candidate) => candidate.enemSkills?.skills.length) ? units : []
+  const planned = collectPlannedEnemSkills({ units: scope }).map((p) => p.code)
+  const invalidOnly = Boolean(unit?.enemSkills?.invalid.length && !unit.enemSkills.skills.length)
+
+  if (!saeb.applicable || saeb.source !== 'enem') {
+    if (planned.length) warnings.push(`Questão ${q.number}: o capítulo tem habilidades ENEM planejadas (${planned.join(', ')}), mas a questão não registrou nenhuma — revisar.`)
+    return saeb
+  }
+  if (invalidOnly) {
+    warnings.push(`Questão ${q.number}: o planejamento ENEM do capítulo é inválido (${unit!.enemSkills!.invalid.join(', ')}); código "${saeb.value ?? ''}" não foi confirmado — corrigir o planejamento.`)
+    return { ...saeb, approximate: true }
+  }
   const parsed = extractEnemCode(saeb.value)
   if (!parsed) {
     if (planned.length) warnings.push(`Questão ${q.number}: habilidade ENEM sem código C:H reconhecível ("${saeb.value ?? ''}") — revisar.`)

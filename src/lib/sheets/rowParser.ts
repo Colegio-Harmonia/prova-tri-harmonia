@@ -20,11 +20,11 @@ function resolvePeriodo(row: string[], roles: ColumnRoles): string | null {
  * content columns (dates filled but no Ano/Bimestre/conteúdo) per the root
  * CLAUDE.md's "linhas vazias" rule — silently, not as an error.
  */
-function enemSkillsFields(enemCell: string | null, habilidadesCell: string | null, area: EnemAreaCode | null) {
-  const enemSkills = parseEnemSkills([enemCell, habilidadesCell].filter(Boolean).join('\n'), area)
+function enemSkillsFields(source: string | null, area: EnemAreaCode | null) {
+  const enemSkills = parseEnemSkills(source, area)
   // Texto cru só com as linhas que têm código C:H — é o que vai para o planejamento interno.
-  const raw = enemSkills.skills.length
-    ? [enemCell, habilidadesCell].filter(Boolean).join('\n').split(/\r?\n/).filter((line) => extractEnemCode(line)).map((line) => line.trim()).join('\n')
+  const raw = enemSkills.skills.length || enemSkills.invalid.length
+    ? (source ?? '').split(/\r?\n/).filter((line) => extractEnemCode(line)).map((line) => line.trim()).join('\n')
     : null
   return { enemSkills, enemSkillsRaw: raw }
 }
@@ -62,7 +62,10 @@ export function parseCurriculumRows(rows: string[][], roles: ColumnRoles, segmen
       // C:H colados direto em "Habilidades" (quando a aba ainda não tem a
       // coluna própria). BNCC e ENEM convivem — um não substitui o outro.
       ...(segment === 'ensino-medio'
-        ? enemSkillsFields(habilidadesEnemRaw, habilidadesRaw, enemArea)
+        // Coluna própria tem prioridade; "Habilidades" só é lida como ENEM
+        // quando a aba não tem a coluna dedicada (senão cada código contaria
+        // em dobro durante a migração e distorceria o peso).
+        ? enemSkillsFields(roles.habilidadesEnemIdx !== null ? habilidadesEnemRaw : habilidadesRaw, enemArea)
         : {}),
     })
   })

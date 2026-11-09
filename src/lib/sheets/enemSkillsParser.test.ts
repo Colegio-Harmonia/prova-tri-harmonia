@@ -57,3 +57,10 @@ describe('extractEnemCode', () => {
     expect(extractEnemCode('H5 — Associar')).toBeNull()
   })
 })
+
+describe('descrições oficiais de Linguagens', () => {
+  it('H1 usa o texto oficial do INEP, não o da H4', () => {
+    const [h1] = parseEnemSkills('C1:H1', 'linguagens').skills
+    expect(h1?.description).toBe('Identificar as diferentes linguagens e seus recursos expressivos como elementos de caracterização dos sistemas de comunicação.')
+  })
+})
