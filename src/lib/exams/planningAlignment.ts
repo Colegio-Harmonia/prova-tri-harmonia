@@ -19,6 +19,25 @@ const ALIGNMENT_INSTRUCTIONS = 'Considere o enunciado, os distratores e o gabari
 export class PlanningAlignmentUnavailableError extends Error {
   constructor(message: string) { super(message); this.name = 'PlanningAlignmentUnavailableError' }
 }
+
+/**
+ * Decide se um candidato do acervo é aceito. Conferência indisponível nunca
+ * presume compatibilidade: o candidato é descartado e a busca segue (no pior
+ * caso a questão é gerada por IA). Só quando a indisponibilidade se repete além
+ * do limite — sinal de que o provedor está fora, não de uma falha pontual —
+ * a geração é interrompida, para o worker adiar o job.
+ * Antes, uma única falha derrubava a prova inteira (lote 477, 10/11/2026).
+ */
+export function createPlanningAcceptance(maxUnavailable = 5) {
+  let unavailable = 0
+  return (alignment: NonNullable<ExamQuestion['planningAlignment']>): boolean => {
+    if (alignment.status !== 'unavailable') return alignment.status === 'aligned'
+    unavailable++
+    if (unavailable > maxUnavailable) throw new PlanningAlignmentUnavailableError(alignment.evidence)
+    console.warn('[planning-alignment] conferência indisponível; candidato descartado', { unavailable, maxUnavailable })
+    return false
+  }
+}
 export type PlanningQuestion = Pick<ExamQuestion, 'number' | 'statement' | 'supportText' | 'alternatives' | 'correctLetter' | 'expectedAnswer' | 'acervoRef' | 'imageDescription'>
 
 /** A classificação do item e sua adequação a uma unidade são decisões distintas. */
