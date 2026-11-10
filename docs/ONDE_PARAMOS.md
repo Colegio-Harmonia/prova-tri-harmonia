@@ -2,7 +2,26 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 05/10/2026 (PR #43 em produção; substituição automática da aprovação corrigida).
+> Última atualização: 10/11/2026 — recuperação do versionamento; detalhes em
+> [`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md).
+
+## Recuperação do versionamento — 10/11/2026
+
+Snapshot integral do código do servidor em `abd6093`, enviado no branch
+`codex/snapshot-producao-20261110`, sem `output/`, segredos ou dados. Backup
+completo separado inclui pasta, banco, arquivos externos e imagens Docker;
+restauração do banco validada em Postgres isolado (46 tabelas / 684 provas
+no momento do backup). Não houve restauração ou migração no banco do site.
+
+Os ajustes posteriores mantêm as regras atuais: fixtures de testes atualizadas,
+cores semânticas nas telas novas, renderizador de fórmulas e fila carregados
+sob demanda para atender ao orçamento existente, sem elevar limites.
+Baseline estrutural para bancos vazios e publicação com verificação de branch,
+árvore limpa, sincronização e imagem identificada pelo commit.
+
+O trabalho do PR #47 será conciliado na ancestralidade da consolidação;
+não reaplicar o branch antigo sobre o snapshot. A publicação dos serviços
+é separada da regularização do Git e não foi executada nesta recuperação.
 
 
 

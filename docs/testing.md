@@ -1,5 +1,28 @@
 # Estratégia e Registro de Testes
 
+## Recuperação do versionamento — 10/11/2026
+
+- Cópia de trabalho isolada; nenhum teste de escrita usou o banco do site.
+- `npm ci` a partir do lockfile; lint sem erros (2 avisos existentes de `<img>`),
+  TypeScript, build e suíte de regressão aprovados.
+- Vitest com cobertura: 144 arquivos / 950 testes aprovados. Após separar o
+  parser matemático da dependência de imagem/Buffer, 45 testes de matemática,
+  apresentação e exportação também passaram.
+- Orçamento existente preservado, sem elevar limites: `/gerar` 119,7/120 KiB,
+  revisão 139,3/140 KiB e `/status` 124,5/130 KiB gzip; demais rotas aprovadas.
+- Backup PostgreSQL restaurado em container isolado, sem rede externa:
+  46 tabelas públicas e 684 provas no instante do backup. Todas as colunas
+  declaradas pelo código estavam presentes na cópia restaurada.
+- Baseline criou 46 tabelas em banco novo isolado e recusou uma segunda
+  execução sobre o banco já utilizado. `db:migrate` recusou a cadeia incompleta.
+- Publicação recusada em branch diferente de `main`, com arquivo sem registro,
+  com commit divergente do remoto e sem configuração local; nenhum serviço
+  de produção foi publicado ou reiniciado por esses testes.
+- Snapshot original preservado antes dos ajustes (`abd6093`). A consolidação
+  será incorporada por merge commit para preservar a ancestralidade ENEM.
+- Fluxo autenticado e publicação de uma nova imagem não fazem parte desta
+  recuperação do histórico; as imagens em execução estão no backup.
+
 ## Estratégia alvo
 
 | Nível | Objetivo | Ferramenta/abordagem | Momento |

@@ -7,19 +7,20 @@ remoto oficial é `https://github.com/Colegio-Harmonia/prova-tri-harmonia.git`;
 o branch de produção é `main`. PM2 e sincronização por `rsync` não fazem parte
 do processo atual.
 
-Após validar o commit e as variáveis do servidor, publique com:
+Após incorporar o PR, passar no `Quality` e validar as variáveis do servidor,
+use o comando que verifica a origem do código e identifica a imagem pelo commit:
 
 ```bash
 git pull --ff-only origin main
-docker compose up -d --build
-docker compose ps
-docker compose logs --tail=100 web worker ocr-worker
+npm run deploy:production
 ```
 
 Confirme `/login`, as rotas protegidas e os logs antes de considerar a
 publicação concluída. O arquivo `.env.local` permanece exclusivamente no
-servidor. Não executar `npm run db:migrate`: a cadeia do Drizzle ainda precisa
-ser corrigida antes de ser usada em produção.
+servidor. `npm run db:migrate` recusa a cadeia histórica incompleta. Para
+banco novo/vazio, use a baseline documentada em
+[`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md). Não aplicar
+a baseline em produção existente. Alterações incrementais exigem revisão e backup.
 
 ## Banco antes da IA nos dois tipos e reparo da prova 510 — 26/10/2026
 
