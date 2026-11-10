@@ -7,7 +7,7 @@ import {
   IMAGE_ALTERNATIVE_PLACEHOLDER,
 } from '@/lib/math/latexRender'
 import { collectTexts } from '@/lib/docs/latexImageCache'
-import { buildOpsRequests, buildProvaOps } from '@/lib/docs/provaDocBuilder'
+import { buildOpsRequests, buildProvaOps, questionImageSize } from '@/lib/docs/provaDocBuilder'
 import type { ExamGenerationResult, ExamQuestion } from '@/lib/gemini/examSchema'
 
 // Regressões reais do exam #31 (Química, banco ENEM):
@@ -21,7 +21,7 @@ const pedagogical: ExamQuestion['pedagogicalClassification'] = {
   soloExpected: { categoryCode: 'MULTIESTRUTURAL', confidence: 0.7, justification: 'teste', evidence: 'teste' },
 }
 
-function objectiveQuestion(number: number, alternatives: { letter: string; text: string }[]): ExamQuestion {
+function objectiveQuestion(number: number, alternatives: NonNullable<ExamQuestion['alternatives']>): ExamQuestion {
   return {
     number,
     source: 'enem_bank',
@@ -112,6 +112,18 @@ describe('geração de documento com alternativa-imagem (text null)', () => {
     expect(allText).toContain(IMAGE_ALTERNATIVE_PLACEHOLDER)
     expect(allText).toContain('alternativa com texto')
   })
+
+  it('insere a figura original da alternativa quando o banco ENEM trouxe a imagem (exam #586, ENEM 2013/151)', () => {
+    const exam = examWith([
+      objectiveQuestion(7, [
+        { letter: 'A', text: NULL_TEXT, image: { driveFileId: 'alt-a', previewUrl: 'https://drive/alt-a' } },
+        { letter: 'B', text: 'alternativa com texto' },
+      ]),
+    ])
+    const ops = buildProvaOps(exam, new Map(), new Map())
+    expect(ops).toContainEqual(expect.objectContaining({ kind: 'image', driveFileId: 'alt-a' }))
+    expect(renderedText(ops)).not.toContain(IMAGE_ALTERNATIVE_PLACEHOLDER)
+  })
 })
 
 describe('ordem de impressão da questão', () => {
@@ -193,5 +205,63 @@ describe('negrito nos verbos de comando do enunciado', () => {
     const exam = examWith([q])
     exam.metadata.segment = 'anos-iniciais'
     expect(boldTexts(buildProvaOps(exam, new Map(), new Map()))).toEqual(['Assinale'])
+  })
+})
+
+
+describe('origem da questão no documento da prova', () => {
+  it.each([['TECHY', 'Importado do Techy'], ['SAE', 'Importado do SAE']])('imprime crédito para original %s sem banca', (origin, attribution) => {
+    const imported = { ...objectiveQuestion(1, []), source: 'acervo' as const, acervoRef: { questionId: 10, origin, externalId: null, portalUrl: null, importedAt: '', original: {} } }
+    const text = renderedText(buildProvaOps(examWith([imported]), new Map(), new Map()))
+    expect(text).toContain(`(${attribution})`)
+    expect(text).not.toContain('IMPORTADA DO')
+  })
+
+  it('imprime banca e ano da API e omite etiquetas internas', () => {
+    const ai = { ...objectiveQuestion(1, []), source: 'ia' as const }
+    const imported = { ...objectiveQuestion(2, []), source: 'acervo' as const, acervoRef: { questionId: 10, origin: 'SAE', externalId: null, portalUrl: null, importedAt: new Date().toISOString(), original: { origem: { banca: { label: 'UEFS - BA', value: '356' }, ano: 2015 } } } }
+    const ops = buildProvaOps(examWith([ai, imported]), new Map(), new Map())
+    const text = ops.filter((op) => op.kind === 'text').map((op) => op.text).join('')
+    expect(text).not.toContain('GERADO POR IA')
+    expect(text).toContain('(UEFS - BA — 2015)')
+    expect(text).not.toContain('IMPORTADA DO SAE')
+  })
+})
+
+
+describe('mídia original importada nos documentos', () => {
+  it('inclui a imagem original legada mesmo sem aceite manual e omite substituta pendente', () => {
+    const original = { ...objectiveQuestion(1, [{ letter: 'A', text: 'Opção' }]), enemBankRef: { questionId: 1, year: 2020 }, image: { source: 'enem' as const, driveFileId: 'original', previewUrl: '/image', approved: false } }
+    const originalOps = buildProvaOps(examWith([original]), new Map(), new Map())
+    expect(originalOps).toContainEqual({ kind: 'image', driveFileId: 'original' })
+    const replaced = { ...original, image: { ...original.image, source: 'gerada' as const } }
+    expect(buildProvaOps(examWith([replaced]), new Map(), new Map())).not.toContainEqual({ kind: 'image', driveFileId: 'original' })
+  })
+})
+
+
+describe('tamanho proporcional de figuras no documento', () => {
+  it('preserva a proporção de um gráfico largo e de uma imagem vertical', () => {
+    expect(questionImageSize(1000, 250)).toEqual({ widthPt: 420, heightPt: 105 })
+    expect(questionImageSize(200, 1000)).toEqual({ widthPt: 60, heightPt: 300 })
+  })
+  it('usa dimensões salvas na imagem ao inserir no documento', () => {
+    const question = { ...objectiveQuestion(1, []), image: { source: 'enem' as const, approved: true, driveFileId: 'chart', previewUrl: '/chart', width: 1000, height: 250 } }
+    expect(buildProvaOps(examWith([question]), new Map(), new Map())).toContainEqual({ kind: 'image', driveFileId: 'chart', size: { widthPt: 420, heightPt: 105 } })
+  })
+})
+
+
+describe('quebras originais do acervo no Google Docs', () => {
+  it('mantém parágrafos e uma afirmativa por linha em questão antiga achatada', () => {
+    const raw = {
+      texto: 'Identifique V ou F: ( ) Primeira afirmativa. ( ) Segunda afirmativa. Assinale a alternativa.',
+      html: '<p>Identifique V ou F:</p><p>( ) Primeira afirmativa.<br/>( ) Segunda afirmativa.</p><p>Assinale a alternativa.</p>',
+    }
+    const q = { ...objectiveQuestion(3, []), source: 'acervo' as const, statement: raw.texto, acervoRef: { questionId: 1, origin: 'ARCO', externalId: null, portalUrl: null, importedAt: '', original: { enunciado: raw } } }
+    const ops = buildProvaOps(examWith([q]), new Map(), new Map())
+    expect(renderedText(ops)).toContain('3. Identifique V ou F:\n\n( ) Primeira afirmativa.\n( ) Segunda afirmativa.\n\nAssinale a alternativa.')
+    const requests = buildOpsRequests(ops, 1)
+    expect(requests.flatMap((r) => r.insertText?.text ?? []).join('')).toContain('\n( ) Segunda afirmativa.')
   })
 })

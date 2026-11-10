@@ -9,6 +9,31 @@ import read_ptr1 as reader
 
 
 class Ptr1ReaderTest(unittest.TestCase):
+    def test_layout_is_selected_from_signed_payload_field(self):
+        self.assertEqual(reader.layout_from_qr('PTR1.synthetic.1.PTR2.test.signature'), 'PTR2')
+        self.assertIsNone(reader.layout_from_qr(None))
+        self.assertIsNone(reader.layout_from_qr('PTR2.synthetic.1.PTR1.test.signature'))
+        with self.assertRaises(ValueError):
+            reader.bubble_readings(np.full((100, 100, 3), 255, dtype=np.uint8), 'PTR4')
+
+    def test_compact_layout_reads_both_columns_and_ambiguous_marks(self):
+        page = np.full((reader.HEIGHT, reader.WIDTH, 3), 255, dtype=np.uint8)
+        expected = 'ABCDEABCDEABC'
+        for index, letter in enumerate(expected):
+            column, row = (0, index) if index < 8 else (1, index - 8)
+            x = (46.3 if column == 0 else 145) + 'ABCDE'.index(letter) * 8.5
+            y = 141 + row * 9
+            cv2.circle(page, (round(x * reader.MM), round(y * reader.MM)),
+                       round(2.05 * reader.MM), (0, 0, 0), -1)
+        # Penúltima linha em branco e última com duas alternativas marcadas.
+        for x in (145, 153.5):
+            cv2.circle(page, (round(x * reader.MM), round(195 * reader.MM)),
+                       round(2.05 * reader.MM), (0, 0, 0), -1)
+        readings = reader.bubble_readings(page, 'PTR2')
+        self.assertEqual([row['answer'] for row in readings[:13]], list(expected))
+        self.assertEqual(readings[13]['exceptionCode'], 'BLANK')
+        self.assertEqual(readings[14]['exceptionCode'], 'MULTIPLE_MARKS')
+
     def test_rejects_missing_corner_instead_of_using_qr_as_marker(self):
         page = np.full((reader.HEIGHT, reader.WIDTH, 3), 255, dtype=np.uint8)
         half_marker = round(3.5 * reader.MM)

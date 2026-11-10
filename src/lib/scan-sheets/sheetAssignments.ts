@@ -5,7 +5,7 @@ import { examCorrections, examSheetAssignments } from '@/db/schema'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { isInsufficientScopeError, listStudentsInCourse } from '@/lib/classroom/classroomClient'
 import { buildEmptyAnswers } from '@/lib/corrections/buildEmptyAnswers'
-import { planSheetPages } from './sheetLayout'
+import { CURRENT_SHEET_LAYOUT, planSheetPages } from './sheetLayout'
 
 export const SNAPSHOTABLE_SHEET_STATUSES = ['aprovado', 'impresso'] as const
 
@@ -131,6 +131,7 @@ export async function snapshotSheetAssignments({
           studentNameSnapshot: student.name,
           studentEmailSnapshot: student.email,
           publicId: createPublicId(),
+          layoutVersion: CURRENT_SHEET_LAYOUT,
           pageCount,
           issuedBy: currentUserId,
         }

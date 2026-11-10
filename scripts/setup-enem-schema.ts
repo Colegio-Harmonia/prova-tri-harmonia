@@ -165,7 +165,7 @@ async function main() {
       { compN: 2, skills: [
         { code: 'H5', desc: 'Associar vocábulos e expressões de um texto em Língua Estrangeira Moderna ao seu tema.' },
         { code: 'H6', desc: 'Utilizar conhecimentos da Língua Estrangeira Moderna e de seus mecanismos como meio de ampliar possibilidades de acesso a informações, tecnologias e culturas.' },
-        { code: 'H7', desc: 'Relacionar informações sobre um texto em Língua Estrangeira Moderna às informações de um texto em Língua Portuguesa, estabelecendo relações de complementaridade.' },
+        { code: 'H7', desc: 'Relacionar um texto em LEM, as estruturas linguísticas, sua função e seu uso social.' },
         { code: 'H8', desc: 'Reconhecer a importância da produção cultural em Língua Estrangeira Moderna como representação da diversidade cultural e linguística.' },
       ]},
       { compN: 3, skills: [

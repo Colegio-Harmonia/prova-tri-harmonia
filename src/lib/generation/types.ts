@@ -32,16 +32,24 @@ export type PipelineContext = {
   subject: string
   gradeYear: number
   segment: string
+  /** Nome identificador da turma, usado para contextualizar geração e auditoria Jev. */
+  classLabel?: string
   /** Trecho/currículo do capítulo, usado pela ancoragem factual. */
   curriculumContent: string
   /** Instrução da matriz (capítulo/tipo/recurso visual), quando houver. */
   contentPlanInstruction?: string
   /** Habilidades BNCC-alvo da questão (código + descrição oficial da planilha). */
   targetSkills?: Array<{ code: string; description: string | null }>
+  /** Habilidade ENEM-alvo (C:H) quando o capítulo do EM é planejado pela Matriz do ENEM. */
+  targetEnemSkill?: { code: string; description: string | null } | null
   /** Objetivos cognitivos do capítulo, para calibrar o nível de exigência. */
   objectives?: string[]
   /** Recuperação: a questão substituta não pode depender de imagem. */
   forceNoVisual?: boolean
+  /** Instruções para regeneração diversificada após reprovação do Jev. */
+  regenerationMode?: 'same_topic' | 'alternate_angle' | 'safe'
+  /** Enunciado previamente gerado e aprovado pelo Jev; respostas devem preservá-lo literalmente. */
+  approvedStatement?: { statement: string; supportText: string | null }
   questionType: 'objetiva' | 'descritiva'
 }
 

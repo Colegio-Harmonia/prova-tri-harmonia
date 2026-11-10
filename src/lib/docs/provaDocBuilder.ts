@@ -1,18 +1,25 @@
+import { presentAcervoQuestion, presentAcervoExam } from '@/lib/exams/acervoPresentation'
+import { questionPrintAttribution, isQuestionImageApproved, isOriginalBankImage } from '@/lib/exams/questionOrigin'
+import { hasOnlyInlineAcervoMedia, inlineAcervoMediaIds, type AcervoContentPart } from '@/lib/exams/acervoMedia'
+import { buildAcervoImageCache } from './acervoImageCache'
 import type { docs_v1 } from 'googleapis'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { findMarkerRange } from './richTextInsert'
 import type { AssessmentMeta } from './assessmentMeta'
 import { splitLatexSegments, IMAGE_ALTERNATIVE_PLACEHOLDER } from '@/lib/math/latexRender'
 import { splitCommandVerbs, shouldBoldCommandVerbs, isEnglishSubject, type CommandVerbOptions } from './commandVerbs'
-import { buildLatexImageCache, type LatexImageCache } from './latexImageCache'
+import { prepareQuestionImages } from './questionImageCache'
+import { buildLatexImageCache, type LatexImageCache, type LatexImageInfo } from './latexImageCache'
 import { buildMarkdownTableImageCache, splitMarkdownTables, type MarkdownTableImageCache } from './markdownTableImageCache'
 
 const BLANK_LINE = '_'.repeat(60)
+// Figura de alternativa do ENEM: menor que a imagem de apoio, pra caber as
+// 5 alternativas sem empurrar a questão por várias páginas.
+const ALTERNATIVE_IMAGE_SIZE = { widthPt: 150, heightPt: 110 }
 
 type ProvaOp =
   | { kind: 'text'; text: string; bold?: boolean }
-  // `size` ausente = imagem de apoio da questão (grande, fixa); presente =
-  // fórmula matemática inline (tamanho real da renderização, ver latexImageCache.ts).
+  // `size` preserva a proporção de figuras e o tamanho das fórmulas inline.
   | { kind: 'image'; driveFileId: string; size?: { widthPt: number; heightPt: number } }
 
 /**
@@ -21,7 +28,7 @@ type ProvaOp =
  * de rede no serviço externo), cai pro LaTeX cru em vez de sumir com o
  * conteúdo da questão.
  */
-function textToOps(text: string, latexCache: LatexImageCache, bold?: boolean, commandVerbs?: CommandVerbOptions | null): ProvaOp[] {
+export function textToOps(text: string, latexCache: LatexImageCache, bold?: boolean, commandVerbs?: CommandVerbOptions | null): ProvaOp[] {
   return splitLatexSegments(text).flatMap((seg): ProvaOp[] => {
     if (seg.type === 'text') {
       if (!seg.content) return []
@@ -63,22 +70,36 @@ export type ProvaBuildOptions = {
   // Linhas de resposta das descritivas — a Prova Adaptada (discalculia)
   // usa espaço ampliado de cálculo sem mexer no default da prova comum.
   discursiveBlankLines?: number
+  originalMedia?: Map<number, LatexImageInfo>
 }
 
 export function buildProvaOps(exam: ExamGenerationResult, latexCache: LatexImageCache, tableCache: MarkdownTableImageCache, options: ProvaBuildOptions = {}): ProvaOp[] {
   const discursiveBlankLines = options.discursiveBlankLines ?? 5
   const ops: ProvaOp[] = []
+  const sourceTextOps = (text: string, parts?: AcervoContentPart[], commands?: CommandVerbOptions | null): ProvaOp[] => {
+    if (!parts) return markdownTextToOps(text, latexCache, tableCache, undefined, commands)
+    return parts.flatMap((part): ProvaOp[] => {
+      if (part.type === 'text') return markdownTextToOps(part.text, latexCache, tableCache, undefined, commands)
+      const image = options.originalMedia?.get(part.mediaId)
+      if (!image) return [{ kind: 'text', text: '[Fórmula na imagem original da questão]' }]
+      const scale = part.width ? Math.min(part.width * 0.75 / image.widthPt, 1) : 1
+      return [{ kind: 'image', driveFileId: image.driveFileId, size: { widthPt: image.widthPt * scale, heightPt: image.heightPt * scale } }]
+    })
+  }
   // Negrito nos verbos de comando do enunciado: só Fundamental 1 e 2.
   const commandVerbs: CommandVerbOptions | null = shouldBoldCommandVerbs(exam.metadata.segment)
     ? { includeEnglish: isEnglishSubject(exam.metadata.subject) }
     : null
 
-  for (const q of exam.questions) {
+  for (const originalQuestion of exam.questions) {
+    const q = presentAcervoQuestion(originalQuestion)
     // O número abre o bloco e o texto de apoio vem ANTES do enunciado —
     // mesma ordem da tela de revisão. Questão do banco ENEM tem enunciado
     // que é continuação direta do apoio ("Ao abaixar o fogo, reduz-se a
     // chama, pois assim evita-se o(a)") e fica incompreensível impressa na
     // ordem inversa.
+    const attribution = questionPrintAttribution(q)
+    if (attribution) ops.push({ kind: 'text', text: `(${attribution})\n` })
     ops.push({ kind: 'text', text: `${q.number}. ` })
 
     if (q.supportText) {
@@ -86,11 +107,12 @@ export function buildProvaOps(exam: ExamGenerationResult, latexCache: LatexImage
       ops.push({ kind: 'text', text: '\n' })
     }
 
-    ops.push(...markdownTextToOps(q.statement, latexCache, tableCache, undefined, commandVerbs))
+    ops.push(...sourceTextOps(q.statement, q.acervoInlineContent?.statement, commandVerbs))
     ops.push({ kind: 'text', text: '\n' })
 
-    if (q.image?.approved) {
-      ops.push({ kind: 'image', driveFileId: q.image.driveFileId })
+    const inlineImagesComplete = hasOnlyInlineAcervoMedia(q) && inlineAcervoMediaIds(q).every((id) => options.originalMedia?.has(id))
+    if (isQuestionImageApproved(q) && !(isOriginalBankImage(q) && inlineImagesComplete)) {
+      ops.push({ kind: 'image', driveFileId: q.image.driveFileId, ...(q.image.width && q.image.height ? { size: questionImageSize(q.image.width, q.image.height) } : {}) })
       ops.push({ kind: 'text', text: '\n' })
     }
 
@@ -99,7 +121,8 @@ export function buildProvaOps(exam: ExamGenerationResult, latexCache: LatexImage
         ops.push({ kind: 'text', text: `${alt.letter}) ` })
         // Alternativa-imagem do ENEM chega com text null: marca em vez de
         // imprimir em branco (e o markdownTextToOps já é null-safe).
-        ops.push(...markdownTextToOps(alt.text || IMAGE_ALTERNATIVE_PLACEHOLDER, latexCache, tableCache))
+        if (alt.image) ops.push({ kind: 'image', driveFileId: alt.image.driveFileId, size: ALTERNATIVE_IMAGE_SIZE })
+        else ops.push(...sourceTextOps(alt.text || IMAGE_ALTERNATIVE_PLACEHOLDER, q.acervoInlineContent?.alternatives?.[alt.letter]))
         ops.push({ kind: 'text', text: '\n' })
       }
     } else {
@@ -114,9 +137,14 @@ export function buildProvaOps(exam: ExamGenerationResult, latexCache: LatexImage
   return ops
 }
 
+export function questionImageSize(width: number, height: number): { widthPt: number; heightPt: number } {
+  const scale = Math.min(420 / width, 300 / height, 0.75)
+  return { widthPt: width * scale, heightPt: height * scale }
+}
+
 // Imagem de apoio "grande" (foto/mapa/gráfico da questão) quando o op não
 // carrega um `size` próprio — fórmula matemática sempre carrega o dela.
-const DEFAULT_IMAGE_SIZE = { width: { magnitude: 260, unit: 'PT' }, height: { magnitude: 180, unit: 'PT' } }
+const DEFAULT_IMAGE_SIZE = { width: { magnitude: 320, unit: 'PT' } }
 
 export function buildOpsRequests(ops: ProvaOp[], startIndex: number): docs_v1.Schema$Request[] {
   const requests: docs_v1.Schema$Request[] = []
@@ -183,7 +211,9 @@ export async function applyProvaContent(
   const markerRange = findMarkerRange(document, '{{CORPO_PROVA}}')
   if (!markerRange) throw new Error('Marcador {{CORPO_PROVA}} não encontrado no template da Prova.')
 
-  const latexCache = await buildLatexImageCache(exam)
+  const preparedExam = await prepareQuestionImages(presentAcervoExam(exam))
+  const originalMedia = await buildAcervoImageCache(preparedExam, 'inline')
+  const latexCache = await buildLatexImageCache(preparedExam)
   const tableCache = await buildMarkdownTableImageCache(exam)
 
   await docs.documents.batchUpdate({
@@ -191,7 +221,7 @@ export async function applyProvaContent(
     requestBody: {
       requests: [
         { deleteContentRange: { range: { startIndex: markerRange.start, endIndex: markerRange.end } } },
-        ...buildOpsRequests(buildProvaOps(exam, latexCache, tableCache, options), markerRange.start),
+        ...buildOpsRequests(buildProvaOps(preparedExam, latexCache, tableCache, { ...options, originalMedia }), markerRange.start),
       ],
     },
   })

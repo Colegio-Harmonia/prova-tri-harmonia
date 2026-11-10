@@ -140,6 +140,14 @@ export const aiBudgetResets = pgTable('ai_budget_resets', {
   purposeCreatedAtIndex: index('ai_budget_resets_purpose_created_at_idx').on(table.purpose, table.createdAt),
 }))
 
+// Configurações compartilhadas entre a aplicação e os workers.
+export const applicationSettings = pgTable('application_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedBy: integer('updated_by').references(() => users.id).notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
 // Controle administrativo do teto diário. A ausência de uma linha mantém o
 // comportamento padrão (limite habilitado); a linha só é criada quando a
 // gestão altera explicitamente a configuração.
@@ -627,6 +635,8 @@ export const curriculumPlanUnits = pgTable('curriculum_plan_units', {
   title: text('title').notNull(),
   content: text('content'),
   objectives: text('objectives'),
+  /** Só Ensino Médio: habilidades ENEM "C2:H5 (origem)", uma por linha (migration 0054). */
+  enemSkills: text('enem_skills'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 }, (table) => ({
@@ -912,7 +922,7 @@ export const adaptedExams = pgTable('adapted_exams', {
 // worker nunca fazem UPDATE de status direto na tabela.
 // ---------------------------------------------------------------------------
 
-export const GENERATION_JOB_TYPES = ['gerar_prova', 'gerar_reforco_enem', 'gerar_atividade', 'adaptar_prova', 'pontuar_prova', 'transcrever_scan', 'processar_scan'] as const
+export const GENERATION_JOB_TYPES = ['gerar_prova', 'gerar_imagens_prova', 'adicionar_questao', 'gerar_reforco_enem', 'gerar_atividade', 'adaptar_prova', 'pontuar_prova', 'transcrever_scan', 'processar_scan'] as const
 export type GenerationJobType = (typeof GENERATION_JOB_TYPES)[number]
 
 // pendente -> gerando -> concluido | erro (com retry automático enquanto
@@ -975,10 +985,14 @@ export const generationJobItems = pgTable('generation_job_items', {
   jobId: integer('job_id').references(() => generationJobs.id, { onDelete: 'cascade' }).notNull(),
   slotNumber: integer('slot_number').notNull(),
   status: text('status', { enum: GENERATION_JOB_ITEM_STATUSES }).notNull().default('pendente'),
+  currentStage: text('current_stage'),
+  stageCheckpoints: jsonb('stage_checkpoints').notNull().default(sql`'{}'::jsonb`),
   questionPayload: jsonb('question_payload'),
   issues: jsonb('issues'),
   attempts: integer('attempts').notNull().default(0),
   maxAttempts: integer('max_attempts').notNull().default(3),
+  qualityRepairAttempts: integer('quality_repair_attempts').notNull().default(0),
+  qualityRepairHistory: jsonb('quality_repair_history').notNull().default(sql`'[]'::jsonb`),
   lastError: text('last_error'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),

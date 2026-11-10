@@ -12,6 +12,8 @@ type ClassroomCourse = { id: string; name: string; section: string | null }
 const publishStageMessage: Record<string, string> = {
   verify_course_teacher: 'verificar se sua conta é professora da turma',
   create_form: 'criar o Formulário Google',
+  configure_form: 'configurar o Quiz no Google Forms',
+  add_form_questions: 'adicionar as questões ao Google Forms',
   share_form_with_teacher: 'liberar a edição do Formulário à professora responsável',
   export_pdf: 'preparar o PDF da atividade',
   create_coursework: 'criar a atividade na turma',
@@ -31,7 +33,7 @@ function classroomPublishError(data: { stage?: unknown; provider?: { httpStatus?
     : data.provider?.reason === 'ACCESS_TOKEN_SCOPE_INSUFFICIENT'
       ? ' Reconecte sua conta Google para renovar as permissões.'
       : ''
-  return `O Classroom recusou ao ${stage}${status}${reason}.${guidance}`
+  return `O ${['create_form', 'configure_form', 'add_form_questions'].includes(String(data.stage)) ? 'Google Forms' : 'Classroom'} recusou ao ${stage}${status}${reason}.${guidance}`
 }
 
 export default function PublishToClassroom({

@@ -4,6 +4,9 @@ node_modules/
 /coverage/
 .env
 .env.local
+.env.*
+!.env.example
+/output/
 *.tsbuildinfo
 next-env.d.ts
 .DS_Store

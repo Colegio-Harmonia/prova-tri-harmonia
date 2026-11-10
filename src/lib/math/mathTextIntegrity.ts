@@ -42,7 +42,6 @@ export function normalizeMathText(value: string): string {
     .replace(/\\\[([\s\S]*?)\\\]/g, (_, content: string) => (isRenderableMath(content) ? `$$ ${content.trim()} $$` : `[${content}]`))
     .replace(/\\\(([\s\S]*?)\\\)/g, (_, content: string) => (isRenderableMath(content) ? `$$ ${content.trim()} $$` : `(${content})`))
   const segments = splitLatexSegments(result)
-  if (!segments.some((segment) => segment.type === 'text')) return result
   return segments.map((segment) => {
     if (segment.type === 'math') return segment.display ? `$$${segment.latex}$$` : `$${segment.latex}$`
     return segment.content.replace(BARE_LATEX, (latex, offset, text) => {

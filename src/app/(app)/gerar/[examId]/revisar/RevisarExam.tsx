@@ -1,11 +1,20 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { questionInepLabel } from '@/lib/exams/questionInepLabel'
+
+import { LazyMathText as MathText } from '@/components/ui/LazyMathText'
+import { originalAcervoMedia, originalAcervoMediaUrl, hasOnlyInlineAcervoMedia } from '@/lib/exams/acervoMedia'
+import { AcervoText } from '@/components/ui/AcervoText'
+
+import { questionProvenanceTags, questionOriginLabel, isOriginalBankImage, isQuestionImageApproved } from '@/lib/exams/questionOrigin'
+
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
-import { hasLatexSegments, splitLatexSegments, buildLatexImageUrl, IMAGE_ALTERNATIVE_PLACEHOLDER } from '@/lib/math/latexRender'
+import { IMAGE_ALTERNATIVE_PLACEHOLDER } from '@/lib/math/latexSegments'
 import { isStaffSuperuser } from '@/lib/auth/roles'
 import { ReviewProgress } from '@/features/assessments/components/ReviewProgress'
+import AddQuestionModal from './AddQuestionModal'
 import PublishToClassroom from './PublishToClassroom'
 import ActivityClassroomResults from './ActivityClassroomResults'
 import SheetAssignmentsPanel from './SheetAssignmentsPanel'
@@ -15,29 +24,7 @@ import { questionImageUrl } from '@/lib/images/questionImageUrl'
 import type { IllustrationAnalysis, IllustrationRecommendation } from '@/lib/illustrations/recommendations'
 import { diagnosticsForQuestion, humanReviewDiagnostics } from '@/lib/exams/qualityDiagnostics'
 
-// Fórmula em $...$ vira imagem tipografada de verdade (renderização
-// externa, mesmo padrão já usado pros gráficos de questão) — pedido
-// direto: "2^(n-1)" em ASCII solto é difícil de ler, longe de livro
-// impresso.
-function MathText({ text }: { text: string | null | undefined }) {
-  if (!hasLatexSegments(text)) return <>{text ?? ''}</>
-  return (
-    <>
-      {splitLatexSegments(text).map((seg, i) =>
-        seg.type === 'text' ? (
-          <span key={i}>{seg.content}</span>
-        ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img key={i} src={buildLatexImageUrl(seg.latex)} alt={seg.latex} className={seg.display ? 'my-2 block h-auto max-h-40 w-auto' : 'mx-0.5 inline-block h-[1.1em] w-auto align-middle'} />
-        ),
-      )}
-    </>
-  )
-}
 
-// A geração pode usar Markdown para dados de apoio. O documento final já
-// transforma tabelas em imagem; aqui renderizamos uma tabela HTML para que
-// a aprovação humana nunca precise interpretar caracteres "|" crus.
 function SupportText({ text }: { text: string }) {
   const lines = text.split('\n')
   const dividerIndex = lines.findIndex((line, index) => index > 0 && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line))
@@ -81,7 +68,7 @@ type ExamRow = {
 }
 
 type UserOption = { id: number; name: string; email: string; role: string }
-type Action = 'atribuir' | 'iniciar_revisao' | 'aprovar_prova' | 'concluir_revisao' | 'aprovar' | 'marcar_impresso' | 'marcar_aplicado' | 'marcar_corrigido' | 'finalizar_atividade' | 'marcar_atividade_aplicada'
+type Action = 'atribuir' | 'confirmar_prova_parcial' | 'iniciar_revisao' | 'aprovar_prova' | 'concluir_revisao' | 'aprovar' | 'marcar_impresso' | 'marcar_aplicado' | 'marcar_corrigido' | 'finalizar_atividade' | 'finalizar_atividade_parcial' | 'marcar_atividade_aplicada'
 
 const IMAGE_SOURCE_LABELS: Record<string, string> = {
   busca: 'Encontrada (Wikimedia Commons)',
@@ -126,14 +113,9 @@ function reviewPendingItems(payload: ExamGenerationResult): string[] {
   return payload.questions.flatMap((question) => {
     const pending: string[] = []
     if (question.review?.adequacy !== 'adequada') pending.push(`Questão ${question.number} não aceita`)
-    if (question.image && !question.image.approved) pending.push(`Imagem da questão ${question.number} não aprovada`)
+    if (question.image && !isQuestionImageApproved(question)) pending.push(`Imagem da questão ${question.number} não aprovada`)
     return pending
   })
-}
-
-function firstPendingQuestion(payload: ExamGenerationResult): number | null {
-  const question = payload.questions.find((item) => item.review?.adequacy !== 'adequada' || Boolean(item.image && !item.image.approved))
-  return question?.number ?? null
 }
 
 export default function RevisarExam({ examId, currentUserRole, currentUserId }: { examId: number; currentUserRole: string; currentUserId: number | null }) {
@@ -156,8 +138,8 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [expandedImageQuestion, setExpandedImageQuestion] = useState<number | null>(null)
   const [restoringImage, setRestoringImage] = useState<string | null>(null)
-  const [reviewBlocker, setReviewBlocker] = useState<{ items: string[]; firstQuestion: number | null } | null>(null)
   const [qualityReportOpen, setQualityReportOpen] = useState(false)
+  const [addingQuestion, setAddingQuestion] = useState(false)
 
   const isCoordenacao = isStaffSuperuser(currentUserRole)
   const canAssignFormalExam = Boolean(
@@ -165,14 +147,6 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
     exam.status === 'rascunho' &&
     (isCoordenacao || exam.createdBy === currentUserId),
   )
-
-  useEffect(() => {
-    if (!reviewBlocker?.firstQuestion) return
-    const timer = window.setTimeout(() => {
-      document.getElementById(`question-${reviewBlocker.firstQuestion}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    }, 100)
-    return () => window.clearTimeout(timer)
-  }, [reviewBlocker])
 
   function patchQuestion(questionNumber: number, patch: Record<string, unknown>) {
     setExam((current) => {
@@ -187,7 +161,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
     })
   }
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -203,12 +177,17 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
     } finally {
       setLoading(false)
     }
-  }
+  }, [examId])
+
+  const handleQuestionAdded = useCallback(() => {
+    setActionMessage('A questão foi adicionada e está pronta para revisão.')
+    void load()
+  }, [load])
+
 
   useEffect(() => {
-    load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [examId])
+    void load()
+  }, [load])
 
   useEffect(() => {
     if (!canAssignFormalExam) return
@@ -353,21 +332,21 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
     }
   }
 
-  async function handleRegenerateQuestion(questionNumber: number) {
+  async function handleRegenerateQuestion(questionNumber: number, sourcePreference: 'ia' | 'acervo' = 'ia') {
     setRegeneratingQuestion(questionNumber)
     setActionError((prev) => ({ ...prev, [questionNumber]: '' }))
     try {
       const res = await fetch(`/api/exams/${examId}/regenerate-question`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ questionNumber }),
+        body: JSON.stringify({ questionNumber, sourcePreference }),
       })
       const data = await res.json()
       if (!res.ok) {
         setActionError((prev) => ({ ...prev, [questionNumber]: data.error ?? 'Erro ao trocar questão.' }))
         return
       }
-      patchQuestion(questionNumber, data.question)
+      await load()
     } catch {
       setActionError((prev) => ({ ...prev, [questionNumber]: 'Falha de rede ao trocar questão.' }))
     } finally {
@@ -449,23 +428,6 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
 
 
   async function handleTransition(action: Action, assignedTo?: number, printWindow?: Window | null) {
-    if ((action === 'concluir_revisao' || action === 'aprovar_prova') && exam) {
-      const pending = reviewPendingItems(exam.generationPayload)
-      if (pending.length) {
-        setReviewBlocker({ items: pending, firstQuestion: firstPendingQuestion(exam.generationPayload) })
-        return
-      }
-    }
-    if (action === 'finalizar_atividade' && exam) {
-      const pendingHumanReview = humanReviewDiagnostics(exam.generationPayload).filter((item) => !item.acknowledged)
-      if (pendingHumanReview.length) {
-        setReviewBlocker({
-          items: pendingHumanReview.map((item) => `Questão ${item.questionNumber}: ${item.diagnostic.message}`),
-          firstQuestion: pendingHumanReview[0]?.questionNumber ?? null,
-        })
-        return
-      }
-    }
     setTransitioning(true)
     setError(null)
     let postTransitionError: string | null = null
@@ -518,18 +480,23 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   if (!exam) return null
 
   const payload = exam.generationPayload
+  const usesWholeExamEngine = payload.metadata.generationEngine === 'whole-exam-v1'
   const finalQualityReport = payload.metadata.qualityTest?.reports?.at(-1)
-  const qualityResults = [...(finalQualityReport?.results ?? [])]
-    .filter((result) => result.approved)
+  const jevPendingCount = usesWholeExamEngine ? 0 : payload.questions.filter((question) => question.source !== 'enem_bank' && !finalQualityReport?.results.find((result) => result.questionNumber === question.number)?.approved).length
+  const qualityResults = [...(finalQualityReport?.results ?? [])].filter((result) => result.auditStatus !== 'jev_unavailable' && payload.questions.find((q) => q.number === result.questionNumber)?.source !== 'enem_bank')
     .sort((a, b) => a.questionNumber - b.questionNumber)
   const reviewEditable =
     exam.status === 'rascunho' || exam.status === 'atribuido' || exam.status === 'em_andamento' || exam.status === 'revisao_concluida' || exam.status === 'em_revisao'
   const isAssignee = exam.assignedTo != null && exam.assignedTo === currentUserId
   const isOwnActivity = exam.examKind !== 'prova' && exam.createdBy === currentUserId
   const canActOnOwnStep = isCoordenacao || isAssignee || isOwnActivity
+  const canAddQuestion = !usesWholeExamEngine && exam.examKind === 'prova' && ['rascunho', 'atribuido', 'em_revisao', 'revisao_concluida'].includes(exam.status) && (canActOnOwnStep || exam.createdBy === currentUserId)
   const canFinalizeActivity = canFinalizeOwnActivity(exam, currentUserId, isCoordenacao)
   const canMarkActivityApplied = canMarkOwnActivityApplied(exam, currentUserId, isCoordenacao)
   const pendingReviewItems = reviewPendingItems(payload)
+  const generationProgress = payload.metadata.generationProgress
+  const partialGenerationProgress = generationProgress?.complete === false ? generationProgress : null
+  const isPartialGeneration = Boolean(partialGenerationProgress && !partialGenerationProgress.acceptedReducedQuestionCount)
   const humanReviewItems = humanReviewDiagnostics(payload).filter((item) => !item.acknowledged)
   const diagnosticsByQuestion = new Map(payload.questions.map((question) => [question.number, diagnosticsForQuestion(payload, question.number)]))
   const hasFixedApprovalAction =
@@ -539,16 +506,6 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   return (
     <div className={`space-y-6 ${hasFixedApprovalAction ? 'pb-28' : ''}`}>
       <div aria-live="polite" className="sr-only">{actionMessage}</div>
-      {reviewBlocker && (
-        <div role="dialog" aria-modal="true" aria-labelledby="review-blocker-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setReviewBlocker(null)}>
-          <div className="w-full max-w-md rounded-xl bg-surface p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <h2 id="review-blocker-title" className="text-base font-semibold">Ainda não é possível aprovar a prova</h2>
-            <p className="mt-1 text-sm text-neutral-600">Faltam decisões humanas nos itens abaixo:</p>
-            <ul className="mt-3 space-y-1 text-sm">{reviewBlocker.items.map((item) => <li key={item}>• {item}</li>)}</ul>
-            <button onClick={() => setReviewBlocker(null)} className="mt-4 rounded bg-harmonia-green px-3 py-2 text-sm font-medium text-white">Ir para a primeira pendência</button>
-          </div>
-        </div>
-      )}
       <div className="space-y-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -564,10 +521,33 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {canAddQuestion && (
+            <button onClick={() => setAddingQuestion(true)} className="rounded border border-harmonia-green px-4 py-2 text-sm font-medium text-harmonia-green">
+              + Adicionar questão
+            </button>
+          )}
           {exam.status === 'rascunho' && (
             <button onClick={handleRegenerate} disabled={regenerating} className="rounded border border-neutral-300 px-4 py-2 text-sm font-medium disabled:opacity-60">
               {regenerating ? 'Regenerando…' : 'Regenerar'}
             </button>
+          )}
+          {usesWholeExamEngine && exam.examKind === 'prova' && (canActOnOwnStep || exam.createdBy === currentUserId) && (
+            <p className="w-full text-xs text-content-secondary">As questões desta prova foram geradas como um conjunto; para mudar a quantidade, inicie uma nova geração com o total desejado.</p>
+          )}
+
+          {partialGenerationProgress && (
+            <div role="status" className="w-full rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+              <p className="font-semibold">{partialGenerationProgress.acceptedReducedQuestionCount ? 'Quantidade reduzida aceita' : 'Prova parcial'}: {payload.questions.length} de {partialGenerationProgress.requestedQuestionCount} questões geradas.</p>
+              <p className="mt-1">As questões aprovadas foram preservadas. Pendentes: {partialGenerationProgress.pendingQuestionNumbers.length ? partialGenerationProgress.pendingQuestionNumbers.join(', ') : 'questões do banco selecionado'}.</p>
+              {partialGenerationProgress.pendingReasons && Object.entries(partialGenerationProgress.pendingReasons).length > 0 && <ul className="mt-2 list-inside list-disc space-y-1">{Object.entries(partialGenerationProgress.pendingReasons).map(([number, reason]) => <li key={number}>Questão {number}: {reason}</li>)}</ul>}
+              <p className="mt-1">{partialGenerationProgress.acceptedReducedQuestionCount ? 'Esta avaliação segue com quantidade menor que a solicitada, conforme aceite registrado.' : `Revise o conteúdo. Para seguir com essa quantidade reduzida, confirme explicitamente ao ${exam.examKind === 'prova' ? 'atribuir' : 'finalizar'}.`}</p>
+            </div>
+          )}
+
+          {payload.questions.length === 0 && exam.examKind === 'prova' && (
+            <div role="status" className="w-full rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+              A prova foi salva sem questões aprovadas. Gere pelo menos uma questão antes de atribuir.
+            </div>
           )}
 
           {canAssignFormalExam && (
@@ -583,22 +563,22 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
                 ))}
               </select>
               <button
-                onClick={() => selectedAssignee && handleTransition('atribuir', selectedAssignee)}
-                disabled={transitioning || !selectedAssignee}
+                onClick={() => selectedAssignee && handleTransition(isPartialGeneration ? 'confirmar_prova_parcial' : 'atribuir', selectedAssignee)}
+                disabled={transitioning || !selectedAssignee || payload.questions.length === 0}
                 className="rounded bg-harmonia-green px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
               >
-                Atribuir
+                {isPartialGeneration ? 'Aceitar quantidade reduzida e atribuir' : 'Atribuir'}
               </button>
             </div>
           )}
 
           {canFinalizeActivity && (
             <button
-              onClick={() => handleTransition('finalizar_atividade')}
+              onClick={() => handleTransition(isPartialGeneration ? 'finalizar_atividade_parcial' : 'finalizar_atividade')}
               disabled={transitioning}
               className="min-h-10 whitespace-nowrap rounded bg-harmonia-green px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
             >
-              {transitioning ? 'Finalizando e gerando documentos…' : humanReviewItems.length ? 'Revisar pendências antes de finalizar' : 'Finalizar atividade e gerar documentos'}
+              {transitioning ? 'Finalizando e gerando documentos…' : isPartialGeneration ? 'Aceitar quantidade reduzida e finalizar' : humanReviewItems.length ? 'Revisar pendências antes de finalizar' : 'Finalizar atividade e gerar documentos'}
             </button>
           )}
 
@@ -698,22 +678,31 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
         <ActivityClassroomResults examId={examId} />
       )}
 
-      <section className="rounded border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950" aria-labelledby="ai-review-notice">
-        <h2 id="ai-review-notice" className="font-semibold">Revisão obrigatória do conteúdo assistido por IA</h2>
-        <p className="mt-1">A IA fornece um rascunho. Antes de {exam.examKind === 'prova' ? 'aprovar' : 'finalizar a atividade'}, confira enunciados, alternativas, gabarito, nível de dificuldade, habilidades e imagens.</p>
-        {payload.metadata.qualityTest && (
-          <div className="mt-2 text-xs">
-            <p>
-              Teste de qualidade {payload.metadata.qualityTest.repairedQuestionNumbers.length ? `substituiu automaticamente as questões ${payload.metadata.qualityTest.repairedQuestionNumbers.join(', ')}.` : 'aprovado antes da prova ser salva.'}
-            </p>
-            <div className="mt-2 flex flex-wrap gap-3">
-              {payload.metadata.qualityTest.reports?.length ? <button type="button" onClick={() => setQualityReportOpen(true)} className="font-medium text-harmonia-green underline">Abrir relatório detalhado do teste de qualidade</button> : null}
-            </div>
-          </div>
-        )}
-      </section>
+      {qualityResults.length > 0 && <button type="button" onClick={() => setQualityReportOpen(true)} className="text-xs font-medium text-harmonia-green underline">Ver conferência das questões</button>}
 
-      {qualityReportOpen && finalQualityReport && <div role="dialog" aria-modal="true" aria-labelledby="quality-report-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setQualityReportOpen(false)}><section className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-surface p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="flex items-start justify-between gap-4"><div><h2 id="quality-report-title" className="text-lg font-semibold">Relatório detalhado do teste de qualidade</h2><p className="mt-1 text-sm text-content-secondary">Questões aprovadas na auditoria final, em ordem numérica.</p></div><button type="button" onClick={() => setQualityReportOpen(false)} className="rounded border border-border px-3 py-1.5 text-sm">Fechar</button></div><div className="mt-5 grid gap-3 sm:grid-cols-2">{qualityResults.map((result) => <article key={result.questionNumber} className="rounded-lg border border-harmonia-green/30 bg-harmonia-green/5 p-3"><div className="flex items-center justify-between gap-2"><p className="font-medium">Questão {result.questionNumber}</p><span className="rounded-full bg-harmonia-green/10 px-2 py-0.5 text-xs font-medium text-harmonia-green">Aprovada</span></div>{result.verdictReason && <p className="mt-2 text-sm text-content-secondary">{result.verdictReason}</p>}{result.answerKeyAudit && <div className="mt-3 rounded bg-surface p-2 text-xs"><p className="font-medium">Gabarito confirmado: {result.answerKeyAudit.declaredLetter ?? '—'}</p><p className="mt-0.5 text-content-secondary">{result.answerKeyAudit.evidence}</p></div>}{result.checks?.filter((check) => check.status === 'aprovado').length ? <ul className="mt-3 space-y-2 text-xs">{result.checks.filter((check) => check.status === 'aprovado').map((check, checkIndex) => <li key={checkIndex} className="rounded bg-surface p-2"><p className="font-medium">{check.criterion.replace(/_/g, ' ')}</p><p className="mt-0.5 text-content-secondary">{check.evidence}</p></li>)}</ul> : null}</article>)}</div>{!qualityResults.length && <p className="mt-5 text-sm text-content-secondary">Nenhuma questão aprovada consta no relatório final.</p>}</section></div>}
+      {qualityReportOpen && finalQualityReport && <div role="dialog" aria-modal="true" aria-labelledby="quality-report-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setQualityReportOpen(false)}>
+        <section className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-surface p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+          <div className="flex items-start justify-between gap-4">
+            <div><h2 id="quality-report-title" className="text-lg font-semibold">Relatório detalhado do teste de qualidade</h2><p className="mt-1 text-sm text-content-secondary">Resultado da auditoria inicial. Questões pendentes mantêm o rascunho para revisão e nova validação.</p></div>
+            <button type="button" onClick={() => setQualityReportOpen(false)} className="rounded border border-border px-3 py-1.5 text-sm">Fechar</button>
+          </div>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            {qualityResults.map((result) => <article key={result.questionNumber} className={`rounded-lg border p-3 ${result.approved ? 'border-harmonia-green/30 bg-harmonia-green/5' : 'border-amber-300 bg-amber-50'}`}>
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-medium">Questão {result.questionNumber}</p>
+                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${result.approved ? 'bg-harmonia-green/10 text-harmonia-green' : 'bg-amber-100 text-amber-900'}`}>
+                  {result.approved ? (result.auditStatus === 'corrected_without_reaudit' ? 'Corrigida sem reauditoria' : result.auditStatus === 'correction_unavailable' ? 'Correção não aplicada; incluída sem reauditoria' : 'Aprovada pelo Jev') : result.auditStatus === 'jev_unavailable' ? 'Jev indisponível; rascunho preservado' : 'Pendente de revisão'}
+                </span>
+              </div>
+              {result.verdictReason && <p className="mt-2 text-sm text-content-secondary">{result.verdictReason}</p>}
+              {result.answerKeyAudit && <div className="mt-3 rounded bg-surface p-2 text-xs"><p className="font-medium">Conferência independente do gabarito</p><p className="mt-0.5 text-content-secondary">{result.answerKeyAudit.evidence}</p></div>}
+              {result.checks?.length ? <ul className="mt-3 space-y-2 text-xs">{result.checks.map((check, checkIndex) => <li key={checkIndex} className="rounded bg-surface p-2"><p className="font-medium">{check.criterion.replace(/_/g, ' ')} · {check.status}</p><p className="mt-0.5 text-content-secondary">{check.evidence}</p></li>)}</ul> : null}
+              {result.issues.map((issue, issueIndex) => <p key={issueIndex} className="mt-2 text-xs text-content-secondary">{issue.severity === 'bloqueante' ? 'Pendência' : 'Atenção'}: {issue.reason}</p>)}
+            </article>)}
+          </div>
+          {!qualityResults.length && <p className="mt-5 text-sm text-content-secondary">Nenhum resultado de qualidade disponível.</p>}
+        </section>
+      </div>}
 
       {['aprovado', 'impresso', 'aplicado', 'corrigido'].includes(exam.status) && (
         <div className="rounded border border-harmonia-green/30 bg-harmonia-green/5 p-4 text-sm">
@@ -732,33 +721,37 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
             <div className="absolute inset-y-0 left-0 w-1 bg-harmonia-green/70" />
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <span className="rounded-full bg-harmonia-green px-2.5 py-1 font-semibold text-white">Questão {q.number}</span>
+              <span className="rounded bg-violet-50 px-2 py-0.5 font-medium text-violet-700">{questionOriginLabel(q)}</span>
+              {questionProvenanceTags(q).map((label) => <span key={label} className="rounded bg-surface-subtle px-2 py-0.5 text-content-secondary">{label}</span>)}
               {q.source === 'enem_bank' ? (
                 <span className="rounded bg-violet-50 px-2 py-0.5 font-medium text-violet-700">
                   Questão real — ENEM {q.enemBankRef?.year}
                 </span>
-              ) : (
-                <>
-                  <span className="rounded bg-surface-subtle px-2 py-0.5 text-content-secondary">{q.type}</span>
-                  <span className="rounded bg-surface-subtle px-2 py-0.5 text-content-secondary">Bloom: {q.bloomLevel}</span>
-                  <span className={`rounded px-2 py-0.5 ${q.bnccStatus === 'mapeado' ? 'bg-harmonia-green/10 text-harmonia-green' : 'bg-neutral-100 text-neutral-500'}`}>
-                    {q.bnccStatus === 'mapeado' ? q.bnccCodes.join(', ') : 'BNCC não mapeada'}
-                  </span>
-                </>
-              )}
+              ) : <span className="rounded bg-surface-subtle px-2 py-0.5 text-content-secondary">{q.type}</span>}
+              <span title={q.bnccAssessment?.errorCode === 'no_official_candidates' ? 'O catálogo oficial não oferece habilidades para esta disciplina e este ano.' : q.bnccAssessment?.status === 'no_match' ? `Nenhuma habilidade ultrapassou ${q.bnccAssessment.thresholdPercent}% de alinhamento.` : undefined} className={`rounded px-2 py-0.5 ${q.bnccCodes.length ? 'bg-harmonia-green/10 text-harmonia-green' : 'bg-surface-subtle text-content-secondary'}`}>
+                {q.bnccCodes.length ? q.bnccCodes.join(', ') : 'BNCC não mapeada'}
+              </span>
+              <span className="rounded bg-surface-subtle px-2 py-0.5 text-content-secondary">Bloom: {q.bloomLevel}</span>
               <span className="rounded bg-surface-subtle px-2 py-0.5 text-content-secondary">
-                SAEB/ENEM: {q.saeb.applicable ? `${q.saeb.value ?? '—'}${q.saeb.approximate ? ' (aproximado)' : ''}` : 'N/A'}
+                {questionInepLabel(q)}
               </span>
             </div>
+
+            {q.acervoFallbackReason && <p className="mt-2 text-xs text-content-secondary">{q.acervoFallbackReason}</p>}
+            {q.plannedEnemSkill && <p className="mt-2 text-xs text-content-secondary">Alvo do planejamento: <strong>{q.plannedEnemSkill.code}</strong> — {q.plannedEnemSkill.description}</p>}
+            {q.planningAlignment && <p className="mt-2 text-xs text-content-secondary">
+              Aderência conferida na geração: <strong>{q.planningAlignment.status === 'aligned' ? 'compatível' : q.planningAlignment.status === 'partial' ? 'parcial — conferir' : q.planningAlignment.status === 'misaligned' ? 'divergente — conferir' : 'pendente'}</strong>. {q.planningAlignment.evidence}
+            </p>}
 
             {(diagnosticsByQuestion.get(q.number) ?? []).filter((item) => item.severity !== 'alerta').map((item) => {
               const acknowledged = item.severity === 'revisao_humana' && q.review?.adequacy === 'adequada'
               return (
                 <div key={`${item.code}-${item.message}`} className={`mt-3 rounded border p-3 text-xs ${item.severity === 'revisao_humana' ? 'border-amber-300 bg-amber-50 text-amber-950' : 'border-red-300 bg-red-50 text-red-800'}`}>
-                  <p className="font-semibold">{item.severity === 'revisao_humana' ? 'Revisão humana obrigatória' : 'Correção necessária'}</p>
+                  <p className="font-semibold">{q.source === 'enem_bank' ? 'Conferência do original' : item.severity === 'revisao_humana' ? 'Confira esta questão' : item.repairAction === 'reparo_local' ? 'Ajuste automático pendente' : 'Confira o conteúdo'}</p>
                   <p className="mt-1">{item.message}</p>
                   {item.evidence && <p className="mt-1 text-[11px] opacity-80">Evidência: {item.evidence}</p>}
                   {acknowledged && <p className="mt-2 font-medium text-harmonia-green">Revisão confirmada pelo professor.</p>}
-                  {item.repairAction === 'reparo_local' && reviewEditable && q.review?.adequacy !== 'adequada' && (
+                  {item.repairAction === 'reparo_local' && reviewEditable && (
                     <button type="button" onClick={() => handleRepairQuestion(q.number)} disabled={regeneratingQuestion === q.number} className="mt-2 rounded border border-current px-2 py-1 font-medium disabled:opacity-60">
                       {regeneratingQuestion === q.number ? 'Corrigindo…' : 'Corrigir automaticamente'}
                     </button>
@@ -768,10 +761,10 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
             })}
 
             {q.supportText && <SupportText text={q.supportText} />}
-            <p className="mt-2 font-medium"><MathText text={q.statement} /></p>
+            <p className="mt-2 whitespace-pre-wrap font-medium"><AcervoText text={q.statement} parts={q.acervoInlineContent?.statement} examId={exam.id} /></p>
             {q.whatIfImage && <details className="mt-2 inline-block text-xs text-content-secondary"><summary className="cursor-pointer list-none rounded-full border border-border bg-surface px-2 py-1 hover:bg-surface-subtle">ⓘ Informação de ilustração</summary><p className="mt-1 max-w-2xl rounded border border-border bg-surface-subtle p-2">Briefing interno, sem resposta: {q.whatIfImage}</p></details>}
 
-            {q.image && (
+            {q.image && !(isOriginalBankImage(q) && hasOnlyInlineAcervoMedia(q)) && (
               <div className="mt-3 rounded border border-border bg-surface-subtle p-3">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
                   <button type="button" onClick={() => setExpandedImageQuestion(q.number)} aria-haspopup="dialog" className="group shrink-0 self-start rounded border border-border bg-surface p-1 text-left">
@@ -781,15 +774,15 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
                   </button>
                   <div className="flex flex-col gap-1 text-xs">
                   <span className="text-neutral-500">
-                    {IMAGE_SOURCE_LABELS[q.image.source] ?? 'Gerada por IA'} — confirme se é aplicável antes de aprovar.
+                    {isOriginalBankImage(q) ? 'Imagem original do banco — aceita automaticamente.' : `${IMAGE_SOURCE_LABELS[q.image.source] ?? 'Gerada por IA'} — confirme se é aplicável antes de aprovar.`}
                   </span>
-                  {q.image.sourceUrl && (
+                  {q.image.sourceUrl && !isOriginalBankImage(q) && (
                     <a href={q.image.sourceUrl} target="_blank" rel="noreferrer" className="truncate text-harmonia-green underline">
                       {q.image.sourceUrl}
                     </a>
                   )}
                   <div className="flex gap-2">
-                    {q.image.approved ? (
+                    {isOriginalBankImage(q) ? null : q.image.approved ? (
                       <>
                         <button onClick={() => handleToggleImage(q.number, false)} disabled={!reviewEditable} className="rounded border border-border bg-surface px-2 py-1 font-medium disabled:opacity-60">Cancelar aceitação da imagem</button>
                         <button onClick={() => handleRequestImage(q.number, true)} disabled={!reviewEditable || requestingImage === q.number} className="rounded border border-border bg-surface px-2 py-1 font-medium disabled:opacity-60">{requestingImage === q.number ? 'Gerando nova imagem…' : 'Recusar e gerar nova'}</button>
@@ -829,7 +822,13 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
               <ul className="mt-2 space-y-1">
                 {q.alternatives.map((a) => (
                   <li key={a.letter} className={a.letter === q.correctLetter ? 'font-medium text-harmonia-green' : ''}>
-                    {a.letter}) <MathText text={a.text || IMAGE_ALTERNATIVE_PLACEHOLDER} />
+                    {a.letter}){' '}
+                    {a.image ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={questionImageUrl(exam.id, a.image.driveFileId)} alt={`Alternativa ${a.letter} da questão ${q.number}`} className="inline-block max-h-40 w-auto max-w-full rounded border border-border align-top" />
+                    ) : (
+                      <AcervoText text={a.text || IMAGE_ALTERNATIVE_PLACEHOLDER} parts={q.acervoInlineContent?.alternatives?.[a.letter]} examId={exam.id} />
+                    )}
                   </li>
                 ))}
               </ul>
@@ -838,26 +837,38 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
             {q.type === 'descritiva' && (
               <div className="mt-2 space-y-1 text-neutral-600">
                 {q.expectedAnswer ? (
-                  <p><span className="font-medium">Resposta esperada:</span> <MathText text={q.expectedAnswer} /></p>
+                  <p className="whitespace-pre-wrap"><span className="font-medium">Resposta esperada:</span> <MathText text={q.expectedAnswer} /></p>
                 ) : (
                   <p role="alert" className="font-medium text-red-700">
                     Sem resposta esperada cadastrada — a correção fica sem base. Use &quot;Trocar só essa questão&quot; para regenerar antes de concluir a revisão.
                   </p>
                 )}
-                {q.gradingCriteria && <p><span className="font-medium">Critérios:</span> <MathText text={q.gradingCriteria} /></p>}
+                {originalAcervoMedia(q, 'resolucao').map((media) => <figure key={media.id} className="my-3">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={originalAcervoMediaUrl(exam.id, media.id)} alt={media.texto_alternativo || `Resolução original da questão ${q.number}`} className="max-h-80 max-w-full object-contain" loading="lazy" />
+                  <figcaption className="mt-1 text-xs">Fórmula ou imagem da resolução original.</figcaption>
+                </figure>)}
+                {q.gradingCriteria && <p className="whitespace-pre-wrap"><span className="font-medium">Critérios:</span> <MathText text={q.gradingCriteria} /></p>}
               </div>
             )}
 
             {reviewEditable && (
               <div className="mt-4 space-y-3 rounded border border-border bg-surface-subtle p-3">
                 <p className="text-xs text-neutral-600">Decida esta questão para liberar a aprovação definitiva.</p>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <button type="button" onClick={() => handleRegenerateQuestion(q.number, 'acervo')} disabled={regeneratingQuestion !== null} className="min-h-10 rounded border border-border bg-surface px-3 py-2 text-left text-xs font-medium text-content-primary transition-colors hover:bg-surface-subtle disabled:opacity-60">
+                    {regeneratingQuestion === q.number ? 'Buscando no banco…' : 'Buscar no Banco'}
+                  </button>
+                  <button type="button" onClick={() => handleRegenerateQuestion(q.number, 'ia')} disabled={regeneratingQuestion !== null} className="min-h-10 rounded bg-harmonia-green px-3 py-2 text-left text-xs font-semibold text-white transition-colors hover:bg-harmonia-green/90 disabled:opacity-60">
+                    {regeneratingQuestion === q.number ? 'Gerando…' : 'Gerar nova com IA ✨'}
+                  </button>
+                </div>
                 <div className="flex flex-wrap gap-2">
                   {q.review?.adequacy === 'adequada' ? (
                     <button onClick={() => handleReviewNote(q.number, { adequacy: null })} disabled={savingReview === q.number} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary disabled:opacity-60">Cancelar aceitação da questão</button>
                   ) : (
                     <>
                       <button onClick={() => handleAcceptQuestion(q.number)} disabled={savingReview === q.number} className="rounded bg-harmonia-green px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">{savingReview === q.number ? 'Salvando…' : (diagnosticsByQuestion.get(q.number) ?? []).some((item) => item.severity === 'revisao_humana' && item.blocksApproval) ? 'Confirmar revisão e aceitar questão' : 'Aceitar questão'}</button>
-                      {q.source !== 'enem_bank' && <button onClick={() => handleRegenerateQuestion(q.number)} disabled={regeneratingQuestion === q.number} className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60">{regeneratingQuestion === q.number ? 'Gerando…' : 'Recusar e gerar nova'}</button>}
                       {!q.image && <button onClick={() => handleRequestImage(q.number)} disabled={requestingImage === q.number} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary disabled:opacity-60">{requestingImage === q.number ? 'Gerando imagem…' : 'Gerar imagem'}</button>}
                       <button onClick={() => handleAnalyzeIllustrations(q.number)} disabled={analyzingIllustrations === q.number} className="rounded border border-border bg-surface px-3 py-1.5 text-xs font-medium text-content-primary disabled:opacity-60">{analyzingIllustrations === q.number ? 'Analisando recursos visuais…' : 'Ver ilustrações recomendadas'}</button>
                     </>
@@ -876,10 +887,16 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
       {hasFixedApprovalAction && (
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 px-4 py-3 shadow-[0_-8px_24px_rgba(0,0,0,0.12)] backdrop-blur">
           <div className="mx-auto flex max-w-6xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <p className={`text-sm ${pendingReviewItems.length ? 'text-amber-800' : 'text-harmonia-green'}`}>
-              {pendingReviewItems.length
-                ? `${pendingReviewItems.length} pendência(s) de aprovação humana.`
-                : 'Todas as questões e imagens necessárias foram aprovadas.'}
+            <p className={`text-sm ${jevPendingCount || pendingReviewItems.length ? 'text-amber-800' : 'text-harmonia-green'}`}>
+              {usesWholeExamEngine
+                ? pendingReviewItems.length
+                  ? `${pendingReviewItems.length} pendência(s) de revisão humana.`
+                  : 'Confira o conteúdo e as imagens; as conferências determinísticas estão concluídas.'
+                : jevPendingCount
+                ? 'A conferência automática será retomada ao finalizar.'
+                : pendingReviewItems.length
+                  ? `${pendingReviewItems.length} pendência(s) de aprovação humana.`
+                  : 'Todas as questões e imagens foram revisadas.'}
             </p>
             <button
               onClick={() => handleTransition(exam.status === 'em_revisao' ? 'aprovar_prova' : 'aprovar')}
@@ -890,6 +907,13 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
             </button>
           </div>
         </div>
+      )}
+      {addingQuestion && (
+        <AddQuestionModal
+          examId={examId}
+          onClose={() => setAddingQuestion(false)}
+          onAdded={handleQuestionAdded}
+        />
       )}
     </div>
   )

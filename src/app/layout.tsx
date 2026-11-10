@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { THEME_PREFERENCE_KEY } from '@/lib/theme'
 import { Providers } from './providers'
 import './globals.css'
+import 'katex/dist/katex.min.css'
 
 export const metadata: Metadata = {
   title: 'Prova-TRI — Colégio Harmonia',

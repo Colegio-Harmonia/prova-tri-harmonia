@@ -198,7 +198,7 @@ async function fetchAllQuestionsForYear(sql: postgres.Sql, year: number): Promis
             correct_alternative = EXCLUDED.correct_alternative,
             alternatives_introduction = EXCLUDED.alternatives_introduction,
             alternatives = EXCLUDED.alternatives,
-            raw_json = EXCLUDED.raw_json
+            raw_json = CASE WHEN imported_questions.context IS NOT DISTINCT FROM EXCLUDED.context AND imported_questions.alternatives_introduction IS NOT DISTINCT FROM EXCLUDED.alternatives_introduction AND imported_questions.alternatives = EXCLUDED.alternatives AND imported_questions.correct_alternative = EXCLUDED.correct_alternative AND imported_questions.raw_json ? 'bnccClassification' THEN EXCLUDED.raw_json || jsonb_build_object('bnccClassification', imported_questions.raw_json->'bnccClassification') ELSE EXCLUDED.raw_json END
         `
         imported++
         if (imported % 20 === 0) {

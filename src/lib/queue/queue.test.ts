@@ -8,10 +8,15 @@ const baseInput = {
   academicYear: 2026,
   classLabel: '8º Ano B',
   subjects: ['História', 'Geografia', 'Português'],
-  config: { bimester: 2, questionCount: 14 },
+  config: { bimester: 2, questionCount: 14, curriculumPlanIds: { História: 11, Geografia: 12, Português: 13 } },
 }
 
 describe('buildGerarProvaJobPayloads', () => {
+  it.each(['acervo', 'ia'] as const)('preserva a origem %s escolhida pelo professor em todas as disciplinas', (questionSource) => {
+    const payloads = buildGerarProvaJobPayloads({ ...baseInput, config: { ...baseInput.config, questionSource } })
+    expect(payloads.every((payload) => payload.questionSource === questionSource)).toBe(true)
+  })
+
   it('expande N disciplinas em N payloads com a mesma config', () => {
     const payloads = buildGerarProvaJobPayloads(baseInput)
     expect(payloads).toHaveLength(3)
@@ -23,6 +28,7 @@ describe('buildGerarProvaJobPayloads', () => {
       expect(p.questionCount).toBe(14)
       expect(p.classLabel).toBe('8º Ano B')
     }
+    expect(payloads.map((p) => p.curriculumPlanId)).toEqual([11, 12, 13])
   })
 
   it('deduplica e ignora disciplinas vazias/espaço', () => {
@@ -37,12 +43,16 @@ describe('buildGerarProvaJobPayloads', () => {
     expect(() => buildGerarProvaJobPayloads({ ...baseInput, subjects: ['', '  '] })).toThrow(BatchValidationError)
   })
 
+  it('rejeita geração sem planejamento aprovado por disciplina', () => {
+    expect(() => buildGerarProvaJobPayloads({ ...baseInput, config: { bimester: 2, questionCount: 14 } })).toThrow(/planejamento aprovado/i)
+  })
+
   it('rejeita questões do banco ENEM com mais de uma disciplina', () => {
     expect(() =>
       buildGerarProvaJobPayloads({
         ...baseInput,
         subjects: ['Matemática', 'Física'],
-        config: { questionCount: 10, enemBankQuestionIds: [1, 2, 3] },
+        config: { questionCount: 10, enemBankQuestionIds: [1, 2, 3], curriculumPlanIds: { Matemática: 11, Física: 12 } },
       }),
     ).toThrow(BatchValidationError)
   })
@@ -51,7 +61,7 @@ describe('buildGerarProvaJobPayloads', () => {
     const payloads = buildGerarProvaJobPayloads({
       ...baseInput,
       subjects: ['Matemática'],
-      config: { questionCount: 10, enemBankQuestionIds: [1, 2, 3] },
+      config: { questionCount: 10, enemBankQuestionIds: [1, 2, 3], curriculumPlanIds: { Matemática: 11 } },
     })
     expect(payloads).toHaveLength(1)
     expect(payloads[0].enemBankQuestionIds).toEqual([1, 2, 3])
@@ -65,7 +75,7 @@ describe('buildGerarProvaJobPayloads', () => {
       buildGerarProvaJobPayloads({
         ...baseInput,
         subjects: ['Matemática'],
-        config: { questionCount: 30, enemBankQuestionIds: [1] },
+        config: { questionCount: 30, enemBankQuestionIds: [1], curriculumPlanIds: { Matemática: 11 } },
       }),
     ).toThrow(BatchValidationError)
   })
@@ -135,6 +145,9 @@ describe('gerarAtividadeJobPayloadSchema', () => {
 })
 
 describe('nextStatusAfterFailure', () => {
+  it('não repete uma prova inteira após recusa permanente de pagamento/configuração', () => {
+    expect(nextStatusAfterFailure(1, 2, false)).toBe('erro')
+  })
   it('volta pra pendente enquanto há tentativas sobrando', () => {
     expect(nextStatusAfterFailure(1, 2)).toBe('pendente')
   })

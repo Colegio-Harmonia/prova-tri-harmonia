@@ -7,6 +7,7 @@ import { getRuleEngine, registeredRuleEngineIds } from './rules'
 import { StageGateError } from './types'
 import type { AssembledQuestion, MetadataDraft, PipelineContext, QuestionPlan, StageRunners, StatementDraft, TruthObject, VisualPlan } from './types'
 import { TRUTH_STRATEGIES } from './types'
+import { alternativesCountForSegment } from '@/lib/gemini/promptBuilder'
 
 // Cada estágio é uma chamada isolada com um único contrato. As regras de cada
 // prompt são só as relevantes àquela função (evita diluição de atenção).
@@ -234,24 +235,18 @@ const STAGE4_RESPONSE_SCHEMA = {
 }
 
 function contextBlock(ctx: PipelineContext, maxCurriculumChars = 1800): string {
-  return `Disciplina: ${ctx.subject}. Série: ${ctx.gradeYear}º ano (${ctx.segment}). Tipo de questão: ${ctx.questionType}.
+  return `Disciplina: ${ctx.subject}. Série: ${ctx.gradeYear}º ano (${ctx.segment})${ctx.classLabel ? `, turma ${ctx.classLabel}` : ''}. Tipo de questão: ${ctx.questionType}.
+Calibragem: use somente pré-requisitos e linguagem esperados para esta etapa e ano; respeite a dificuldade planejada e não pressuponha conteúdo posterior.
 Trecho curricular disponível:
 ${(ctx.curriculumContent || '(vazio)').slice(0, maxCurriculumChars)}
 ${ctx.contentPlanInstruction ? `Instrução da matriz: ${ctx.contentPlanInstruction}` : ''}`
 }
 
-/** Reserva local para Ciências/Humanas quando o provedor falha no JSON.
- * A evidência continua sendo uma cópia do currículo; não há fato inventado. */
+/** Não fabrica gabarito copiando um tópico do planejamento quando o provedor falha. */
 export function fallbackAnchoredTruth(ctx: PipelineContext, strategy: 'fonte_ancorada' | 'interpretativa'): TruthObject | null {
-  const fragments = ctx.curriculumContent
-    .split(/(?<=[.!?])\s+|\n+/)
-    .map((part) => part.trim())
-    .filter((part) => part.length >= 12)
-  const evidence = fragments.sort((left, right) => right.length - left.length)[0]
-  if (!evidence) return null
-  return strategy === 'fonte_ancorada'
-    ? { strategy, values: {}, sourceEvidence: evidence, claim: evidence, derivation: 'A resposta é sustentada literalmente pelo trecho curricular fornecido.' }
-    : { strategy, values: {}, textEvidence: evidence, derivedAnswer: evidence, claim: evidence, derivation: 'A resposta é sustentada literalmente pelo trecho de apoio fornecido.' }
+  void ctx
+  void strategy
+  return null
 }
 
 /** Estágio 0 — classifica a estratégia de verdade e, se calculável, o domínio. */
@@ -407,7 +402,7 @@ Devolva {"itemBase": "...", "ruleInput": { ... }, "derivation": "contexto"}.`
 
 /** Estágio 2 — gera N−1 distratores. Não decide gabarito nem vê/gera enunciado. */
 async function generateDistractors(ctx: PipelineContext, plan: QuestionPlan, truth: TruthObject): Promise<string[]> {
-  const count = (ctx.segment === 'anos-iniciais' ? 4 : 5) - 1
+  const count = alternativesCountForSegment(ctx.segment as 'anos-iniciais' | 'anos-finais' | 'ensino-medio') - 1
   const answer = plan.truthStrategy === 'calculavel' && plan.domain
     ? (getCanonicalDomain(plan.domain)?.compute(truth.values).answer.choiceDisplay ?? truth.derivedAnswer ?? '')
     : (truth.derivedAnswer ?? truth.claim ?? '')
@@ -490,13 +485,13 @@ async function writeStatement(ctx: PipelineContext, plan: QuestionPlan, truth: T
 
   const prompt = `Você redige o ENUNCIADO de uma questão escolar. Você NÃO altera nenhum valor ou fato recebido.
 
-Disciplina: ${ctx.subject}. Série: ${ctx.gradeYear}º ano (${ctx.segment}). Tipo: ${ctx.questionType}.
+Disciplina: ${ctx.subject}. Série: ${ctx.gradeYear}º ano (${ctx.segment})${ctx.classLabel ? `, turma ${ctx.classLabel}` : ''}. Tipo: ${ctx.questionType}.
 Objeto de verdade (imutável): ${JSON.stringify({ values: truth.values, derivacao: truth.derivation, evidencia: truth.sourceEvidence ?? truth.textEvidence ?? truth.claim ?? null })}.
 Alternativas JÁ FIXAS (não mude o texto delas): ${alternatives.map((alternative) => `${alternative.letter}) ${alternative.text}`).join(' | ')}.
 Resposta canônica já definida (use para orientar a pergunta, mas não revele no enunciado): ${truth.derivedAnswer ?? truth.claim ?? ''}.
 Plano visual imutável: ${JSON.stringify(visualPlan)}.
 
-Contextualize pedagogicamente sem introduzir NENHUM número ou fato novo. Se faltar um dado, retorne o enunciado impossível de completar em vez de inventar (o gate rejeita números inventados). Se required:false, não faça referência a figura, imagem, gráfico, mapa, diagrama ou ilustração. Se required:true, o enunciado pode mencionar somente o recurso previsto, sem inventar seus dados. O nome supportText é interno ao sistema e NUNCA pode aparecer no enunciado. Se houver texto de apoio, escreva "Leia o texto a seguir" ou "Considere o trecho abaixo"; nunca escreva nomes de campos, payload ou JSON para o estudante.
+Contextualize pedagogicamente sem introduzir NENHUM número ou fato novo. Se faltar um dado, retorne o enunciado impossível de completar em vez de inventar (o gate rejeita números inventados). Não gere texto de apoio por padrão. Use supportText:null sempre que a habilidade puder ser avaliada sem interpretação de texto, tabela, gráfico ou conjunto de dados. Só inclua apoio quando a habilidade exigir que o aluno interprete esse material; forneça evidências/dados necessários, sem explicar o conceito, antecipar a conclusão ou entregar a resposta. A resposta não pode ser copiada/localizada no apoio sem executar a habilidade. Se required:false, não faça referência a figura, imagem, gráfico, mapa, diagrama ou ilustração. Se required:true, o enunciado pode mencionar somente o recurso previsto, sem inventar seus dados. O nome supportText é interno ao sistema e NUNCA pode aparecer no enunciado. Se houver texto de apoio, escreva "Leia o texto a seguir" ou "Considere o trecho abaixo"; nunca escreva nomes de campos, payload ou JSON para o estudante.
 Devolva {"statement": "...", "supportText": texto de apoio ou null}.`
   const result = await generateValidatedStructuredContent({
     context: `generation/stage3-${ctx.questionNumber}`,
@@ -551,7 +546,7 @@ Devolva bloomLevel, bnccCodes/bnccStatus/bnccSummary (nunca invente código BNCC
 async function audit(ctx: PipelineContext, assembled: AssembledQuestion): Promise<Array<{ severity: 'bloqueante' | 'alerta'; reason: string }>> {
   const prompt = `Você faz a AUDITORIA FINAL de uma questão escolar já construída. O fato/cálculo e o gabarito já foram garantidos por validação determinística; NÃO os recalcule. Foque apenas em ambiguidade de linguagem e alinhamento curricular real.
 
-Disciplina: ${ctx.subject}. Série: ${ctx.gradeYear}º ano (${ctx.segment}).
+Disciplina: ${ctx.subject}. Série: ${ctx.gradeYear}º ano (${ctx.segment})${ctx.classLabel ? `, turma ${ctx.classLabel}` : ''}.
 Enunciado: ${assembled.statement}
 ${assembled.supportText ? `Apoio: ${assembled.supportText}` : ''}
 Alternativas: ${(assembled.alternatives ?? []).map((alternative) => `${alternative.letter}) ${alternative.text}`).join(' | ') || '(questão descritiva)'}

@@ -1,3 +1,5 @@
+import { classifyMissingQuestionBncc } from '@/lib/exams/questionBnccClassification'
+import { classifyImportedQuestionBloom } from '@/lib/exams/importedQuestionBloom'
 import { NextRequest, NextResponse } from 'next/server'
 import { eq } from 'drizzle-orm'
 import { auth } from '@/auth/auth'
@@ -8,7 +10,7 @@ import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
 import { planIdFromExamPayload } from '@/lib/curriculum/planCurriculum'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { qualityApprovalBlocks } from '@/lib/exams/questionQualityTest'
-import { recomputeQualityReport } from '@/lib/exams/qualityReport'
+import { recomputeQualityReport, qualityReportNeedsRecompute } from '@/lib/exams/qualityReport'
 
 // Mesma janela de edição das demais ações de revisão.
 const EDITABLE_STATUSES = ['rascunho', 'atribuido', 'em_andamento', 'revisao_concluida', 'em_revisao']
@@ -30,14 +32,32 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
   }
 
   try {
-    const curriculum = await getCurriculumForExam({
+    const previous = exam.generationPayload as ExamGenerationResult
+    const curriculum = previous.questions.every((q) => q.source === 'enem_bank') ? {
+      segment: exam.segment, gradeYear: exam.gradeYear, subject: exam.subject, tabName: 'Banco ENEM', units: [], unmappedWarnings: [],
+    } : await getCurriculumForExam({
       segment: exam.segment,
       gradeYear: exam.gradeYear,
+      academicYear: exam.academicYear,
       subject: exam.subject,
       bimester: exam.bimester ?? undefined,
       curriculumPlanId: planIdFromExamPayload(exam.generationPayload),
     })
-    const payload = exam.generationPayload as ExamGenerationResult
+    const payload = { ...previous, questions: await classifyMissingQuestionBncc(await classifyImportedQuestionBloom(previous.questions, exam), exam) }
+    if (payload.metadata.generationEngine === 'whole-exam-v1') {
+      const checked = qualityReportNeedsRecompute(payload)
+        ? (await recomputeQualityReport({ payload, curriculum, phase: 'Conferência dos originais do ENEM' })).payload
+        : payload
+      await db.update(generatedExams).set({ generationPayload: checked }).where(eq(generatedExams.id, examId))
+      const localBlocks = qualityApprovalBlocks(checked, curriculum)
+      return NextResponse.json({
+        ok: true,
+        mode: 'deterministic_whole_exam_check',
+        message: 'A prova inteira usa conferências estruturais e determinísticas; o Jev classifica dificuldade e Bloom das questões importadas.',
+        qualityBlocks: localBlocks,
+        qualityTest: null,
+      })
+    }
     const recomputed = await recomputeQualityReport({
       payload,
       curriculum,

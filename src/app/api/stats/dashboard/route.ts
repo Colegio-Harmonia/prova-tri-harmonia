@@ -1,3 +1,4 @@
+import { isQuestionImageApproved } from '@/lib/exams/questionOrigin'
 import { NextResponse } from 'next/server'
 import { auth } from '@/auth/auth'
 import { db } from '@/db/client'
@@ -39,7 +40,7 @@ export async function GET() {
       if (q.bnccStatus === 'mapeado') bnccMapped++
       if (q.bloomLevel) bloomCounts[q.bloomLevel] = (bloomCounts[q.bloomLevel] ?? 0) + 1
       if (q.needsImage) questionsNeedingImage++
-      if (q.image?.approved) imagesApproved++
+      if (isQuestionImageApproved(q)) imagesApproved++
     }
   }
 

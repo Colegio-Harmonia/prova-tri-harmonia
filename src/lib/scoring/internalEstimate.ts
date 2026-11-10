@@ -15,6 +15,8 @@ export type InternalEstimateQuestion = {
   number: number
   source?: string
   difficulty?: 'facil' | 'media' | 'adequada' | 'dificil' | null
+  /** Quando a prova já definiu percentuais por questão, use esse máximo direto. */
+  weight?: number | null
 }
 
 const WEIGHT_BY_DIFFICULTY = {
@@ -48,7 +50,10 @@ export function buildInternalEstimate(
     const question = byNumber.get(answer.questionNumber)
     if (!question) continue
 
-    const weight = WEIGHT_BY_DIFFICULTY[question.difficulty ?? 'media']
+    const explicitWeight = Number(question.weight)
+    const weight = Number.isFinite(explicitWeight) && explicitWeight > 0
+      ? explicitWeight
+      : WEIGHT_BY_DIFFICULTY[question.difficulty ?? 'media']
     totalWeight += weight
     itemsUsed++
 

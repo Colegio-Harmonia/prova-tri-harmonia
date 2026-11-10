@@ -25,7 +25,9 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ examId: 
   if ('error' in access) return access.error
 
   const payload = access.exam.generationPayload as ExamGenerationResult
-  const imageBelongsToExam = payload.questions.some((question) => question.image?.driveFileId === fileId)
+  const imageBelongsToExam = payload.questions.some((question) =>
+    question.image?.driveFileId === fileId
+    || (question.alternatives ?? []).some((alternative) => alternative.image?.driveFileId === fileId))
   if (!imageBelongsToExam) return NextResponse.json({ error: 'Imagem não pertence a esta prova.' }, { status: 404 })
 
   try {

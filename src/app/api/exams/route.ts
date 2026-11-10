@@ -1,3 +1,4 @@
+import { isQuestionImageApproved } from '@/lib/exams/questionOrigin'
 import { NextRequest, NextResponse } from 'next/server'
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import { db } from '@/db/client'
@@ -95,7 +96,7 @@ export async function GET(req: NextRequest) {
   const exams = rows.map(({ generationPayload, ...row }) => {
     const payload = generationPayload as ExamGenerationResult
     const withImage = payload?.questions?.filter((q) => q.image) ?? []
-    const approved = withImage.filter((q) => q.image?.approved).length
+    const approved = withImage.filter((q) => isQuestionImageApproved(q)).length
 
     return {
       ...row,

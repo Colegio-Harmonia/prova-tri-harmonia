@@ -3,7 +3,7 @@ import { join } from 'path'
 import QRCode from 'qrcode'
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
 import type { ExamQuestion } from '@/lib/gemini/examSchema'
-import { planSheetPages } from '@/lib/scan-sheets/sheetLayout'
+import { objectiveSheetGeometry, planSheetPages } from '@/lib/scan-sheets/sheetLayout'
 
 const MM = 72 / 25.4
 const PAGE_WIDTH = 210 * MM
@@ -18,8 +18,6 @@ const QR_SIZE = 42 * MM
 // impede que uma alteração visual quebre a leitura óptica silenciosamente.
 const OBJECTIVE_LEFT_X = 9.3 * MM
 const OBJECTIVE_RIGHT_X = 108 * MM
-const OBJECTIVE_FIRST_ROW_TOP = 132.1 * MM
-const OBJECTIVE_ROW_GAP = 13 * MM
 
 const colors = {
   green: rgb(0, 0.525, 0.286),
@@ -31,6 +29,7 @@ const colors = {
 }
 
 export type SheetPdfInput = {
+  examId: number
   studentName: string
   subject: string
   gradeYear: number
@@ -74,8 +73,9 @@ async function drawHeader(
   page: PDFPage,
   fonts: { regular: PDFFont; bold: PDFFont },
   logo: Uint8Array,
-  params: { title: string; pageNumber: number; pageCount: number; qrToken: string; studentName: string; layoutVersion: string },
+  params: { title: string; pageNumber: number; pageCount: number; qrToken: string; input: SheetPdfInput },
 ) {
+  const { input } = params
   drawFiducials(page)
   page.drawRectangle({ x: MARGIN, y: PAGE_HEIGHT - 43 * MM, width: 116 * MM, height: 18 * MM, color: colors.green })
   page.drawRectangle({ x: MARGIN + 5 * MM, y: PAGE_HEIGHT - 40.5 * MM, width: 13 * MM, height: 13 * MM, color: rgb(1, 1, 1) })
@@ -83,15 +83,40 @@ async function drawHeader(
   page.drawImage(logoImage, { x: MARGIN + 6.5 * MM, y: PAGE_HEIGHT - 39 * MM, width: 10 * MM, height: 10 * MM })
   drawTopText(page, 'COLÉGIO HARMONIA', MARGIN + 22 * MM, 29 * MM, 14, fonts.bold, rgb(1, 1, 1))
   drawTopText(page, params.title, MARGIN + 22 * MM, 35.5 * MM, 8.5, fonts.regular, rgb(1, 1, 1))
+  drawTopText(page, `ID DA PROVA: #${input.examId}`, MARGIN, 50 * MM, 10, fonts.bold)
 
   const image = await pdf.embedPng(await qrPng(params.qrToken))
   const qrX = PAGE_WIDTH - MARGIN - QR_SIZE
   page.drawImage(image, { x: qrX, y: PAGE_HEIGHT - 65 * MM, width: QR_SIZE, height: QR_SIZE })
   const qrCenter = qrX + QR_SIZE / 2
   drawCenteredTopText(page, 'IDENTIFICAÇÃO DA FOLHA', qrCenter, 67 * MM, 7.3, fonts.bold)
-  drawCenteredTopText(page, `Página ${params.pageNumber}/${params.pageCount} - Layout ${params.layoutVersion}`, qrCenter, 71.2 * MM, 6.7, fonts.regular, colors.muted)
+  drawCenteredTopText(page, `Página ${params.pageNumber}/${params.pageCount} - Layout ${input.layoutVersion}`, qrCenter, 71.2 * MM, 6.7, fonts.regular, colors.muted)
   drawCenteredTopText(page, 'Não cubra o QR no scan', qrCenter, 75.3 * MM, 6.7, fonts.regular, colors.muted)
-  drawTopText(page, `Aluno: ${params.studentName}`, MARGIN, 79.5 * MM, 7.5, fonts.regular, colors.muted)
+  if (input.layoutVersion === 'PTR3') drawCompactInfoBox(page, fonts, input)
+  else drawTopText(page, `Aluno: ${input.studentName}`, MARGIN, 79.5 * MM, 7.5, fonts.regular, colors.muted)
+}
+
+function drawFittedText(page: PDFPage, text: string, x: number, top: number, maxWidth: number, size: number, font: PDFFont) {
+  const fittedSize = Math.min(size, size * maxWidth / Math.max(font.widthOfTextAtSize(text, size), 1))
+  drawTopText(page, text, x, top, fittedSize, font)
+}
+
+function drawCompactInfoBox(page: PDFPage, fonts: { regular: PDFFont; bold: PDFFont }, input: SheetPdfInput) {
+  // Usa o espaço sob a marca, sem entrar na área do QR nem em sua margem.
+  const width = 116 * MM
+  page.drawRectangle({ x: MARGIN, y: yFromTop(56 * MM, 25 * MM), width, height: 25 * MM, color: colors.gray, borderColor: colors.border, borderWidth: 0.6 })
+  const left = MARGIN + 4 * MM
+  drawTopText(page, 'ALUNO', left, 59 * MM, 7, fonts.bold, colors.muted)
+  drawFittedText(page, input.studentName, left, 63 * MM, 108 * MM, 9.5, fonts.regular)
+  const fields = [
+    { label: 'PROVA', value: input.subject, x: left, width: 51 * MM },
+    { label: 'TURMA', value: `${input.gradeYear}ª série`, x: 71 * MM, width: 20 * MM },
+    { label: 'ANO LETIVO', value: `${input.academicYear}${input.bimester ? ` · ${input.bimester}º bim.` : ''}`, x: 95 * MM, width: 29 * MM },
+  ]
+  for (const field of fields) {
+    drawTopText(page, field.label, field.x, 71 * MM, 6.5, fonts.bold, colors.muted)
+    drawFittedText(page, field.value, field.x, 75 * MM, field.width, 8.5, fonts.regular)
+  }
 }
 
 function drawInfoBox(page: PDFPage, fonts: { regular: PDFFont; bold: PDFFont }, input: SheetPdfInput) {
@@ -121,25 +146,33 @@ function drawBubble(page: PDFPage, fonts: { regular: PDFFont; bold: PDFFont }, x
   drawCenteredTopText(page, letter, x, top - 2.7, 8, fonts.bold)
 }
 
-function drawObjectiveRow(page: PDFPage, fonts: { regular: PDFFont; bold: PDFFont }, x: number, top: number, question: ExamQuestion) {
+function drawObjectiveRow(page: PDFPage, fonts: { regular: PDFFont; bold: PDFFont }, x: number, top: number, rowHeight: number, question: ExamQuestion) {
   const rowWidth = 82 * MM
-  const rowHeight = 11 * MM
   page.drawRectangle({ x, y: yFromTop(top, rowHeight), width: rowWidth, height: rowHeight, color: rgb(1, 1, 1), borderColor: colors.border, borderWidth: 0.7 })
-  drawCenteredTopText(page, String(question.number), x + 8 * MM, top + 3.7 * MM, 10, fonts.bold)
-  drawTopText(page, 'MARQUE UMA', x + 14 * MM, top + 3.7 * MM, 7.5, fonts.regular, colors.muted)
+  const textTop = top + (rowHeight - 11 * MM) / 2 + 3.7 * MM
+  drawCenteredTopText(page, String(question.number), x + 8 * MM, textTop, 10, fonts.bold)
+  drawTopText(page, 'MARQUE UMA', x + 14 * MM, textTop, 7.5, fonts.regular, colors.muted)
   const letters = question.alternatives!.map((alternative) => alternative.letter)
   letters.forEach((letter, index) => drawBubble(page, fonts, x + 37 * MM + index * 8.5 * MM, top + rowHeight / 2, letter))
 }
 
 function drawObjectivePage(page: PDFPage, fonts: { regular: PDFFont; bold: PDFFont }, input: SheetPdfInput, questions: ExamQuestion[]) {
-  drawInfoBox(page, fonts, input)
-  drawTopText(page, 'Respostas objetivas', MARGIN, 125 * MM, 10.5, fonts.bold)
-  drawTopText(page, 'Preencha completamente apenas uma bolha por questão, com caneta escura.', MARGIN, 130 * MM, 8, fonts.regular, colors.muted)
-  questions.slice(0, 8).forEach((question, index) => drawObjectiveRow(page, fonts, OBJECTIVE_LEFT_X, OBJECTIVE_FIRST_ROW_TOP + index * OBJECTIVE_ROW_GAP, question))
-  questions.slice(8).forEach((question, index) => drawObjectiveRow(page, fonts, OBJECTIVE_RIGHT_X, OBJECTIVE_FIRST_ROW_TOP + index * OBJECTIVE_ROW_GAP, question))
-  page.drawRectangle({ x: MARGIN, y: 43 * MM, width: PAGE_WIDTH - 2 * MARGIN, height: 14 * MM, color: colors.paleGreen, borderColor: rgb(0.65, 0.84, 0.72), borderWidth: 0.6 })
-  page.drawText('CONFERÊNCIA', { x: MARGIN + 4 * MM, y: 51 * MM, size: 8, font: fonts.bold, color: colors.text })
-  page.drawText('Não dobre, não cubra o QR e não escreva sobre os marcadores pretos dos cantos.', { x: MARGIN + 4 * MM, y: 47 * MM, size: 7.3, font: fonts.regular, color: colors.text })
+  const geometry = objectiveSheetGeometry(input.layoutVersion)
+  if (input.layoutVersion !== 'PTR3') drawInfoBox(page, fonts, input)
+  // Na reimpressão PTR1, apenas os textos sobem; as bolhas mantêm a posição.
+  const headingTop = input.layoutVersion === 'PTR1' ? 122 : input.layoutVersion === 'PTR2' ? 125 : 86
+  drawTopText(page, 'Respostas objetivas', MARGIN, headingTop * MM, 10.5, fonts.bold)
+  drawTopText(page, 'Preencha completamente apenas uma bolha por questão, com caneta escura.', MARGIN, (headingTop + 4.5) * MM, 8, fonts.regular, colors.muted)
+  questions.forEach((question, index) => {
+    const row = index < 8 ? index : index - 8
+    drawObjectiveRow(page, fonts, index < 8 ? OBJECTIVE_LEFT_X : OBJECTIVE_RIGHT_X,
+      (geometry.firstRowTop + row * geometry.rowGap) * MM, geometry.rowHeight * MM, question)
+  })
+  const rows = Math.min(8, questions.length)
+  const conferenceTop = input.layoutVersion === 'PTR1' ? 240 : geometry.firstRowTop + (rows - 1) * geometry.rowGap + geometry.rowHeight + 6
+  page.drawRectangle({ x: MARGIN, y: yFromTop(conferenceTop * MM, 14 * MM), width: PAGE_WIDTH - 2 * MARGIN, height: 14 * MM, color: colors.paleGreen, borderColor: rgb(0.65, 0.84, 0.72), borderWidth: 0.6 })
+  drawTopText(page, 'CONFERÊNCIA', MARGIN + 4 * MM, (conferenceTop + 3) * MM, 8, fonts.bold)
+  drawTopText(page, 'Não dobre, não cubra o QR e não escreva sobre os marcadores pretos dos cantos.', MARGIN + 4 * MM, (conferenceTop + 7) * MM, 7.3, fonts.regular)
 }
 
 function drawDiscursivePage(page: PDFPage, fonts: { regular: PDFFont; bold: PDFFont }, questions: ExamQuestion[]) {
@@ -160,7 +193,8 @@ function drawDiscursivePage(page: PDFPage, fonts: { regular: PDFFont; bold: PDFF
 }
 
 export async function generateSheetPdf(input: SheetPdfInput): Promise<Uint8Array> {
-  if (input.layoutVersion !== 'PTR1') throw new Error(`Versão de layout não suportada: ${input.layoutVersion}`)
+  objectiveSheetGeometry(input.layoutVersion)
+  if (!Number.isSafeInteger(input.examId) || input.examId < 1) throw new Error('ID da prova inválido para impressão.')
   const pages = planSheetPages(input.questions)
   if (input.qrTokens.length !== pages.length) throw new Error('A quantidade de QR não corresponde às páginas da folha.')
 
@@ -182,8 +216,7 @@ export async function generateSheetPdf(input: SheetPdfInput): Promise<Uint8Array
       pageNumber: index + 1,
       pageCount: pages.length,
       qrToken: input.qrTokens[index],
-      studentName: input.studentName,
-      layoutVersion: input.layoutVersion,
+      input,
     })
     if (plannedPage.kind === 'objective') drawObjectivePage(page, { regular, bold }, input, plannedPage.questions)
     else drawDiscursivePage(page, { regular, bold }, plannedPage.questions)

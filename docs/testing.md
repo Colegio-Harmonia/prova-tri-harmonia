@@ -1,5 +1,28 @@
 # Estratégia e Registro de Testes
 
+## Recuperação do versionamento — 10/11/2026
+
+- Cópia de trabalho isolada; nenhum teste de escrita usou o banco do site.
+- `npm ci` a partir do lockfile; lint sem erros (2 avisos existentes de `<img>`),
+  TypeScript, build e suíte de regressão aprovados.
+- Vitest com cobertura: 144 arquivos / 950 testes aprovados. Após separar o
+  parser matemático da dependência de imagem/Buffer, 45 testes de matemática,
+  apresentação e exportação também passaram.
+- Orçamento existente preservado, sem elevar limites: `/gerar` 119,7/120 KiB,
+  revisão 139,3/140 KiB e `/status` 124,5/130 KiB gzip; demais rotas aprovadas.
+- Backup PostgreSQL restaurado em container isolado, sem rede externa:
+  46 tabelas públicas e 684 provas no instante do backup. Todas as colunas
+  declaradas pelo código estavam presentes na cópia restaurada.
+- Baseline criou 46 tabelas em banco novo isolado e recusou uma segunda
+  execução sobre o banco já utilizado. `db:migrate` recusou a cadeia incompleta.
+- Publicação recusada em branch diferente de `main`, com arquivo sem registro,
+  com commit divergente do remoto e sem configuração local; nenhum serviço
+  de produção foi publicado ou reiniciado por esses testes.
+- Snapshot original preservado antes dos ajustes (`abd6093`). A consolidação
+  será incorporada por merge commit para preservar a ancestralidade ENEM.
+- Fluxo autenticado e publicação de uma nova imagem não fazem parte desta
+  recuperação do histórico; as imagens em execução estão no backup.
+
 ## Estratégia alvo
 
 | Nível | Objetivo | Ferramenta/abordagem | Momento |
@@ -212,3 +235,66 @@ for promovida, conforme `docs/git-workflow.md` e `docs/deployment.md`.
 - `npm run typecheck`: aprovado.
 - Cobertura unitária adicionada para seleção/soma da matriz e análise de recurso visual em `src/lib/exams/contentPlan.test.ts`.
 - Validação manual pendente de ambiente autenticado: gerar uma prova do 9º ano com capítulo de geometria marcado como obrigatório e confirmar revisão, exportação e leitura do cartão-resposta.
+
+
+## 23/10/2026 — JEV: Bloom e hierarquia INEP das questões geradas
+
+Escopo final: Bloom para IA e acervo, preservando classificações existentes
+das questões do banco ENEM. Para IA/acervo do Médio, catálogo ENEM em área → competência →
+habilidade, catálogo SAEB por ano/disciplina, pendências explícitas sem novo
+veto de aprovação, e preservação da classificação na substituição.
+
+79 testes passaram em nove arquivos: Bloom, INEP, integração das classificações,
+prova inteira, acervo, BNCC, revisão visual, qualidade e integridade ENEM.
+Cobrem seleção fora do ramo, código inventado, ausência de correspondência,
+indisponibilidade do provedor/banco, matriz própria do 2º ano, Ciências Humanas
+e Natureza, anos aproximados e disciplinas sem cobertura. TypeScript e lint
+focados sem erros; `git diff --check` passou. Build concluído com avisos
+preexistentes de Edge Runtime (jose/next-auth) e imagens nas telas de turmas.
+Provedor real e smoke test autenticado ainda não executados; não houve deploy
+nem escrita de questões ou classificações no banco.
+
+
+Esclarecimento do usuário em 23/10: “trazida do acervo”; as do ENEM já vêm
+classificadas. Novo recorte verificado com 45 testes em seis arquivos, cobrindo
+preservação de Bloom e INEP do ENEM, exclusão do ENEM das requisições em lotes
+mistos e nenhuma consulta ao catálogo/provedor em lotes só ENEM. TypeScript,
+lint focados e `git diff --check` passaram. Exportação Docs não foi alterada.
+
+
+## 23/10/2026 — Banca na revisão e crédito de originais Techy/SAE
+
+37 testes passaram em questionOrigin, provaDocBuilder e gabaritoDocBuilder.
+Cobrem banca como texto/objeto, banca sem ano, prioridade sobre o crédito de
+importação, ausência de banca, normalização de caixa/espaços, preservação do
+ENEM e distinção entre acervo ARCO e plataforma SAE. Verificado o texto das
+operações que alimentam o Google Docs. TypeScript, lint focado e diff check
+sem erros. Sem build novo, deploy ou regeneração real dos documentos.
+
+
+## Prova 494: scores decimais JEV e tags INEP — 23/10/2026
+
+Diagnóstico em produção: 142 dos 144 scores Bloom retornados pelo JEV eram
+decimais. O filtro Number.isInteger descartava essas respostas válidas,
+causando 11 pendências e fazendo um inteiro menor vencer na Q5 (criar).
+Três questões INEP ficaram sem habilidade porque era oferecida no_match.
+
+Correção: aceitar scores finitos 0–9; escolher a opção oficial mais aderente
+sem abstenção; restringir o contexto a disciplina/ano/etapa e tarefa; repetir
+classificações incompletas até três vezes e deixar a fila repetir o erro em
+vez de concluir a geração incompleta. ENEM do banco mantém suas classificações.
+Tags mostram só ENEM: H21 ou SAEB: código; hierarquia completa segue no payload.
+
+As 12 questões da prova 494 foram reclassificadas pelo JEV real, com atualização
+transacional somente das classificações, auditoria administrativa e comparação
+do payload anterior. Texto, respostas e status preservados. Q5 agora: aplicar.
+
+Publicação isolada a partir do container anterior em /tmp/prova494-release,
+com commits locais 91ef3e9 (snapshot) e 83c0de7 (correção), evitando alterações
+não relacionadas da árvore compartilhada. Imagem prova-tri:fix-494 também
+etiquetada prova-tri:local; web/worker recriados, web saudável. Rollback:
+prova-tri:before-494-fix. Sem migrations.
+
+62 testes passaram; TypeScript, lint e build Docker concluídos. Chrome
+autenticado na URL pública confirmou 12 tags INEP curtas, 12 Bloom classificados,
+zero pendências e zero Sem correspondência. API autenticada: 12/12 completas.

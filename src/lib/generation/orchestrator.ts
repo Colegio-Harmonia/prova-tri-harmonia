@@ -4,6 +4,7 @@ import { StructuredGenerationError } from '@/lib/gemini/structuredRepair'
 import { AiBudgetExceededError } from '@/lib/ai/operationBudget'
 import { recordGateRejection, recordStageAttempt, recordStageFailure } from './metrics'
 import { QuestionPipelineError, StageGateError } from './types'
+import { alternativesCountForSegment } from '@/lib/gemini/promptBuilder'
 import type { AssembledQuestion, PipelineContext, PipelineOptions, StageId, StageRunners } from './types'
 
 const DEFAULT_MAX_ATTEMPTS = 2
@@ -85,7 +86,7 @@ export async function runStagedQuestionPipeline(
     gateAlternativePresentation(correctAnswerText)
     const distractors = await runStage('stage2', ctx, async (attempt) => {
       const candidate = await runners.generateDistractors(ctx, plan, truth, attempt)
-      const expectedDistractorCount = (ctx.segment === 'anos-iniciais' ? 4 : 5) - 1
+      const expectedDistractorCount = alternativesCountForSegment(ctx.segment as 'anos-iniciais' | 'anos-finais' | 'ensino-medio') - 1
       if (candidate.length !== expectedDistractorCount) {
         throw new StageGateError('stage2', 'distractor_count', `A questão exige exatamente ${expectedDistractorCount} distratores, mas recebeu ${candidate.length}.`)
       }

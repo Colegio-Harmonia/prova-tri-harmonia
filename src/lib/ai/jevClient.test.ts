@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { evaluateWithJev, parseJevAnswers, type JevDecisionResult, type JevQuestions } from './jevClient'
+import { describeJevFailure, evaluateWithJev, JevUnavailableError, parseJevAnswers, validateJevQuestionContract, type JevDecisionResult, type JevQuestions } from './jevClient'
 import type { JevDecisionStore, StoredJevDecision } from './jevDecisionStore'
 import { AI_BUDGET_EXHAUSTED_CODE, AiBudgetExceededError } from './operationBudget'
 
@@ -70,6 +70,45 @@ describe('evaluateWithJev', () => {
     expect(result).toMatchObject({ source: 'provider', answers: { action: { choice: 'revisar' } } })
   })
 
+  it('envia critérios score como rubrica ordenada e rejeita objetos antes da chamada', async () => {
+    const scoreQuestions: JevQuestions = {
+      adequacao: { type: 'score', instructions: 'Avalie de 0 a 9.', criteria: Array.from({ length: 10 }, (_, index) => `Nível ${index}`) },
+    }
+    expect(validateJevQuestionContract(scoreQuestions)).toBeNull()
+
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body)).questions.adequacao.criteria).toEqual(Array.from({ length: 10 }, (_, index) => `Nível ${index}`))
+      return new Response(JSON.stringify({ answers: { adequacao: { type: 'score', score: 7 } } }))
+    })
+    const validResult = await evaluateWithJev({
+      operation: 'jev/score-contract', questionVersion: 'v1', state: {}, questions: scoreQuestions,
+      route: () => ({ route: 'automatic', outcome: 'scored' }), fallback,
+      apiKey: 'key', store: null, telemetry: null, reserveOperation: null, fetchImpl,
+    })
+    expect(validResult).toMatchObject({ source: 'provider', answers: { adequacao: { score: 7 } } })
+
+    const invalidQuestions = {
+      adequacao: { type: 'score', instructions: 'Avalie de 0 a 10.', criteria: { scale: '0-10' } },
+    } as unknown as JevQuestions
+    expect(validateJevQuestionContract(invalidQuestions)).toBe('invalid_score_criteria:adequacao')
+    const invalidFetch = vi.fn()
+    const invalidStore = fakeStore()
+    const invalidResult = await evaluateWithJev({
+      operation: 'jev/invalid-score-contract', questionVersion: 'v1', state: {}, questions: invalidQuestions,
+      route: () => ({ route: 'review', outcome: 'invalid' }), fallback,
+      apiKey: 'key', store: invalidStore, telemetry: null, reserveOperation: null, fetchImpl: invalidFetch,
+    })
+    expect(invalidResult).toMatchObject({ source: 'fallback', failure: { category: 'invalid_request', providerErrorCode: 'invalid_score_criteria' } })
+    expect(invalidFetch).not.toHaveBeenCalled()
+    expect(invalidStore.rows.at(-1)?.context).toMatchObject({ invalidQuestionId: 'adequacao' })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+
+    const overLimitQuestions: JevQuestions = {
+      adequacao: { type: 'score', instructions: 'Avalie.', criteria: Array.from({ length: 11 }, (_, index) => `Nível ${index}`) },
+    }
+    expect(validateJevQuestionContract(overLimitQuestions)).toBe('invalid_score_criteria:adequacao')
+  })
+
   it('reutiliza cache sem nova chamada ao provedor', async () => {
     const store = fakeStore()
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ answers: { aligned: { type: 'noul', noul: 0.91 } } })))
@@ -90,6 +129,58 @@ describe('evaluateWithJev', () => {
     const invalid = await evaluateWithJev({ operation: 'jev/invalid', questionVersion: 'v1', state: {}, questions, route, fallback, apiKey: 'key', store, telemetry: null, reserveOperation: null, fetchImpl: vi.fn(async () => new Response(JSON.stringify({ answers: {} }))) })
     expect(invalid.source).toBe('fallback')
     expect(store.rows.at(-1)).toMatchObject({ status: 'failed', errorCode: 'invalid_provider_response' })
+  })
+
+  it('identifica rejeição de pagamento HTTP 402 sem tratá-la como falha transitória', async () => {
+    const result = await evaluateWithJev({
+      operation: 'jev/http-402', questionVersion: 'v1', state: {}, questions, route, fallback,
+      apiKey: 'key', store: fakeStore(), telemetry: null, reserveOperation: null,
+      fetchImpl: vi.fn(async () => new Response('{}', { status: 402 })),
+    })
+    expect(result.failure).toMatchObject({ category: 'provider_payment_required', httpStatus: 402 })
+    expect(new JevUnavailableError(result.failure!, 'falha').retryable).toBe(false)
+  })
+
+  it('preserva status, request id e limites em rejeições HTTP sem guardar o corpo bruto', async () => {
+    const store = fakeStore()
+    const result = await evaluateWithJev({
+      operation: 'jev/http-422', questionVersion: 'v1', state: { text: 'não persistir' }, questions, route, fallback,
+      apiKey: 'key', store, telemetry: null, reserveOperation: null,
+      fetchImpl: vi.fn(async () => new Response(JSON.stringify({
+        error: { message: 'texto que não deve ser armazenado', code: 'invalid_question' },
+        detail: [{ loc: ['body', 'questions', 'bncc_alignment', 'criteria'], type: 'list_type', msg: 'erro com conteúdo sensível', input: 'enunciado que não deve ser armazenado' }],
+      }), {
+        status: 422,
+        headers: { 'x-typesafe-request-id': 'req_safe_123', 'x-ratelimit-limit': '1200', 'x-ratelimit-remaining': '1199' },
+      })),
+    })
+
+    expect(result.failure).toMatchObject({
+      category: 'provider_request_failed', httpStatus: 422, requestId: 'req_safe_123', providerErrorCode: 'invalid_question',
+      providerValidationIssues: ['body.questions.bncc_alignment.criteria:list_type'],
+      rateLimit: { limit: '1200', remaining: '1199' },
+    })
+    expect(describeJevFailure(result.failure!)).toContain('campos_inválidos=body.questions.bncc_alignment.criteria:list_type')
+    expect(JSON.stringify(store.rows.at(-1)?.context)).toContain('req_safe_123')
+    expect(JSON.stringify(store.rows.at(-1)?.context)).not.toContain('não persistir')
+    expect(JSON.stringify(store.rows.at(-1)?.context)).not.toContain('texto que não deve ser armazenado')
+    expect(JSON.stringify(store.rows.at(-1)?.context)).not.toContain('conteúdo sensível')
+    expect(JSON.stringify(store.rows.at(-1)?.context)).not.toContain('enunciado que não deve ser armazenado')
+    expect(new JevUnavailableError(result.failure!, 'falha').retryable).toBe(false)
+  })
+
+  it('retém Retry-After de 429 para o worker adiar a fila sem consumir tentativa', async () => {
+    const result = await evaluateWithJev({
+      operation: 'jev/http-429', questionVersion: 'v1', state: {}, questions, route, fallback,
+      apiKey: 'key', store: null, telemetry: null, reserveOperation: null,
+      fetchImpl: vi.fn(async () => new Response('{}', {
+        status: 429,
+        headers: { 'retry-after': '7', 'x-request-id': 'req_limited_1' },
+      })),
+    })
+
+    expect(result.failure).toMatchObject({ category: 'rate_limited', httpStatus: 429, requestId: 'req_limited_1', retryAfterMs: 7000 })
+    expect(new JevUnavailableError(result.failure!, 'falha').retryable).toBe(true)
   })
 
   it('respeita o orçamento antes de chamar o provedor', async () => {

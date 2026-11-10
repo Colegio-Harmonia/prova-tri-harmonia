@@ -7,7 +7,7 @@ import { activityClassroomSyncs, generatedExams, users } from '@/db/schema'
 import { authorizeExamAccess } from '@/lib/exams/authorizeExamAccess'
 import { exportDocAsPdf } from '@/lib/docs/exportPdf'
 import { createCourseWorkWithForm, createCourseWorkWithLinkMaterial, createCourseWorkWithMaterial, deleteCourseWork, isInsufficientScopeError, listMyCourses, summarizeClassroomApiError } from '@/lib/classroom/classroomClient'
-import { activityFormEditUrl, createActivityForm, deleteActivityForm, shareActivityFormWithTeacher } from '@/lib/forms/activityForm'
+import { ActivityFormCreationError, type ActivityFormStage, activityFormEditUrl, createActivityForm, deleteActivityForm, shareActivityFormWithTeacher } from '@/lib/forms/activityForm'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 
 const PUBLISHABLE_STATUSES = ['aprovado', 'impresso', 'aplicado', 'corrigido']
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
 
   let createdCourseWorkId: string | null = null
   let createdFormId: string | null = null
-  let stage: 'verify_course_teacher' | 'create_form' | 'share_form_with_teacher' | 'export_pdf' | 'create_coursework' | 'persist_sync' = 'verify_course_teacher'
+  let stage: 'verify_course_teacher' | ActivityFormStage | 'share_form_with_teacher' | 'export_pdf' | 'create_coursework' | 'persist_sync' = 'verify_course_teacher'
   try {
     const isTeacherInCourse = (await listMyCourses(session.googleAccessToken)).some((course) => course.id === courseId)
     if (!isTeacherInCourse) return NextResponse.json({ error: 'classroom_not_course_teacher' }, { status: 403 })
@@ -127,8 +127,10 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
   } catch (err) {
     if (createdCourseWorkId) await deleteCourseWork(session.googleAccessToken, courseId, createdCourseWorkId).catch(() => {})
     if (createdFormId) await deleteActivityForm(session.googleAccessToken, createdFormId).catch(() => {})
-    const provider = summarizeClassroomApiError(err)
-    if (isInsufficientScopeError(err)) return NextResponse.json({ error: 'reauth_required', stage }, { status: 403 })
+    const providerError = err instanceof ActivityFormCreationError ? err.cause : err
+    if (err instanceof ActivityFormCreationError) stage = err.stage
+    const provider = summarizeClassroomApiError(providerError)
+    if (isInsufficientScopeError(providerError)) return NextResponse.json({ error: 'reauth_required', stage }, { status: 403 })
     console.warn('[publish-classroom] falha', { examId, stage, provider })
     return NextResponse.json({ error: 'classroom_publish_failed', stage, provider }, { status: 502 })
   }

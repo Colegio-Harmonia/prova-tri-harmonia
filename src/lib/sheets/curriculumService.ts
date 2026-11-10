@@ -15,7 +15,9 @@ export type GetCurriculumParams = {
   subject: string
   bimester?: number
   /** Usa o planejamento interno aprovado em vez da planilha. */
+  curriculumPlanVersionId?: number
   curriculumPlanId?: number
+  academicYear?: number
 }
 
 function matchesBimester(unitBimestre: string | null, bimester?: number): boolean {
@@ -92,7 +94,7 @@ async function attachEnrichment(
 export async function getCurriculumForExam(params: GetCurriculumParams): Promise<CurriculumSelection> {
   const { segment, gradeYear, subject, bimester } = params
   if (params.curriculumPlanId !== undefined) {
-    return getCurriculumFromPlan(params.curriculumPlanId, { segment, gradeYear, subject, bimester })
+    return getCurriculumFromPlan(params.curriculumPlanId, { segment, gradeYear, subject, bimester, academicYear: params.academicYear, curriculumPlanVersionId: params.curriculumPlanVersionId })
   }
   const sheets = getSheetsClient()
   const config = getGradeSheetConfig(segment, gradeYear)
@@ -125,7 +127,7 @@ export async function getCurriculumForExam(params: GetCurriculumParams): Promise
 
       const [headerRow, ...dataRows] = rows
       const roles = resolveColumnRoles(headerRow as string[])
-      const tabUnits = parseCurriculumRows(dataRows as string[][], roles, segment)
+      const tabUnits = parseCurriculumRows(dataRows as string[][], roles, segment, subject)
         // rowIndex é relativo à própria aba — com múltiplas abas precisa de
         // um offset pra não colidir (usado como key no React).
         .map((u) => ({ ...u, rowIndex: tabIdx * 100000 + u.rowIndex }))
@@ -151,8 +153,15 @@ export async function getCurriculumForExam(params: GetCurriculumParams): Promise
   units = await attachEnrichment(units, segment, gradeYear, subject, bimester)
 
   for (const unit of units) {
+    const label = unit.tituloCapitulo || `linha ${unit.rowIndex + 2}`
+    if (unit.enemSkills?.invalid.length) {
+      unmappedWarnings.push(`"${label}": código(s) ENEM inexistente(s) na matriz da área, ignorado(s): ${unit.enemSkills.invalid.join(', ')}. Corrija a planilha.`)
+    }
+    // No Ensino Médio planejado pela Matriz do ENEM, a falta de BNCC não é
+    // lacuna do planejamento — o capítulo está mapeado (por C:H).
+    if (unit.habilidades.status === 'nao_mapeado' && unit.enemSkills?.skills.length) continue
     if (unit.habilidades.status === 'nao_mapeado') {
-      unmappedWarnings.push(`"${unit.tituloCapitulo || `linha ${unit.rowIndex + 2}`}": habilidade BNCC não mapeada (${unit.habilidades.reason ?? 'motivo desconhecido'}).`)
+      unmappedWarnings.push(`"${label}": habilidade BNCC não mapeada (${unit.habilidades.reason ?? 'motivo desconhecido'}).`)
     }
   }
 

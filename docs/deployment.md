@@ -7,19 +7,110 @@ remoto oficial é `https://github.com/Colegio-Harmonia/prova-tri-harmonia.git`;
 o branch de produção é `main`. PM2 e sincronização por `rsync` não fazem parte
 do processo atual.
 
-Após validar o commit e as variáveis do servidor, publique com:
+Após incorporar o PR, passar no `Quality` e validar as variáveis do servidor,
+use o comando que verifica a origem do código e identifica a imagem pelo commit:
 
 ```bash
 git pull --ff-only origin main
-docker compose up -d --build
-docker compose ps
-docker compose logs --tail=100 web worker ocr-worker
+npm run deploy:production
 ```
 
 Confirme `/login`, as rotas protegidas e os logs antes de considerar a
 publicação concluída. O arquivo `.env.local` permanece exclusivamente no
-servidor. Não executar `npm run db:migrate`: a cadeia do Drizzle ainda precisa
-ser corrigida antes de ser usada em produção.
+servidor. `npm run db:migrate` recusa a cadeia histórica incompleta. Para
+banco novo/vazio, use a baseline documentada em
+[`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md). Não aplicar
+a baseline em produção existente. Alterações incrementais exigem revisão e backup.
+
+## Banco antes da IA nos dois tipos e reparo da prova 510 — 26/10/2026
+
+- A posição 10 da prova 510 solicitava dissertativa; o catálogo de EF05LP28
+  continha 46 objetivas. A regra anterior só permitia objetiva → dissertativa,
+  por isso ainda houve geração por IA. A regra atual esgota o tipo solicitado
+  e depois tenta o outro tipo original do banco, nos dois sentidos, antes da
+  geração por IA. Preserva habilidade, conteúdo, gabarito, histórico e mídias.
+- Publicada a imagem `prova-tri:acervo-any-type-20261026`
+  (`sha256:4f4774b921e9ea72bda9f4519323c1de5484867c9848d7d26a73e9a289d15a98`)
+  em web/worker, com mudança funcional apenas em `acervoQuestions.ts`.
+  A imagem anterior está preservada em `prova-tri:pre-acervo-any-type-20261026`.
+- Validação: 63 testes, TypeScript, ESLint e build. Os testes incluem um
+  pedido dissertativo com 46 objetivas, preferência pelo tipo solicitado,
+  ambas as trocas na revisão e contagens reais após a substituição.
+- A questão 10 da prova 510 foi substituída pelo serviço normal de revisão,
+  com autorização administrativa e proteção contra edição simultânea. Item
+  original importado: 1000000022513, objetiva, EF05LP28; Bloom e INEP
+  classificados. Composição final: 12 acervo, 9 objetivas e 3 dissertativas,
+  consistente no payload e nas colunas. O conteúdo das outras 11 questões
+  foi conferido por hashes. Auditorias 103/104 registram pedido e conclusão;
+  a auditoria 105 remove somente o aviso obsoleto de geração por IA da Q10.
+- Login local/HTTPS 200, revisão anônima 307, web saudável e worker iniciado.
+
+## Dissertativa quando faltar objetiva no acervo — 26/10/2026
+
+Registro inicial; a ampliação nos dois sentidos descrita acima é a regra atual.
+
+- Regra autorizada: esgotar objetivas compatíveis em todas as BNCCs
+  solicitadas e, se nenhuma puder ser importada, procurar dissertativa
+  original das mesmas habilidades antes de recorrer à IA. Uma posição
+  dissertativa continua exigindo dissertativa. Não há redistribuição entre
+  posições nem conversão do conteúdo original.
+- A busca compartilha catálogo/detalhes nas duas passagens, respeita
+  histórico, duplicatas e requisitos de mídia e registra a troca nos logs.
+  A composição pode ganhar dissertativas. Blueprint, metadados e contagens
+  persistidas refletem o tipo realmente importado, inclusive na substituição
+  durante a revisão.
+- Publicação limitada a três arquivos: `acervoQuestions.ts`,
+  `wholeExamGeneration.ts` e a rota `regenerate-question`. Imagem
+  `prova-tri:acervo-discursive-fallback-20261026`
+  (`sha256:4f4e18ff872582df92ae1dcf033f58ae182966e3e4b69e9f28808d63cffb755e`),
+  em web/worker. Rollback preservado em
+  `prova-tri:pre-acervo-discursive-fallback-20261026`.
+- Validação: 59 testes, TypeScript, ESLint e build. Diagnóstico no código
+  publicado excluiu temporariamente os demais IDs de EF04LP20 apenas em
+  memória e importou a dissertativa 856818 para um pedido de objetiva,
+  com gabarito original, duas consultas e dois acessos ao cache, sem IA
+  nem gravação no banco. Os conteúdos das provas 506/507 mantiveram os
+  mesmos hashes antes/depois. Login local/HTTPS 200, rotas protegidas 307,
+  web saudável e worker iniciado.
+
+## Falta de saldo e reserva de texto — 26/10/2026
+
+- Causa dos lotes 368/369: o acervo preencheu 11 das 12 vagas; a vaga restante
+  precisou de geração. O DeepSeek respondeu HTTP 402 e `/user/balance`
+  confirmou `is_available=false`, saldo USD zero. A fila repetia a busca
+  inteira e encerrava com mensagem genérica.
+- Durante a investigação, o principal foi alterado pela gestão para
+  `openai/gpt-5-mini`. Os jobs 24087/24088 já concluíram como provas 507/506,
+  respectivamente, com 12 questões cada (11 acervo + 1 IA). Essa escolha e
+  os resultados foram preservados; os jobs concluídos não foram reabertos.
+- Proteção publicada em web/worker: reserva explícita de outro provedor na
+  tela `/ia`, persistida em `application_settings` sem migração e com
+  auditoria transacional. Configuração aplicada: principal GPT-5 mini,
+  reserva `gemini/gemini-3.7-flash` (perfil 12, auditoria 102).
+  Somente a reserva selecionada participa da troca automática. Falta de
+  saldo suspende novas chamadas ao principal por cinco minutos no processo;
+  depois ele é testado novamente. A troca também cobre falhas transitórias
+  e de credencial, mantendo validação estrutural/semântica e a identificação
+  do provedor utilizado na telemetria. Recusas permanentes sem recuperação
+  não fazem a fila executar a prova inteira novamente.
+- Validação: 60 testes específicos, TypeScript, ESLint e build de produção.
+  GPT-5 mini respondeu pelo código publicado. Gemini aceitou o schema real
+  de prova. Diagnóstico isolado, sem gravações no banco, recebeu a recusa
+  real do DeepSeek e completou a mesma solicitação no Gemini. `/login` local
+  e HTTPS responderam 200; rotas de revisão anônimas 307; API administrativa
+  anônima 403. Aplicação saudável e worker iniciado após publicação.
+- Artefato publicado: `prova-tri:provider-failover-20261026`
+  (`sha256:ded766095dc6f8a11162f42314d6b09eeb873f0d423d5728470593f1d80c9a2d`),
+  também etiquetado `prova-tri:local`. A comparação com a versão anterior
+  confirmou mudanças apenas nos dez arquivos desta correção. A edição
+  simultânea local de `RevisarExam.tsx` ficou fora do artefato.
+- Rollback: imagens preservadas em
+  `prova-tri:pre-provider-failover-20261026` (web) e
+  `prova-tri:pre-provider-failover-worker-20261026` (worker). Para reverter,
+  definir essas imagens por serviço em um override do Compose e recriar
+  somente web/worker com `--no-build --no-deps`; a configuração adicional é
+  ignorada pelo código anterior. A reserva exige uma conta funcional e com
+  saldo; não substitui a regularização financeira dos provedores.
 
 > Os registros abaixo são históricos de releases anteriores. Eles descrevem a
 > infraestrutura PM2 já descontinuada e não devem ser usados como instrução de
@@ -592,3 +683,84 @@ podem ser recriados sem afetar produção.
 - **Proteção:** itens detectados como visuais só são elegíveis quando já têm
   recorte oficial associado. As atividades geradas antes do reimport mantêm
   seu snapshot antigo e precisam ser geradas de novo para testar a correção.
+
+
+## 23/10/2026 — Prova 494: classificação JEV e tags INEP
+
+Imagem prova-tri:fix-494 também etiquetada prova-tri:local; SHA256
+19ea8709b1ed3ed08614ab62a716e7e8678eb928a38ec4e6927334393e24b397.
+Fonte isolada do container anterior em /tmp/prova494-release, commits locais
+91ef3e9 e 83c0de7. Web/worker recriados com Compose sem build; web saudável.
+Chrome público autenticado e API confirmaram 12/12 classificações completas,
+tags curtas e nenhuma pendência. Recuperação registrada em administrative_audit
+com ação exam_classification_recovery, preservando texto, respostas e status.
+Sem migrations. Rollback: etiquetar prova-tri:before-494-fix como prova-tri:local
+e recriar web/worker. Classificações anteriores preservadas na auditoria.
+OCR/scan workers não foram recriados nesta publicação.
+
+
+## 23/10/2026 — Tag Bloom com somente o nível
+
+Imagem prova-tri:bloom-label, também prova-tri:local. Fonte isolada do container
+em /tmp/prova-bloom-label-release, commit 2e923e6. Alteração de uma linha no
+componente de revisão. Lint e build Docker concluídos; web recriado e saudável.
+Chrome autenticado em /gerar/494/revisar confirmou 12 tags `Bloom: aplicar`,
+sem sufixo Jev. Metadados de classificação preservados; nenhuma escrita no
+payload. Rollback: prova-tri:before-bloom-label. Worker não foi recriado.
+
+
+## 09/11/2026 — Planejamento ENEM integrado à geração
+
+- Publicada imagem `prova-tri:inep-planning-20261109`, também etiquetada `prova-tri:local`: `sha256:e23230f70542d5071be1cf633f13112abd383529d564c0385da6a005afa8e80b`. Web e worker recriados; web saudável e worker iniciado.
+- Release preparada em `/tmp/prova-tri-inep-release-20261109`, a partir das fontes do container anterior e somente das alterações desta correção. Alterações locais preexistentes foram preservadas.
+- Sem nova migration de estrutura: versão e parecer ficam no JSON da fila/prova. O catálogo H7 de Linguagens foi corrigido por `scripts/repair-enem-h7.ts` (1 referência atualizada; execução idempotente).
+- Validação final: 315 testes aprovados, TypeScript e lint limpos, build de produção concluído. Uma asserção textual antiga em `unifiedPromptNotation.test.ts` falha também na cópia anterior; sua reprodução está em `/tmp/prova-inep-baseline-test.log`.
+- Smoke autenticado em staging e na web publicada: acesso anônimo à recomendação = 401; preview do planejamento 105 v3 (versão 113) = 200; busca de Inglês = 200; recomendação real = 200, item 3378 na posição 11 com aderência compatível; `/gerar` = 200. O smoke não criou prova nem acionou publicação docente.
+- Teste do núcleo confirma 12 = 4 ENEM + 8 restantes, seis posições por capítulo, sem completar falta de originais com IA. Cobertura insuficiente permanece explícita.
+- Reversão: etiquetar `prova-tri:before-inep-planning-20261109` como `prova-tri:local` e recriar apenas web/worker com Compose sem build. OCR e leitura de cartões não foram recriados.
+
+## Busca ENEM pelo planejamento — 09/11/2026
+
+- O botão de busca na geração ainda consultava a área inteira, enquanto o
+  campo de quantidade já usava recomendações pelo planejamento. Ambos agora
+  consultam `/api/enem-bank/recommend`, preservando filtros, versão do plano,
+  conteúdo, habilidades e distribuição por capítulo.
+- A seleção explícita e o caminho legado não dispensam mais o idioma:
+  itens sem idioma não podem entrar como Inglês.
+- Publicação limitada a `CurriculumPreview.tsx`, rota `recommend`,
+  `plannedEnemSelection.ts` e `generateExamCore.ts`, sobre o código que já
+  estava em execução. Imagem `prova-tri:enem-planning-20261109`,
+  SHA `acab5d2b1a31291d29729f5735381d13b5b82e2ce30699504a32fedf0974be6d`;
+  anterior preservada em `prova-tri:pre-enem-planning-20261109`.
+- Validação: 44 testes, TypeScript, ESLint dos arquivos da busca e build.
+  Consulta real do plano 105, versão 113, retornou o item 3378 (ENEM 2018,
+  Inglês H5), alinhado à posição 11. Navegador em HTTPS confirmou as quatro
+  unidades, envio de versão/filtros ao endpoint e mensagem de ausência de
+  compatíveis ao buscar 1998, sem erros JavaScript. Nenhuma prova foi criada
+  pelos testes de verificação. Web saudável, worker iniciado e login HTTPS 200.
+
+## Busca ENEM progressiva — 09/11/2026
+
+- Reproduzido o caso do planejamento 20, versão 17 (Matemática, 1.º EM,
+  4.º bimestre): 12 posições, 8 ENEM, distribuição 2/1/1/1/1/1/1/1/1/1/1.
+  O seletor anterior retornava somente 164/346 (2023/162 e 2022/162).
+- Retirado o corte de 12/30 candidatos por posição. A busca avança em lotes
+  independentes de oito itens até completar a quantidade ou conferir todos
+  os candidatos elegíveis. Posições com o mesmo alvo compartilham avaliações
+  e candidatos conferidos; a correspondência máxima preserva a distribuição
+  e não repete um item. A avaliação aceita contextos diferentes que exijam
+  os mesmos conceitos/procedimentos, mantendo idioma, habilidade e turma.
+- A conferência de três dimensões por item usa uma chamada por lote.
+  Contagens por posição ficam nos logs do servidor. A tela recebe somente
+  o aviso consolidado quando o banco elegível foi esgotado.
+- No caso reproduzido, o seletor ampliado completou 8/8; a rota publicada
+  também completou 8/8 preservando os IDs 164/346 escolhidos explicitamente.
+  Navegador HTTPS confirmou oito resultados, sem avisos de limite e sem
+  erros JavaScript. O teste adicional do plano 22 esgotou 727 candidatos por
+  alvo elegível e retornou 7/8, sem presumir compatibilidade para completar.
+- Validação: 50 testes, TypeScript, ESLint e build. Publicação limitada a
+  `plannedEnemSelection.ts` e `planningAlignment.ts`, sobre a imagem ativa.
+  Imagem `prova-tri:enem-progressive-20261109`, SHA
+  `c89676574fd9f461a5f3e2c428f9190eb03b8cfd1f073c35661cf03890a5f2fc`;
+  anterior em `prova-tri:pre-enem-progressive-20261109`. Web saudável, worker
+  iniciado e login HTTPS 200. Os testes de busca não criaram provas.

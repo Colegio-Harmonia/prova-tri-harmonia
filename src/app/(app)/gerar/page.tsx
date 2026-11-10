@@ -18,7 +18,7 @@ export default async function GerarPage() {
     <div>
       <h1 className="text-lg font-semibold">Gerar prova</h1>
       <p className="mt-1 text-sm text-content-secondary">
-        Escolha segmento, ano e uma ou mais disciplinas — cada disciplina vira uma prova na fila de geração, sem travar sua navegação.
+        Escolha segmento, ano e disciplinas. Depois, selecione a geração automática ou a criação manual com questões do banco.
       </p>
       <div className="mt-6">
         <CurriculumPreview

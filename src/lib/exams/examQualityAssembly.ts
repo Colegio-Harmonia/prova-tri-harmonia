@@ -54,7 +54,9 @@ export function assembleBestExamCandidates(slots: PlannedQuestionSlot[], candida
   const selected: ExamQuestion[] = []
   for (const slot of slots) {
     const options = candidates.filter((candidate) => candidate.slotNumber === slot.number)
-    if (!options.length) throw new Error(`Nenhum candidato válido foi gerado para a questão ${slot.number}.`)
+    // Uma posição que falhou não deve descartar as candidatas válidas das
+    // demais. O chamador registra os slots ausentes em generationProgress.
+    if (!options.length) continue
     const winner = [...options].sort((left, right) => {
       const leftBlocking = diversityIssues([...selected, left.question]).filter((issue) => issue.severity === 'bloqueante').length
       const rightBlocking = diversityIssues([...selected, right.question]).filter((issue) => issue.severity === 'bloqueante').length

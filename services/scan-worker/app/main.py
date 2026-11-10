@@ -1,9 +1,9 @@
-"""Worker privado de leitura óptica PTR1.
+"""Worker privado de leitura óptica PTR1/PTR2/PTR3.
 
 O serviço não persiste os arquivos e recebe do n8n apenas um despacho opaco.
 Baixa o original pela API interna autenticada, produz o resultado estruturado e
 o devolve para a mesma API. Nesta primeira versão, somente páginas objetivas
-PTR1 recebem leitura automática; páginas incertas seguem para o professor.
+PTR1/PTR2/PTR3 recebem leitura automática; páginas incertas seguem para o professor.
 """
 
 from __future__ import annotations
@@ -32,8 +32,7 @@ MIN_QUALITY = 0.65
 # impresso PTR1. Só a área interna da bolha entra no cálculo, não sua borda.
 OBJECTIVE_LEFT_BUBBLE_X_MM = 46.3
 OBJECTIVE_RIGHT_BUBBLE_X_MM = 145.0
-OBJECTIVE_FIRST_BUBBLE_Y_MM = 137.6
-OBJECTIVE_ROW_GAP_MM = 13.0
+OBJECTIVE_GEOMETRY = {'PTR1': (137.6, 13.0), 'PTR2': (141.0, 9.0), 'PTR3': (102.0, 9.0)}
 
 
 class DispatchQuestion(BaseModel):
@@ -190,6 +189,11 @@ def page_number_from_qr(token: str | None) -> int | None:
     return page_number if page_number > 0 else None
 
 
+def layout_from_qr(token: str | None) -> str | None:
+    parts = token.split('.') if token else []
+    return parts[3] if len(parts) == 6 and parts[0] == 'PTR1' else None
+
+
 def quality_score(image: np.ndarray, has_markers: bool, has_qr: bool) -> float:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     sharpness = min(cv2.Laplacian(gray, cv2.CV_64F).var() / 120.0, 1.0)
@@ -207,22 +211,23 @@ def bubble_fill(gray: np.ndarray, x_mm: float, y_mm: float) -> float:
     return float(255 - cv2.mean(gray, mask=mask)[0]) / 255.0
 
 
-def objective_readings(image: np.ndarray, questions: list[DispatchQuestion]) -> list[dict[str, Any]]:
+def objective_readings(image: np.ndarray, questions: list[DispatchQuestion], layout_version: str = 'PTR1') -> list[dict[str, Any]]:
+    first_center, row_gap = OBJECTIVE_GEOMETRY[layout_version]
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     readings: list[dict[str, Any]] = []
     for index, question in enumerate(questions):
         column, row = (0, index) if index < 8 else (1, index - 8)
         x = OBJECTIVE_LEFT_BUBBLE_X_MM if column == 0 else OBJECTIVE_RIGHT_BUBBLE_X_MM
-        y = OBJECTIVE_FIRST_BUBBLE_Y_MM + row * OBJECTIVE_ROW_GAP_MM
+        y = first_center + row * row_gap
         option_count = question.alternatives or 5
         values = [bubble_fill(gray, x + option * 8.5, y) for option in range(option_count)]
         ordered = sorted(values, reverse=True)
         top, gap = ordered[0], ordered[0] - ordered[1]
         if top < 0.20 or gap < 0.08:
-            readings.append({'questionNumber': question.number, 'kind': 'objective', 'suggestedLetter': None, 'confidence': round(min(1.0, gap / 0.25), 3), 'exceptionCode': 'OMR_AMBIGUOUS', 'modelReference': 'ptr1-omr-v1'})
+            readings.append({'questionNumber': question.number, 'kind': 'objective', 'suggestedLetter': None, 'confidence': round(min(1.0, gap / 0.25), 3), 'exceptionCode': 'OMR_AMBIGUOUS', 'modelReference': f'{layout_version.lower()}-omr-v2'})
             continue
         confidence = min(1.0, 0.45 + gap * 2.2 + top * 0.25)
-        readings.append({'questionNumber': question.number, 'kind': 'objective', 'suggestedLetter': 'ABCDE'[values.index(top)], 'confidence': round(confidence, 3), 'modelReference': 'ptr1-omr-v1'})
+        readings.append({'questionNumber': question.number, 'kind': 'objective', 'suggestedLetter': 'ABCDE'[values.index(top)], 'confidence': round(confidence, 3), 'modelReference': f'{layout_version.lower()}-omr-v2'})
     return readings
 
 
@@ -231,7 +236,7 @@ def prepare(image: np.ndarray) -> PreparedImage:
     has_markers = normalized is not None
     token, oriented = read_qr(normalized if normalized is not None else image)
     score = quality_score(oriented, has_markers, token is not None)
-    exception = 'QR_MISSING' if token is None else 'MARKERS_MISSING' if not has_markers else 'LOW_QUALITY' if score < MIN_QUALITY else None
+    exception = 'QR_MISSING' if token is None else 'LAYOUT_UNSUPPORTED' if layout_from_qr(token) not in OBJECTIVE_GEOMETRY else 'MARKERS_MISSING' if not has_markers else 'LOW_QUALITY' if score < MIN_QUALITY else None
     return PreparedImage(oriented, token, score, exception)
 
 
@@ -248,18 +253,20 @@ async def upload_artifact(client: httpx.AsyncClient, base_url: str, path: str, i
     response.raise_for_status()
 
 
-def objective_crop(image: np.ndarray, questions: list[DispatchQuestion], question_number: int) -> np.ndarray | None:
+def objective_crop(image: np.ndarray, questions: list[DispatchQuestion], question_number: int, layout_version: str = 'PTR1') -> np.ndarray | None:
     try:
         index = next(index for index, question in enumerate(questions) if question.number == question_number)
     except StopIteration:
         return None
     column, row = (0, index) if index < 8 else (1, index - 8)
     center_x = OBJECTIVE_LEFT_BUBBLE_X_MM if column == 0 else OBJECTIVE_RIGHT_BUBBLE_X_MM
-    center_y = OBJECTIVE_FIRST_BUBBLE_Y_MM + row * OBJECTIVE_ROW_GAP_MM
+    first_center, row_gap = OBJECTIVE_GEOMETRY[layout_version]
+    center_y = first_center + row * row_gap
+    half_height = 5.5 if layout_version == 'PTR1' else 4
     left = mm(center_x - 7)
-    top = mm(center_y - 5.5)
+    top = mm(center_y - half_height)
     right = mm(center_x + 45)
-    bottom = mm(center_y + 5.5)
+    bottom = mm(center_y + half_height)
     return image[top:bottom, left:right]
 
 
@@ -274,11 +281,12 @@ async def process(dispatch: Dispatch) -> dict[str, Any]:
         image = decode_image(source.content, source.headers.get('content-type', '').split(';', 1)[0])
         prepared = prepare(image)
         sheet_page_number = page_number_from_qr(prepared.qr_token)
+        layout_version = layout_from_qr(prepared.qr_token)
         expected = next((page for page in dispatch.sheetLayout if page.pageNumber == sheet_page_number), None)
         page_type = expected.expectedPageType if expected else 'unknown'
         pages = []
         for page in dispatch.pages:
-            readings = objective_readings(prepared.image, expected.questions) if expected and expected.expectedPageType == 'objective' and prepared.exception_code is None else []
+            readings = objective_readings(prepared.image, expected.questions, layout_version) if expected and expected.expectedPageType == 'objective' and prepared.exception_code is None else []
             pages.append({'pageIndex': page.pageIndex, 'qrToken': prepared.qr_token, 'pageType': page_type, 'qualityScore': prepared.quality_score, 'exceptionCode': prepared.exception_code, 'readings': readings})
         payload = {'uploadSha256': dispatch.sha256, 'pages': pages}
         body = json.dumps(payload, separators=(',', ':')).encode()
@@ -296,9 +304,9 @@ async def process(dispatch: Dispatch) -> dict[str, Any]:
         pages_by_index = {page.pageIndex: page for page in dispatch.pages}
         for reference in refs:
             page = pages_by_index.get(reference.get('pageIndex'))
-            if not page or not expected or expected.expectedPageType != 'objective':
+            if not page or not expected or expected.expectedPageType != 'objective' or layout_version not in OBJECTIVE_GEOMETRY:
                 continue
-            crop = objective_crop(prepared.image, expected.questions, reference.get('questionNumber'))
+            crop = objective_crop(prepared.image, expected.questions, reference.get('questionNumber'), layout_version)
             if crop is None or crop.size == 0:
                 continue
             crop_path = f'/api/internal/scan-readings/{reference["id"]}/crop?attemptId={dispatch.attemptId}'

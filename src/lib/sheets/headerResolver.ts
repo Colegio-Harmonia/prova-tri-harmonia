@@ -9,6 +9,12 @@ const SYNONYMS = {
   // 'conteúdos foco' (com espaço, sem hífen) confirmado na mesma planilha.
   conteudo: ['conteúdos-foco', 'conteúdos', 'conteudos-foco', 'conteudos', 'conteúdos foco', 'conteudos foco'],
   habilidades: ['habilidades'],
+  // Ensino Médio: planejamento pela Matriz do ENEM (códigos "C2:H5"), ao
+  // lado ou no lugar da BNCC. Ver ensino-medio/CLAUDE.md.
+  habilidadesEnem: [
+    'habilidades enem', 'habilidade enem', 'matriz enem', 'enem', 'habilidades inep',
+    'competencias e habilidades enem', 'competencias enem', 'habilidades (enem)',
+  ],
   objetivos: ['objetivos'],
   bimestre: ['bimestre'],
   trimestre: ['trimestre'],
@@ -46,6 +52,7 @@ export function resolveColumnRoles(headerRow: string[]): ColumnRoles {
     tituloCapituloIdx: findColumn(headerRow, SYNONYMS.tituloCapitulo),
     conteudoIdx: findColumn(headerRow, SYNONYMS.conteudo),
     habilidadesIdx: findColumn(headerRow, SYNONYMS.habilidades),
+    habilidadesEnemIdx: findColumn(headerRow, SYNONYMS.habilidadesEnem),
     objetivosIdx: findColumn(headerRow, SYNONYMS.objetivos),
     bimestreIdx: findColumn(headerRow, SYNONYMS.bimestre),
     trimestreIdx: findColumn(headerRow, SYNONYMS.trimestre),

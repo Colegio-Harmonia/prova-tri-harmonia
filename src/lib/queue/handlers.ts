@@ -1,6 +1,7 @@
-import { eq } from 'drizzle-orm'
+import { acervoIdentity, questionContentKey } from '@/lib/exams/questionOrigin'
+import { eq, sql } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { adaptedExams, generatedExams, type AdaptationProfileId } from '@/db/schema'
+import { adaptedExams, generatedExams, generationJobs, type AdaptationProfileId } from '@/db/schema'
 import { llmAvailable } from '@/lib/gemini/llmClient'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { generateExamCore } from '@/lib/exams/generateExamCore'
@@ -11,7 +12,18 @@ import { executeDiscursivePageTranscriptionJob, executeDiscursiveTranscriptionJo
 import { processLocalScan } from '@/lib/scan-ingest/localScanProcessor'
 import type { EquivalenceReport } from '@/lib/adaptation/equivalenceValidator'
 import type { ClaimedJob } from './claim'
-import { adaptarProvaJobPayloadSchema, gerarAtividadeJobPayloadSchema, gerarProvaJobPayloadSchema, gerarReforcoEnemJobPayloadSchema, pontuarProvaJobPayloadSchema, processarScanJobPayloadSchema, transcreverScanJobPayloadSchema } from './types'
+import { adicionarQuestaoJobPayloadSchema, adaptarProvaJobPayloadSchema, gerarAtividadeJobPayloadSchema, gerarImagensProvaJobPayloadSchema, gerarProvaJobPayloadSchema, gerarReforcoEnemJobPayloadSchema, pontuarProvaJobPayloadSchema, processarScanJobPayloadSchema, transcreverScanJobPayloadSchema } from './types'
+import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
+import { planIdFromExamPayload, planVersionIdFromExamPayload } from '@/lib/curriculum/planCurriculum'
+import { getOfficialBnccSkill } from '@/lib/curriculum/officialBncc'
+import { generateQuestionWithUnifiedFlow } from '@/lib/exams/unifiedQuestionGeneration'
+import { questionQualityFingerprint, runQuestionQualityTest } from '@/lib/exams/questionQualityTest'
+import { QUALITY_REPORT_VERSION } from '@/lib/exams/qualityReport'
+import { attachImagesToExam } from '@/lib/images/questionImageService'
+import { alternativesCountForSegment } from '@/lib/gemini/promptBuilder'
+import { scoringMethodForQuestions } from '@/lib/scoring/scoringPolicy'
+import { initializeJobItems, saveItemProgress, setJobItemStage } from '@/lib/queue/jobProgress'
+import { persistGeneratedQuestionClassifications } from '@/lib/pedagogical/generatedQuestionClassificationService'
 
 // Handlers de execução por tipo de job. O worker chama executeJob() e trata
 // sucesso/falha de forma uniforme — cada handler só precisa validar o
@@ -33,6 +45,10 @@ export async function executeJob(job: ClaimedJob): Promise<JobExecutionResult> {
   switch (job.jobType) {
     case 'gerar_prova':
       return executeGerarProva(job)
+    case 'gerar_imagens_prova':
+      return executeGerarImagensProva(job)
+    case 'adicionar_questao':
+      return executeAdicionarQuestao(job)
     case 'gerar_reforco_enem':
       return executeGerarReforcoEnem(job)
     case 'gerar_atividade':
@@ -47,6 +63,221 @@ export async function executeJob(job: ClaimedJob): Promise<JobExecutionResult> {
       return executeProcessarScan(job)
     default:
       throw new Error(`Tipo de job ainda sem handler implementado: ${job.jobType}`)
+  }
+}
+
+async function executeGerarImagensProva(job: ClaimedJob): Promise<JobExecutionResult> {
+  const parsed = gerarImagensProvaJobPayloadSchema.safeParse(job.payload)
+  if (!parsed.success) throw new Error(`Payload do job de imagens inválido: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`)
+  const exam = await db.query.generatedExams.findFirst({ where: eq(generatedExams.id, parsed.data.examId) })
+  if (!exam) throw new Error(`Prova #${parsed.data.examId} não encontrada para produzir imagens.`)
+  const original = exam.generationPayload as ExamGenerationResult
+  const attached = await attachImagesToExam(original, { requireResolvedImages: false, maxAttemptsPerImage: 2, subject: exam.subject })
+  const unresolved = attached.questions.filter((question) => (question.needsImage ?? question.hasImage) && !question.image).map((question) => question.number)
+  const nextPayload: ExamGenerationResult = {
+    ...attached,
+    metadata: {
+      ...attached.metadata,
+      imageGeneration: {
+        status: unresolved.length ? 'partial' : 'complete',
+        jobId: job.id,
+        pendingQuestionNumbers: unresolved,
+        updatedAt: new Date().toISOString(),
+      },
+    },
+  }
+  await db.update(generatedExams).set({
+    generationPayload: nextPayload,
+    unmappedWarnings: unresolved.length
+      ? [...(Array.isArray(exam.unmappedWarnings) ? exam.unmappedWarnings as string[] : []), `Imagens ainda pendentes nas questões ${unresolved.join(', ')}.`]
+      : exam.unmappedWarnings,
+  }).where(eq(generatedExams.id, exam.id))
+  return {
+    resultExamId: exam.id,
+    resultRef: { pendingQuestionNumbers: unresolved },
+    label: `Imagens da prova #${exam.id}`,
+    notifyRequester: false,
+  }
+}
+
+async function executeAdicionarQuestao(job: ClaimedJob): Promise<JobExecutionResult> {
+  const parsed = adicionarQuestaoJobPayloadSchema.safeParse(job.payload)
+  if (!parsed.success) throw new Error(`Payload do job inválido: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`)
+  const { examId, questionNumber, bnccCode, questionType } = parsed.data
+  await initializeJobItems(job.id, [questionNumber])
+  await saveItemProgress(job.id, questionNumber, 'gerando')
+  let activeStage = 'gerando_enunciado'
+
+  try {
+    if (!await llmAvailable()) throw new Error('A chave do provedor de texto ativo não está configurada no servidor.')
+    const exam = await db.query.generatedExams.findFirst({ where: eq(generatedExams.id, examId) })
+    if (!exam) throw new Error(`Prova #${examId} não encontrada.`)
+    if (!['rascunho', 'atribuido', 'em_revisao', 'revisao_concluida'].includes(exam.status)) {
+      throw new Error('A prova não está em uma etapa que permite adicionar questões.')
+    }
+    const curriculum = await getCurriculumForExam({
+      segment: exam.segment,
+      gradeYear: exam.gradeYear,
+      academicYear: exam.academicYear,
+      subject: exam.subject,
+      bimester: exam.bimester ?? undefined,
+      curriculumPlanId: planIdFromExamPayload(exam.generationPayload),
+      curriculumPlanVersionId: planVersionIdFromExamPayload(exam.generationPayload),
+    })
+    const unit = curriculum.units.find((candidate) => candidate.rowIndex === parsed.data.unitRowIndex)
+    if (!unit || unit.habilidades.status !== 'mapeado' || !unit.habilidades.skills.some((skill) => skill.code.toUpperCase() === bnccCode.toUpperCase())) {
+      throw new Error(`A habilidade ${bnccCode} não está vinculada a uma unidade do planejamento desta prova.`)
+    }
+    const official = getOfficialBnccSkill(bnccCode)
+    if (!official) throw new Error(`A habilidade ${bnccCode} não foi encontrada na base oficial da BNCC.`)
+    const initialPayload = exam.generationPayload as ExamGenerationResult
+    const initialProgress = initialPayload.metadata.generationProgress
+    const currentlyNextNumber = initialProgress?.pendingQuestionNumbers[0]
+      ?? Math.max(0, ...initialPayload.questions.map((question) => question.number)) + 1
+    if (currentlyNextNumber !== questionNumber) {
+      throw new Error(`A posição da questão mudou enquanto a solicitação aguardava na fila (era ${questionNumber}, agora é ${currentlyNextNumber}). Inicie a adição novamente.`)
+    }
+    const requestedNumber = questionNumber
+    const generated = await generateQuestionWithUnifiedFlow({
+      curriculum,
+      unit,
+      questionNumber: requestedNumber,
+      excludedQuestions: initialPayload.questions,
+      acervoHistory: initialPayload.metadata.acervoHistory,
+      type: questionType,
+      targetSkillCodes: [official.code],
+      classLabel: initialPayload.metadata.classLabel,
+      instruction: `Adicionar à prova #${examId}. Habilidade escolhida pelo professor: ${official.code}: ${official.text}. Contexto BNCC: ${official.context.join('; ')}. Preserve exatamente esta habilidade e a unidade indicada.`,
+      onStage: async (stage) => {
+        activeStage = stage
+        await setJobItemStage(job.id, questionNumber, stage)
+      },
+    })
+    let question = { ...generated.question, number: requestedNumber }
+    await saveItemProgress(job.id, questionNumber, 'gerando', question)
+
+    activeStage = 'produzindo_imagem'
+    await setJobItemStage(job.id, questionNumber, activeStage)
+    const withImage = await attachImagesToExam({
+      metadata: {
+        segment: exam.segment,
+        gradeYear: exam.gradeYear,
+        subject: exam.subject,
+        bimester: exam.bimester,
+        questionCount: 1,
+        objectiveCount: question.type === 'objetiva' ? 1 : 0,
+        discursiveCount: question.type === 'descritiva' ? 1 : 0,
+        alternativesCount: alternativesCountForSegment(exam.segment),
+      },
+      questions: [question],
+    }, { requireResolvedImages: false, maxAttemptsPerImage: 2, subject: exam.subject })
+    question = withImage.questions[0] ?? question
+    if (question.needsImage && !question.image) throw new Error('A questão precisa de uma imagem, mas o recurso visual não foi gerado.')
+
+    activeStage = 'validando_respostas'
+    await setJobItemStage(job.id, questionNumber, activeStage)
+    const audit = await runQuestionQualityTest(curriculum, [question], new Map(), initialPayload.metadata.classLabel)
+    const qualityResult = audit.report.find((item) => item.questionNumber === requestedNumber)
+    if (!qualityResult?.approved) {
+      const detail = qualityResult?.diagnostics?.filter((item) => item.blocksApproval).map((item) => item.message).slice(0, 4).join('; ')
+        || qualityResult?.verdictReason
+        || 'O Jev não aprovou a questão.'
+      throw new Error(`A questão adicional não foi inserida: ${detail}`)
+    }
+
+    activeStage = 'salvando_questao'
+    await setJobItemStage(job.id, questionNumber, activeStage)
+    const saved = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM generated_exams WHERE id = ${examId} FOR UPDATE`)
+      const latestExam = await tx.query.generatedExams.findFirst({ where: eq(generatedExams.id, examId) })
+      if (!latestExam || !['rascunho', 'atribuido', 'em_revisao', 'revisao_concluida'].includes(latestExam.status)) {
+        throw new Error('A prova mudou de etapa durante a geração; a questão não foi inserida.')
+      }
+      const latestPayload = latestExam.generationPayload as ExamGenerationResult
+      const progress = latestPayload.metadata.generationProgress
+      const slotNumber = progress?.pendingQuestionNumbers[0]
+        ?? Math.max(0, ...latestPayload.questions.map((item) => item.number)) + 1
+      if (slotNumber !== questionNumber) {
+        throw new Error(`A posição da questão mudou durante a geração (era ${questionNumber}, agora é ${slotNumber}). A questão não foi inserida; tente novamente.`)
+      }
+      question = { ...question, number: slotNumber }
+      const updatedQuestions = [...latestPayload.questions, question].sort((left, right) => left.number - right.number)
+      const pending = (progress?.pendingQuestionNumbers ?? []).filter((number) => number !== slotNumber)
+      const pendingReasons = { ...(progress?.pendingReasons ?? {}) }
+      delete pendingReasons[String(slotNumber)]
+      const updatedProgress = progress ? {
+        ...progress,
+        complete: pending.length === 0 && updatedQuestions.length >= progress.requestedQuestionCount,
+        pendingQuestionNumbers: pending,
+        pendingReasons,
+      } : undefined
+      const qualityTest = latestPayload.metadata.qualityTest
+      const oldReports = qualityTest?.reports ?? []
+      const previousResults = oldReports.at(-1)?.results ?? []
+      const insertedReport = {
+        ...qualityResult,
+        questionNumber: slotNumber,
+        questionFingerprint: questionQualityFingerprint(question, latestPayload.metadata.classLabel),
+      }
+      const currentQuestionNumbers = new Set(updatedQuestions.map((item) => item.number))
+      const mergedResults = [...previousResults.filter((result) => result.questionNumber !== slotNumber && currentQuestionNumbers.has(result.questionNumber)), insertedReport]
+        .sort((left, right) => left.questionNumber - right.questionNumber)
+      const updatedQualityTest = {
+        version: qualityTest?.version ?? QUALITY_REPORT_VERSION,
+        checkedAt: new Date().toISOString(),
+        repairedQuestionNumbers: qualityTest?.repairedQuestionNumbers ?? [],
+        warnings: [...(qualityTest?.warnings ?? []), ...audit.warnings],
+        reports: [...oldReports, { phase: `Questão ${slotNumber} adicionada`, results: mergedResults }],
+      }
+      if (latestPayload.questions.some((peer) => peer.number !== question.number && (questionContentKey(peer) === questionContentKey(question) || (acervoIdentity(question) && acervoIdentity(peer) === acervoIdentity(question))))) throw new Error('A questão já foi incluída nesta prova durante a geração. Solicite outra questão.')
+      const nextPayload: ExamGenerationResult = {
+        ...latestPayload,
+        metadata: {
+          ...latestPayload.metadata,
+          acervoHistory: [...(latestPayload.metadata.acervoHistory ?? []), ...[question].flatMap((q) => { const key = acervoIdentity(q); return key ? [{ key, statement: q.statement, questionId: q.acervoRef!.questionId }] : [] })],
+          questionCount: updatedQuestions.length,
+          objectiveCount: updatedQuestions.filter((item) => item.type === 'objetiva').length,
+          discursiveCount: updatedQuestions.filter((item) => item.type === 'descritiva').length,
+          qualityTest: updatedQualityTest,
+          ...(updatedProgress ? { generationProgress: updatedProgress } : {}),
+        },
+        questions: updatedQuestions,
+      }
+      await tx.update(generatedExams).set({
+        generationPayload: nextPayload,
+        questionCount: updatedQuestions.length,
+        objectiveCount: nextPayload.metadata.objectiveCount,
+        discursiveCount: nextPayload.metadata.discursiveCount,
+        scoringMethod: scoringMethodForQuestions(updatedQuestions),
+      }).where(eq(generatedExams.id, examId))
+      return { question, nextPayload }
+    })
+
+    await saveItemProgress(job.id, questionNumber, 'concluido', saved.question, [{ code: 'JEV_QUALITY_REPORT', report: qualityResult }])
+    try {
+      await persistGeneratedQuestionClassifications({
+        examId,
+        questions: [saved.question],
+        createdBy: job.requestedBy,
+        replaceExisting: true,
+        modelProvider: 'deepseek',
+        modelName: process.env.DEEPSEEK_MODEL ?? 'deepseek-v4-flash',
+        promptVersion: 'exam-generation-pedagogical-v1',
+      })
+    } catch (error) {
+      console.error('[queue/add-question] classificação não persistida:', error)
+    }
+    return {
+      resultExamId: examId,
+      resultRef: { questionNumber: saved.question.number, bnccCode: official.code },
+      label: `Questão ${saved.question.number} adicionada à prova #${examId}`,
+      notifyRequester: false,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Falha ao gerar a questão adicional.'
+    await setJobItemStage(job.id, questionNumber, activeStage)
+    await saveItemProgress(job.id, questionNumber, 'erro', undefined, [{ severity: 'bloqueante', code: 'ADDITIONAL_QUESTION_FAILED', message, reason: message }], message)
+    throw error
   }
 }
 
@@ -73,6 +304,7 @@ async function executeGerarAtividade(job: ClaimedJob): Promise<JobExecutionResul
     gradeYear: payload.gradeYear,
     academicYear: payload.academicYear,
     subject: payload.subject,
+    classLabel: payload.classLabel,
     bimester: payload.bimester,
     questionCount: payload.questionCount,
     enemBankQuestionIds: [],
@@ -113,7 +345,6 @@ async function executeGerarReforcoEnem(job: ClaimedJob): Promise<JobExecutionRes
       enemSkills: payload.enemSkills,
       enemQuestionYear: payload.enemQuestionYear,
       questionCount: payload.questionCount,
-      classLabel: payload.classLabel,
       classroomCourseId: payload.classroomCourseId ?? null,
     },
     job.requestedBy,
@@ -236,14 +467,18 @@ async function executeGerarProva(job: ClaimedJob): Promise<JobExecutionResult> {
       gradeYear: payload.gradeYear,
       academicYear: payload.academicYear,
       subject: payload.subject,
+      classLabel: payload.classLabel,
       bimester: payload.bimester,
       questionCount: payload.questionCount,
+      questionSource: payload.questionSource,
       objectivePercentage: payload.objectivePercentage,
       enemBankQuestionIds: payload.enemBankQuestionIds,
       assessmentKind: payload.assessmentKind,
       contentPlan: payload.contentPlan,
       assignedTo: payload.assignedTo,
       curriculumPlanId: payload.curriculumPlanId,
+      curriculumPlanVersionId: payload.curriculumPlanVersionId,
+      contentPlanIncludesEnem: payload.contentPlanIncludesEnem,
       generationJobId: job.id,
     },
     job.requestedBy,

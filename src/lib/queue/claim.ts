@@ -1,6 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { generationJobs, type GenerationJobType } from '@/db/schema'
+import { generationJobItems, generationJobs, type GenerationJobType } from '@/db/schema'
 import { nextStatusAfterFailure } from './types'
 
 export type ClaimedJob = {
@@ -124,8 +124,8 @@ export async function finalizeScanTranscriptionReadings(jobId: number, exception
 // Falha de execução: volta pra 'pendente' enquanto houver tentativa
 // sobrando, senão 'erro' definitivo. errorMessage fica gravada nos dois
 // casos — durante um retry a UI mostra o último erro visto.
-export async function failJob(job: Pick<ClaimedJob, 'id' | 'attempts' | 'maxAttempts'>, errorMessage: string): Promise<'pendente' | 'erro'> {
-  const nextStatus = nextStatusAfterFailure(job.attempts, job.maxAttempts)
+export async function failJob(job: Pick<ClaimedJob, 'id' | 'attempts' | 'maxAttempts'>, errorMessage: string, retryable = true): Promise<'pendente' | 'erro'> {
+  const nextStatus = nextStatusAfterFailure(job.attempts, job.maxAttempts, retryable)
   await db
     .update(generationJobs)
     .set({
@@ -232,4 +232,24 @@ export async function retryJob(jobId: number): Promise<boolean> {
     .where(and(eq(generationJobs.id, jobId), eq(generationJobs.status, 'erro')))
     .returning({ id: generationJobs.id })
   return rows.length > 0
+}
+
+/** Reabre somente as questões pendentes de um job concluído parcialmente. */
+export async function retryPartialJob(jobId: number): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const jobs = await tx.update(generationJobs)
+      .set({ status: 'pendente', attempts: 0, errorMessage: null, startedAt: null, finishedAt: null, availableAt: null })
+      .where(and(eq(generationJobs.id, jobId), eq(generationJobs.status, 'concluido'), eq(generationJobs.jobType, 'gerar_prova')))
+      .returning({ id: generationJobs.id })
+    if (!jobs.length) return false
+    const failedItems = await tx.update(generationJobItems)
+      .set({ status: 'pendente', questionPayload: null, issues: null, lastError: null, currentStage: null, updatedAt: new Date() })
+      .where(and(eq(generationJobItems.jobId, jobId), eq(generationJobItems.status, 'erro')))
+      .returning({ id: generationJobItems.id })
+    if (!failedItems.length) throw new Error('O job não tem questões pendentes para retomar.')
+    return true
+  }).catch((error) => {
+    if (error instanceof Error && error.message === 'O job não tem questões pendentes para retomar.') return false
+    throw error
+  })
 }

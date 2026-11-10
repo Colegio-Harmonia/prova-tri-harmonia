@@ -105,6 +105,7 @@ export async function POST(
           gradingCriteria: question.gradingCriteria ?? null,
           studentAnswer: a.transcribedAnswer,
           maxGrade: questionMaxGrade(question),
+          maxGradeLabel: payload.metadata.generationEngine === 'whole-exam-v1' ? '% da prova' : 'ponto(s)',
         })
         return { questionNumber: a.questionNumber, suggestion }
       },

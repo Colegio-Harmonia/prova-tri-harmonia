@@ -3,7 +3,6 @@ import { detectAlternativeAmbiguities } from './alternatives'
 import { parseSingleNumber } from './similarity'
 import { getRuleEngine } from './rules'
 import { StageGateError } from './types'
-import { missingRequiredSupportTextReason } from '@/lib/exams/supportTextIntegrity'
 import type { MetadataDraft, PipelineContext, QuestionPlan, StatementDraft, TruthObject, VisualPlan } from './types'
 
 const NUMERIC_TOLERANCE = 1e-6
@@ -122,14 +121,12 @@ export function gateTruth(ctx: PipelineContext, plan: QuestionPlan, truth: Truth
     return
   }
 
-  // fonte_ancorada / interpretativa: a evidência precisa existir literalmente no material.
-  const material = normalize(plan.sourceMaterial ?? ctx.curriculumContent ?? '')
+  // O planejamento delimita o escopo, mas não é necessariamente uma fonte de
+  // fatos. A evidência textual é conferida contra o supportText em
+  // gateAnchoredClaim abaixo.
   const evidence = normalize(truth.sourceEvidence ?? truth.textEvidence ?? '')
   if (evidence.length < 8) {
     throw new StageGateError('stage1', 'evidence_missing', 'A evidência ancorada está vazia ou curta demais para ser verificável.')
-  }
-  if (!material.includes(evidence)) {
-    throw new StageGateError('stage1', 'evidence_not_found', 'A evidência citada não existe literalmente no material-fonte fornecido (blindagem contra fato inventado).')
   }
 }
 
@@ -143,6 +140,11 @@ export function gateAnchoredClaim(supportText: string | null | undefined, truth:
   const claim = (truth.claim ?? '').trim()
   if (claim.length < 2) throw new StageGateError('stage1', 'claim_missing', 'A resposta correta ("claim") está vazia.')
   const support = normalize(supportText ?? '')
+  const claimNormalized = normalize(claim)
+  const supportSentences = (supportText ?? '').split(/(?<=[.!?])\s+/).map(normalize).filter(Boolean)
+  if (supportSentences.some((sentence) => sentence === claimNormalized)) {
+    throw new StageGateError('stage1', 'claim_exposed_in_support', 'O texto de apoio contém literalmente a resposta que a questão pede; mantenha apenas dados ou premissas e deixe a conclusão para o aluno.')
+  }
   if (support.split(' ').filter(Boolean).length < 8) return // sem apoio textual: nada a ancorar
   const evidence = normalize(truth.sourceEvidence ?? truth.textEvidence ?? '')
   if (evidence.length < 8) {
@@ -177,8 +179,6 @@ function numericTokens(text: string): number[] {
  * derivada ou derivação canônica).
  */
 export function gateStatement(ctx: PipelineContext, plan: QuestionPlan, truth: TruthObject, draft: StatementDraft): void {
-  const supportTextIssue = missingRequiredSupportTextReason(draft)
-  if (supportTextIssue) throw new StageGateError('stage3', 'missing_support_text', supportTextIssue)
   // Nunca expor nomes de campos internos do payload ao aluno. Isso acontecia
   // quando o modelo dizia "leia o trecho em supportText" em vez de usar o
   // texto de apoio apresentado pela interface.

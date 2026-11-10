@@ -17,6 +17,7 @@ type PayloadQuestion = {
   number: number
   type: 'objetiva' | 'descritiva'
   source?: string
+  weight?: number | null
   enemBankRef?: { questionId: number; year: number } | null
   pedagogicalClassification?: { difficulty?: 'facil' | 'media' | 'dificil' | null } | null
   review?: { difficulty?: 'facil' | 'adequada' | 'dificil' | null } | null
@@ -74,6 +75,7 @@ export async function scoreExamCorrections(examId: number): Promise<ScoreCorrect
   const internalEstimateQuestions: InternalEstimateQuestion[] = questions.map((question) => ({
     number: question.number,
     source: question.source,
+    weight: question.weight,
     difficulty: question.review?.difficulty ?? question.pedagogicalClassification?.difficulty ?? null,
   }))
 

@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { and, desc, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { auth } from '@/auth/auth'
 import { db } from '@/db/client'
-import { GENERATION_JOB_STATUSES, GENERATION_JOB_TYPES, generationJobs, users } from '@/db/schema'
+import { GENERATION_JOB_STATUSES, GENERATION_JOB_TYPES, generationJobItems, generationJobs, users } from '@/db/schema'
 import { isStaffSuperuser } from '@/lib/auth/roles'
 import { llmAvailable } from '@/lib/gemini/llmClient'
 import { enqueueGerarProvaBatch, BatchValidationError } from '@/lib/queue/enqueue'
@@ -31,13 +31,31 @@ const postSchema = z.object({
   config: z.object({
     bimester: z.number().int().min(1).max(4).optional(),
     questionCount: z.number().int().min(0).max(30),
+    questionSource: z.enum(['acervo', 'ia']).optional(),
     objectivePercentage: z.number().int().min(0).max(100).optional().default(70),
     enemBankQuestionIds: z.array(z.number().int()).max(30).optional(),
     assessmentKind: z.enum(['padrao', 'enem']).optional(),
     contentPlan: z.array(curriculumPlanItemSchema).max(60).optional(),
+    curriculumPlanIds: z.record(z.string(), z.number().int().positive()).optional(),
+    curriculumPlanVersionIds: z.record(z.string(), z.number().int().positive()).optional(),
+    contentPlanIncludesEnem: z.boolean().optional(),
     assignedTo: z.number().int().positive().optional(),
   }),
+}).superRefine((input, ctx) => {
+  if (input.config.questionCount <= 0) return
+  const missing = input.subjects.filter((subject) => !input.config.curriculumPlanIds?.[subject])
+  if (missing.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['config', 'curriculumPlanIds'], message: `Selecione um planejamento aprovado na aba Planejamentos para: ${missing.join(', ')}.` })
 })
+
+function isMissingCurrentStageColumn(error: unknown): boolean {
+  let current: unknown = error
+  for (let depth = 0; depth < 4 && current && typeof current === 'object'; depth++) {
+    const candidate = current as { code?: unknown; message?: unknown; cause?: unknown }
+    if (candidate.code === '42703' && typeof candidate.message === 'string' && candidate.message.includes('current_stage')) return true
+    current = candidate.cause
+  }
+  return false
+}
 
 export async function POST(req: NextRequest) {
   const session = await auth()
@@ -129,9 +147,28 @@ export async function GET(req: NextRequest) {
     .orderBy(desc(generationJobs.createdAt), desc(generationJobs.id))
     .limit(limit)
 
+  let itemRows: Array<{ jobId: number; slotNumber: number; status: string; currentStage: string | null; lastError: string | null; issues: unknown; hasQuestionPayload: boolean; requiresVisual: boolean | null }> = []
+  if (rows.length) {
+    try {
+      itemRows = await db.select({ jobId: generationJobItems.jobId, slotNumber: generationJobItems.slotNumber, status: generationJobItems.status, currentStage: generationJobItems.currentStage, lastError: generationJobItems.lastError, issues: generationJobItems.issues, hasQuestionPayload: sql<boolean>`${generationJobItems.questionPayload} IS NOT NULL`, requiresVisual: sql<boolean | null>`NULLIF(${generationJobItems.questionPayload}->>'needsImage', '')::boolean` })
+        .from(generationJobItems)
+        .where(inArray(generationJobItems.jobId, rows.map((row) => row.id)))
+    } catch (error) {
+      // Instalações antigas sem current_stage ainda exibem a causa salva.
+      if (!isMissingCurrentStageColumn(error)) throw error
+      const legacyRows = await db.select({ jobId: generationJobItems.jobId, slotNumber: generationJobItems.slotNumber, status: generationJobItems.status, lastError: generationJobItems.lastError, issues: generationJobItems.issues, hasQuestionPayload: sql<boolean>`${generationJobItems.questionPayload} IS NOT NULL`, requiresVisual: sql<boolean | null>`NULLIF(${generationJobItems.questionPayload}->>'needsImage', '')::boolean` })
+        .from(generationJobItems)
+        .where(inArray(generationJobItems.jobId, rows.map((row) => row.id)))
+      itemRows = legacyRows.map((item) => ({ ...item, currentStage: null }))
+    }
+  }
+  const itemsByJob = new Map<number, typeof itemRows>()
+  for (const item of itemRows) itemsByJob.set(item.jobId, [...(itemsByJob.get(item.jobId) ?? []), item])
+
   return NextResponse.json({
+    serverTime: new Date().toISOString(),
     jobs: rows.map((row) => {
-      const payload = row.payload as Partial<GerarProvaJobPayload>
+      const payload = row.payload as Partial<GerarProvaJobPayload> & { examId?: number; questionNumber?: number; bnccCode?: string }
       return {
         id: row.id,
         batchId: row.batchId,
@@ -139,10 +176,14 @@ export async function GET(req: NextRequest) {
         status: row.status,
         // Resumo do pedido pra listagem — o payload completo fica no banco.
         subject: payload.subject ?? null,
+        generationEngine: payload.generationEngine ?? null,
         segment: payload.segment ?? null,
         gradeYear: payload.gradeYear ?? null,
         bimester: payload.bimester ?? null,
         classLabel: payload.classLabel ?? null,
+        examId: payload.examId ?? null,
+        questionNumber: payload.questionNumber ?? null,
+        bnccCode: payload.bnccCode ?? null,
         attempts: row.attempts,
         maxAttempts: row.maxAttempts,
         resultExamId: row.resultExamId,
@@ -153,6 +194,22 @@ export async function GET(req: NextRequest) {
         startedAt: row.startedAt,
         finishedAt: row.finishedAt,
         availableAt: row.availableAt,
+        items: (itemsByJob.get(row.id) ?? []).map((item) => {
+          const issues = Array.isArray(item.issues) ? item.issues as Array<Record<string, unknown>> : []
+          return {
+            slotNumber: item.slotNumber,
+            status: item.status,
+            currentStage: item.currentStage,
+            hasQuestionPayload: item.hasQuestionPayload,
+            requiresVisual: item.requiresVisual,
+            lastError: item.status === 'erro' ? item.lastError?.slice(0, 1200) ?? null : null,
+            diagnostics: item.status === 'erro' ? issues.filter((issue) => issue.code !== 'JEV_QUALITY_REPORT').slice(0, 3).map((issue) => ({
+              code: typeof issue.code === 'string' ? issue.code : null,
+              message: typeof issue.message === 'string' ? issue.message.slice(0, 500) : null,
+              resolutionCheck: typeof issue.resolutionCheck === 'string' ? issue.resolutionCheck.slice(0, 500) : null,
+            })) : [],
+          }
+        }),
       }
     }),
   })

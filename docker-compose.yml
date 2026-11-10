@@ -1,7 +1,7 @@
 name: prova-tri
 
 x-app-common: &app-common
-  image: prova-tri:local
+  image: ${PROVA_TRI_IMAGE:-prova-tri:local}
   build:
     context: .
     dockerfile: Dockerfile

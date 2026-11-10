@@ -31,18 +31,27 @@ const bodySchema = z
     gradeYear: z.number().int(),
     academicYear: z.number().int().min(2020).max(2100).optional(),
     subject: z.string().min(1),
+    classLabel: z.string().trim().min(1).max(120).optional(),
     bimester: z.number().int().min(1).max(4).optional(),
     // Nº de questões geradas por IA — pode ser 0 se a prova for só do
     // banco ENEM. O total (com enemBankQuestionIds) ainda precisa ficar
     // entre 10 e 30, ver o .refine() abaixo.
     questionCount: z.number().int().min(0).max(30),
+    questionSource: z.enum(['acervo', 'ia']).optional(),
     objectivePercentage: z.number().int().min(0).max(100).optional().default(70),
     enemBankQuestionIds: z.array(z.number().int()).max(30).optional().default([]),
     assessmentKind: z.enum(['padrao', 'enem']).optional(),
     contentPlan: z.array(curriculumPlanItemSchema).max(60).optional(),
+    curriculumPlanId: z.number().int().positive().optional(),
+    curriculumPlanVersionId: z.number().int().positive().optional(),
+    contentPlanIncludesEnem: z.boolean().optional(),
+  })
+  .refine((v) => v.questionCount === 0 || Boolean(v.curriculumPlanId), {
+    message: 'Selecione um planejamento aprovado na aba Planejamentos antes de gerar.',
+    path: ['curriculumPlanId'],
   })
   .refine((v) => v.questionCount + v.enemBankQuestionIds.length >= 10 && v.questionCount + v.enemBankQuestionIds.length <= 30, {
-    message: 'O total de questões (geradas por IA + banco ENEM) precisa ficar entre 10 e 30.',
+    message: 'O total de questões (acervo ou IA + banco ENEM) precisa ficar entre 10 e 30.',
   })
   .refine((v) => v.assessmentKind !== 'enem' || v.enemBankQuestionIds.length > 0, {
     message: 'Simulado ENEM precisa incluir ao menos uma questão real do banco ENEM.',

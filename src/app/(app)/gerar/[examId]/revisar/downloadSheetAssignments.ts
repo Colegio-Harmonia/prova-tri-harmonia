@@ -4,7 +4,7 @@ function errorMessage(body: ApiError) {
   return body.message ?? body.error ?? 'Não foi possível emitir as fichas.'
 }
 
-export async function downloadSheetAssignments(examId: number, assignmentIds: number[], action: 'emit' | 'download' = 'emit') {
+export async function downloadSheetAssignments(examId: number, assignmentIds: number[], action: 'emit' | 'download' | 'reprint' = 'emit') {
   const response = await fetch(`/api/exams/${examId}/sheet-assignments/emit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   Sparkles,
   ShieldCheck,
+  Settings,
   BookOpenCheck,
   Target,
   UsersRound,
@@ -60,6 +61,7 @@ const managementItem: NavigationItem = {
 const planningItem: NavigationItem = { href: '/planejamento', label: 'Planejamento', icon: BookOpenCheck }
 
 const aiManagementItem: NavigationItem = { href: '/ia', label: 'Operações de IA', icon: Sparkles }
+const settingsItem: NavigationItem = { href: '/configuracoes', label: 'Configurações', icon: Settings }
 
 function isCurrentRoute(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`)
@@ -76,7 +78,7 @@ export function AppNavigation({ isSuperuser, mobile = false, onNavigate }: AppNa
   // Badges separam a fila de provas da fila de atividades formativas.
   const { activeProofCount, activeActivityCount, activeReinforcementCount } = useGenerationJobs()
   // Planejamento aparece para todos: professor vê os planejamentos atribuídos a ele.
-  const items = isSuperuser ? [...primaryItems, planningItem, managementItem, aiManagementItem] : [...primaryItems, planningItem]
+  const items = isSuperuser ? [...primaryItems, planningItem, managementItem, aiManagementItem, settingsItem] : [...primaryItems, planningItem]
 
   return (
     <nav aria-label="Navegação principal" className={cn('flex flex-col gap-1', mobile && 'p-3')}>

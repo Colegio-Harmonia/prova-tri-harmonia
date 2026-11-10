@@ -33,6 +33,16 @@ const examWithMissingVisualQuery: ExamGenerationResult = {
 }
 
 describe('resolução obrigatória de recursos visuais', () => {
+  it('preserva a imagem original do acervo sem substituí-la por IA', async () => {
+    const question = { ...examWithMissingVisualQuery.questions[0]!, source: 'acervo' as const, imageDescription: 'Mídia original', image: { source: 'importado' as const, driveFileId: 'original', previewUrl: '/original.png', approved: false } }
+    const result = await attachImagesToExam({ ...examWithMissingVisualQuery, questions: [question] }, { requireResolvedImages: true })
+    expect(result.questions[0]).toEqual(question)
+  })
+  it('não inventa uma imagem para original do acervo sem mídia', async () => {
+    const question = { ...examWithMissingVisualQuery.questions[0]!, source: 'acervo' as const, imageDescription: 'Mídia ausente' }
+    await expect(attachImagesToExam({ ...examWithMissingVisualQuery, questions: [question] }, { requireResolvedImages: true })).rejects.toMatchObject({ questionNumbers: [1] })
+  })
+
   it('rejeita metadados de arquivo vazio ou não-imagem', () => {
     expect(isUploadedImageIntact({ mimeType: 'image/png', size: '45' }, 45)).toBe(true)
     expect(isUploadedImageIntact({ mimeType: 'image/png', size: '0' }, 45)).toBe(false)

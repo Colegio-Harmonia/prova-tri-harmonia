@@ -2,12 +2,15 @@ import path from 'node:path'
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
+  oxc: { jsx: { runtime: 'automatic' } },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
     },
   },
   test: {
+    // PDF, SVG e PGlite competem por CPU/memória quando cada arquivo abre um worker.
+    maxWorkers: 4,
     environment: 'node',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     coverage: {

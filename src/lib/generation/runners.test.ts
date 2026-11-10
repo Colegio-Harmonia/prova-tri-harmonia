@@ -47,10 +47,9 @@ describe('contrato do estágio 0', () => {
     expect(fallbackAnchoredPlan({ ...ctx, curriculumContent: '   ' })).toBeNull()
   })
 
-  it('mantém uma evidência literal local quando o JSON do estágio 1 falha', () => {
+  it('não transforma o mesmo trecho curricular em evidência e resposta quando o JSON falha', () => {
     const fallback = fallbackAnchoredTruth({ ...ctx, curriculumContent: 'Os álcoois possuem o grupo hidroxila ligado a um carbono saturado. Aldeídos apresentam carbonila terminal.' }, 'fonte_ancorada')
-    expect(fallback?.sourceEvidence).toBe('Os álcoois possuem o grupo hidroxila ligado a um carbono saturado.')
-    expect(fallback?.claim).toBe(fallback?.sourceEvidence)
+    expect(fallback).toBeNull()
   })
 
   it('transforma falha estrutural da auditoria complementar em alerta', () => {

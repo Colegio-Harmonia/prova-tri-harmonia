@@ -4,8 +4,8 @@
  * `generation_jobs` via claim atômico (FOR UPDATE SKIP LOCKED) e executa
  * os handlers de src/lib/queue/handlers.ts.
  *
- * Concorrência 1 de propósito: DeepSeek tem rate limit e o servidor é
- * caseiro — paralelismo é um parâmetro pra revisitar, não uma reescrita.
+ * Executa um job por vez. A geração de cada prova também é serial por questão,
+ * evitando chamadas simultâneas ao provedor e progresso enganoso na fila.
  *
  * Rodar: npm run worker (produção: Docker Compose; dev: direto no terminal).
  */
@@ -18,12 +18,21 @@ import { claimNextJob, completeJob, deferJobForAiBudget, deferJobForProvider, fa
 import { executeJob, gerarProvaJobLabel } from '../src/lib/queue/handlers'
 import { AiBudgetExceededError, nextAiBudgetWindowStart } from '../src/lib/ai/operationBudget'
 import { StructuredGenerationError } from '../src/lib/gemini/structuredRepair'
+import { JevUnavailableError } from '../src/lib/ai/jevClient'
+import { classifyAiFailure } from '../src/lib/ai/operationTelemetry'
+import { isPermanentAiProviderFailure } from '../src/lib/ai/providerFailure'
 import { sendChatGenerationJobNotification } from '../src/lib/notifications/googleChat'
 
 const POLL_MS = 3_000
 const STALE_CHECK_MS = 5 * 60_000
 const STALE_JOB_MINUTES = 15
 const PROVIDER_RETRY_DELAY_MS = 5 * 60_000
+const MAX_WORKER_CONCURRENCY = 1
+
+function workerConcurrency(raw = process.env.GENERATION_WORKER_CONCURRENCY): number {
+  const parsed = raw ? Number(raw) : 1
+  return Number.isInteger(parsed) ? Math.min(MAX_WORKER_CONCURRENCY, Math.max(1, parsed)) : 1
+}
 
 const TEMPORARY_PROVIDER_FAILURES = new Set([
   'rate_limited',
@@ -57,6 +66,11 @@ function loadLocalEnvFile() {
 }
 
 let shuttingDown = false
+let crashing = false
+// Jobs em execução neste processo. Usado só pela rota de queda (ver
+// handleFatalError) pra devolver à fila na hora, em vez de esperar a
+// varredura de órfãos de 15min.
+const activeJobs = new Map<number, ClaimedJob>()
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -93,6 +107,7 @@ async function runOnce(job: ClaimedJob) {
     try { await heartbeatJob(job.id) } catch { /* best-effort, nunca derruba o job */ }
   }, 20_000)
 
+  activeJobs.set(job.id, job)
   try {
     const result = await executeJob(job)
     await completeJob(job.id, { resultExamId: result.resultExamId, resultRef: result.resultRef })
@@ -101,11 +116,22 @@ async function runOnce(job: ClaimedJob) {
       await notifyRequester(job, result.label, 'concluido', result.resultExamId)
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
+    const message = err instanceof StructuredGenerationError
+      ? `[ia:${err.failureCode}] ${err.message}${err.issues.length ? ` Detalhe: ${[...new Set(err.issues)].slice(0, 3).join(' | ')}` : ''}`.slice(0, 1500)
+      : err instanceof Error ? err.message : String(err)
     if (err instanceof AiBudgetExceededError) {
       const availableAt = nextAiBudgetWindowStart()
       await deferJobForAiBudget(job, availableAt, `${message} A geração será retomada automaticamente após ${availableAt.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}.`)
       console.warn(`[worker] job #${job.id} aguardando cota de ${err.purpose}; tentativa preservada.`)
+      return
+    }
+    if (err instanceof JevUnavailableError && err.retryable) {
+      const retryDelayMs = err.failure.retryAfterMs === null
+        ? PROVIDER_RETRY_DELAY_MS
+        : Math.min(60 * 60_000, Math.max(5_000, err.failure.retryAfterMs))
+      const availableAt = new Date(Date.now() + retryDelayMs)
+      await deferJobForProvider(job, availableAt, `${message} A fila tentará novamente após ${availableAt.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}; nenhuma tentativa de conteúdo foi consumida.`)
+      console.warn(`[worker] job #${job.id} aguardando Jev (${err.failure.category}); tentativa preservada.`)
       return
     }
     if (err instanceof StructuredGenerationError && TEMPORARY_PROVIDER_FAILURES.has(err.failureCode)) {
@@ -114,7 +140,8 @@ async function runOnce(job: ClaimedJob) {
       console.warn(`[worker] job #${job.id} aguardando provedor (${err.failureCode}); tentativa preservada.`)
       return
     }
-    const nextStatus = await failJob(job, message)
+    const failureCode = err instanceof StructuredGenerationError ? err.failureCode : classifyAiFailure(err)
+    const nextStatus = await failJob(job, message, !isPermanentAiProviderFailure(failureCode))
     console.error(`[worker] job #${job.id} falhou (${nextStatus === 'pendente' ? 'vai retentar' : 'erro definitivo'}): ${message}`)
     // Falha definitiva só vira DM em job disparado pelo usuário — job
     // interno (pontuar_prova) falhando fica no log e na aba da fila.
@@ -123,8 +150,31 @@ async function runOnce(job: ClaimedJob) {
     }
   } finally {
     clearInterval(heartbeatInterval)
+    activeJobs.delete(job.id)
   }
 }
+
+// Erro assíncrono fora de qualquer try/catch (ex.: assert interno do undici
+// quando o provedor fecha a conexão no meio da resposta — visto em produção
+// 10/11/2026, job #24244). O estado do processo não é confiável depois disso,
+// então o worker sai e o Docker reinicia; antes, devolve os jobs em execução à
+// fila pelo caminho normal de falha (consome a tentativa, mesmo critério da
+// varredura de órfãos), sem deixar o job parado em 'gerando' por 15min.
+async function handleFatalError(kind: string, err: unknown) {
+  console.error(`[worker] ${kind} — encerrando o worker:`, err)
+  if (crashing) return
+  crashing = true
+  const message = `Execução interrompida por erro inesperado no worker (${err instanceof Error ? err.message : String(err)}); devolvido à fila automaticamente.`
+  const requeue = Promise.allSettled([...activeJobs.values()].map(async (job) => {
+    const nextStatus = await failJob(job, message, true)
+    console.warn(`[worker] job #${job.id} devolvido após queda (${nextStatus === 'pendente' ? 'vai retentar' : 'erro definitivo'}).`)
+  }))
+  await Promise.race([requeue, sleep(5_000)])
+  process.exit(1)
+}
+
+process.on('uncaughtException', (err) => { void handleFatalError('uncaughtException', err) })
+process.on('unhandledRejection', (reason) => { void handleFatalError('unhandledRejection', reason) })
 
 async function main() {
   loadLocalEnvFile()
@@ -133,7 +183,8 @@ async function main() {
     process.exit(1)
   }
 
-  console.log('[worker] prova-tri-worker iniciado (poll a cada %dms, jobs órfãos após %dmin)', POLL_MS, STALE_JOB_MINUTES)
+  const concurrency = workerConcurrency()
+  console.log('[worker] prova-tri-worker iniciado (poll a cada %dms, concorrência %d, jobs órfãos após %dmin)', POLL_MS, concurrency, STALE_JOB_MINUTES)
 
   // A heartbeat diferencia geração longa de job órfão; só jobs que pararam
   // de renovar por 15 minutos são devolvidos à fila.
@@ -143,6 +194,7 @@ async function main() {
   }
 
   let lastStaleCheck = Date.now()
+  const inFlight = new Map<number, Promise<void>>()
   while (!shuttingDown) {
     if (Date.now() - lastStaleCheck >= STALE_CHECK_MS) {
       lastStaleCheck = Date.now()
@@ -151,6 +203,10 @@ async function main() {
       } catch (err) {
         console.warn('[worker] falha na varredura de jobs órfãos:', err instanceof Error ? err.message : err)
       }
+    }
+    if (inFlight.size >= concurrency) {
+      await Promise.race(inFlight.values())
+      continue
     }
     let job: ClaimedJob | null = null
     try {
@@ -163,12 +219,16 @@ async function main() {
     }
 
     if (!job) {
-      await sleep(POLL_MS)
+      if (inFlight.size) await Promise.race([...inFlight.values(), sleep(POLL_MS)])
+      else await sleep(POLL_MS)
       continue
     }
-    await runOnce(job)
+    const jobId = job.id
+    const execution = runOnce(job).finally(() => inFlight.delete(jobId))
+    inFlight.set(jobId, execution)
   }
 
+  await Promise.allSettled(inFlight.values())
   console.log('[worker] encerrado.')
   process.exit(0)
 }

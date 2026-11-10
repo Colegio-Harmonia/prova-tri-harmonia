@@ -15,6 +15,28 @@ export type HabilidadesParseResult = {
   reason?: string
 }
 
+/**
+ * Habilidade da Matriz do ENEM planejada para o capítulo (coluna "Habilidades
+ * ENEM" da planilha do Ensino Médio). `count` = quantas vezes o código
+ * aparece no planejamento — usado como peso na distribuição da prova.
+ */
+export type ParsedEnemSkill = {
+  /** Forma canônica, ex: "C2:H5" */
+  code: string
+  competency: number
+  skill: number
+  count: number
+  /** Origem das questões do material, ex: ["Unesp-2022", "Enem-2020"] */
+  sources: string[]
+  description: string | null
+}
+
+export type EnemSkillsParseResult = {
+  skills: ParsedEnemSkill[]
+  /** Códigos cujo par C:H não existe na matriz da área (ex: "C2:H14") */
+  invalid: string[]
+}
+
 export type ObjectiveSentence = {
   text: string
   kind: 'cognitiva' | 'atitudinal'
@@ -32,6 +54,10 @@ export type CurricularUnit = {
   habilidades: HabilidadesParseResult
   objetivos: ObjectiveSentence[]
   objetivosColumnMissing: boolean
+  /** Só Ensino Médio — habilidades ENEM planejadas (C:H). Ausente/vazio fora do EM. */
+  enemSkills?: EnemSkillsParseResult
+  /** Texto original das habilidades ENEM (para importar no planejamento sem perder peso/origem). */
+  enemSkillsRaw?: string | null
   /** Conteúdo enriquecido do banco (Programação Trimestral / Manual do Professor) */
   enrichedContent?: string | null
   /** Objetivos detalhados do banco */
@@ -39,6 +65,7 @@ export type CurricularUnit = {
 }
 
 export type CurriculumSelection = {
+  planReference?: { planId: number; versionId: number; versionNumber: number }
   segment: Segment
   gradeYear: number
   subject: string
@@ -64,6 +91,7 @@ export type ColumnRoles = {
   tituloCapituloIdx: number | null
   conteudoIdx: number | null
   habilidadesIdx: number | null
+  habilidadesEnemIdx: number | null
   objetivosIdx: number | null
   bimestreIdx: number | null
   trimestreIdx: number | null

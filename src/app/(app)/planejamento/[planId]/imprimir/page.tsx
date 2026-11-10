@@ -38,6 +38,7 @@ export default async function PrintPlanPage(props: { params: Promise<{ planId: s
       <h2 className="text-lg font-semibold">{index + 1}. {unit.title}</h2>
       {unit.content && <p className="mt-1 whitespace-pre-line text-sm"><span className="font-semibold">Conteúdos:</span> {unit.content}</p>}
       {unit.objectives && <p className="mt-1 whitespace-pre-line text-sm"><span className="font-semibold">Objetivos:</span> {unit.objectives}</p>}
+      {unit.enemSkills && <p className="mt-1 whitespace-pre-line text-sm"><span className="font-semibold">Habilidades ENEM:</span> {unit.enemSkills}</p>}
       {unit.skills.length > 0 && <table className="mt-2 w-full border-collapse text-sm">
         <thead><tr className="text-left"><th scope="col" className="border border-border px-2 py-1">Código</th><th scope="col" className="border border-border px-2 py-1">Habilidade BNCC</th><th scope="col" className="border border-border px-2 py-1">Meta</th></tr></thead>
         <tbody>{unit.skills.map((skill) => <tr key={skill.code}><td className="border border-border px-2 py-1 font-mono">{skill.code}</td><td className="border border-border px-2 py-1">{skill.description ?? '—'}</td><td className="border border-border px-2 py-1 text-right">{skill.targetMasteryPercent}%</td></tr>)}</tbody>

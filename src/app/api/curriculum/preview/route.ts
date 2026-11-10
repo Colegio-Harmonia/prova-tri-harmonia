@@ -4,12 +4,15 @@ import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
 import { TabResolutionError } from '@/lib/sheets/tabResolver'
 import { SheetNotConfiguredError } from '@/config/gradeSheets'
 import { auth } from '@/auth/auth'
+import { CurriculumPlanError } from '@/lib/curriculum/planCurriculum'
 
 const bodySchema = z.object({
   segment: z.enum(['anos-iniciais', 'anos-finais', 'ensino-medio']),
   gradeYear: z.number().int(),
+  academicYear: z.number().int().min(2020).max(2100).optional(),
   subject: z.string().min(1),
   bimester: z.number().int().min(1).max(4).optional(),
+  curriculumPlanId: z.number().int().positive().optional(),
 })
 
 // Já protegida pelo middleware (matcher inclui /api/curriculum/:path*),
@@ -35,7 +38,10 @@ export async function POST(req: NextRequest) {
     if (err instanceof SheetNotConfiguredError) {
       return NextResponse.json({ error: err.message }, { status: 422 })
     }
+    if (err instanceof CurriculumPlanError) {
+      return NextResponse.json({ error: err.message }, { status: 422 })
+    }
     console.error('[curriculum/preview] erro inesperado:', err)
-    return NextResponse.json({ error: 'Erro ao ler a planilha de currículo.' }, { status: 500 })
+    return NextResponse.json({ error: 'Erro ao ler o planejamento aprovado.' }, { status: 500 })
   }
 }

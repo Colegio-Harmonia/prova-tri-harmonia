@@ -1,4 +1,5 @@
-import { splitLatexSegments, renderLatexToBuffer } from '@/lib/math/latexRender'
+import { splitLatexSegments } from '@/lib/math/latexRender'
+import { renderLatexPng } from '@/lib/math/latexRenderServer'
 import { uploadToStaging } from '@/lib/images/questionImageService'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 
@@ -26,6 +27,7 @@ export function collectTexts(exam: ExamGenerationResult): string[] {
     if (q.supportText) texts.push(q.supportText)
     if (q.alternatives) texts.push(...q.alternatives.map((a) => a.text))
     if (q.expectedAnswer) texts.push(q.expectedAnswer)
+    if (q.commentedResolution) texts.push(q.commentedResolution)
     if (q.gradingCriteria) texts.push(q.gradingCriteria)
   }
   // Alternativas do banco ENEM podem vir com `text: null` (alternativa-imagem);
@@ -37,7 +39,7 @@ export function collectTexts(exam: ExamGenerationResult): string[] {
  * Pré-resolve toda fórmula LaTeX ($...$) da prova em imagens no Drive, uma
  * vez por fórmula DISTINTA — a mesma expressão pode se repetir em mais de
  * uma alternativa/questão, sem subir a imagem duplicada. Nunca lança: uma
- * fórmula que falhar (serviço de renderização fora do ar) só fica de fora
+ * fórmula que falhar (renderização ou upload indisponível) só fica de fora
  * do cache, e quem monta o documento cai pro texto LaTeX cru como
  * fallback em vez de perder o conteúdo da questão inteira.
  */
@@ -53,7 +55,7 @@ export async function buildLatexImageCache(exam: ExamGenerationResult): Promise<
   await Promise.all(
     [...distinctLatex].map(async (latex) => {
       try {
-        const buffer = await renderLatexToBuffer(latex, DOC_RENDER_DPI)
+        const buffer = await renderLatexPng(latex, DOC_RENDER_DPI)
         const { width, height } = getPngDimensions(buffer)
         const { driveFileId } = await uploadToStaging(buffer, 'image/png', `formula-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`)
         cache.set(latex, { driveFileId, widthPt: width * PT_PER_PX, heightPt: height * PT_PER_PX })

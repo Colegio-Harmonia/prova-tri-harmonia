@@ -26,7 +26,7 @@ describe('activityGenerationDecision', () => {
 
   it('mapeia a decisão tipada e preserva habilidade e matriz na instrução', async () => {
     const evaluate = vi.fn(async (options: Parameters<typeof evaluateWithJev>[0]) => ({
-      model: 'jev', source: 'provider' as const, stateHash: 'hash', cacheKey: 'key',
+      model: 'jev', source: 'provider' as const, stateHash: 'hash', cacheKey: 'key', failure: null,
       answers: {
         approach: { type: 'choice' as const, choice: 'aplicacao_contextualizada' },
         progression: { type: 'choice' as const, choice: 'desafio_progressivo' },

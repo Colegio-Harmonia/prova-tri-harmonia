@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { randomBytes } from 'crypto'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import JSZip from 'jszip'
 import { z } from 'zod'
@@ -7,7 +8,7 @@ import { db } from '@/db/client'
 import { examSheetAssignments } from '@/db/schema'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { loadExamAndAuthorize } from '@/lib/corrections/authorize'
-import { planSheetPages } from '@/lib/scan-sheets/sheetLayout'
+import { CURRENT_SHEET_LAYOUT, objectiveSheetGeometry, planSheetPages } from '@/lib/scan-sheets/sheetLayout'
 import { generateSheetPdf } from '@/lib/scan-sheets/sheetPdf'
 import { createPageQrPayload, createSheetTokenDigest, issuedSheetTokens, readSheetQrSigningKeys, SheetQrSigningConfigurationError } from '@/lib/scan-sheets/sheetQr'
 
@@ -16,8 +17,10 @@ export const runtime = 'nodejs'
 const EMITTABLE_STATUSES = ['aprovado', 'impresso'] as const
 const bodySchema = z.object({
   assignmentIds: z.array(z.number().int().positive()).min(1).optional(),
-  action: z.enum(['emit', 'download']).optional(),
+  action: z.enum(['emit', 'download', 'reprint']).optional(),
 }).strict()
+
+class SheetEmissionConflict extends Error {}
 
 export async function POST(req: NextRequest, props: { params: Promise<{ examId: string }> }) {
   const params = await props.params
@@ -68,23 +71,28 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
   }
 
   const zip = new JSZip()
-  const emissions: Array<{ assignmentId: number; tokenDigest: string }> = []
+  const emissions: Array<{ assignment: typeof assignments[number]; publicId: string; tokenDigest: string; layoutVersion: string }> = []
   // Emite sequencialmente para não manter vários PDFs e QR em memória em um
   // lote de turma; o ZIP já acumula os bytes necessários para o download.
   for (const assignment of assignments) {
-    if (assignment.layoutVersion !== 'PTR1' || assignment.pageCount !== pagePlan.length) {
-      throw new Error(`A atribuição ${assignment.id} não corresponde ao layout PTR1 atual; gere uma nova atribuição antes de emitir.`)
+    objectiveSheetGeometry(assignment.layoutVersion)
+    if (assignment.pageCount !== pagePlan.length) {
+      throw new Error(`A atribuição ${assignment.id} não corresponde às páginas da prova; gere uma nova atribuição antes de emitir.`)
     }
-    const qrTokens = action === 'emit'
+    // Fichas prontas ainda não têm QR emitido. Downloads preservam o layout
+    // assinado originalmente, inclusive quando já há cartões PTR1 impressos.
+    const layoutVersion = action === 'download' ? assignment.layoutVersion : CURRENT_SHEET_LAYOUT
+    const publicId = action === 'reprint' ? randomBytes(18).toString('base64url') : assignment.publicId
+    const qrTokens = action !== 'download'
       ? pagePlan.map((_, pageIndex) => createPageQrPayload({
-        publicId: assignment.publicId,
+        publicId,
         pageNumber: pageIndex + 1,
-        layoutVersion: assignment.layoutVersion,
+        layoutVersion,
       }, signingKeys[0]))
       : issuedSheetTokens({
-        publicId: assignment.publicId,
+        publicId,
         pageCount: assignment.pageCount,
-        layoutVersion: assignment.layoutVersion,
+        layoutVersion,
         tokenDigest: assignment.tokenDigest,
         signingKeys,
       })
@@ -95,34 +103,64 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
       }, { status: 409 })
     }
     const pdf = await generateSheetPdf({
+      examId,
       studentName: assignment.studentNameSnapshot,
       subject: exam.subject,
       gradeYear: exam.gradeYear,
       academicYear: exam.academicYear,
       bimester: exam.bimester,
-      publicId: assignment.publicId,
-      layoutVersion: assignment.layoutVersion,
+      publicId,
+      layoutVersion,
       qrTokens,
       questions: payload.questions,
     })
-    zip.file(`folha-${assignment.publicId}.pdf`, pdf)
-    if (action === 'emit') emissions.push({ assignmentId: assignment.id, tokenDigest: createSheetTokenDigest(qrTokens) })
+    zip.file(`folha-${publicId}.pdf`, pdf)
+    if (action !== 'download') emissions.push({ assignment, publicId, tokenDigest: createSheetTokenDigest(qrTokens), layoutVersion })
   }
 
   const archive = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } })
   // Next's BodyInit typing requires ArrayBuffer (not the generic Uint8Array
   // returned by JSZip), so copiamos o buffer antes de responder.
   const archiveBody = new Uint8Array(archive).buffer
-  if (action === 'emit') {
+  if (action !== 'download') {
     const emittedAt = new Date()
-    await db.transaction(async (tx) => {
-      for (const emission of emissions) {
-        await tx
-          .update(examSheetAssignments)
-          .set({ status: 'emitida', tokenDigest: emission.tokenDigest, emittedAt, emittedBy: currentUser.id, updatedAt: emittedAt })
-          .where(and(eq(examSheetAssignments.id, emission.assignmentId), eq(examSheetAssignments.status, 'pronta')))
+    try {
+      await db.transaction(async (tx) => {
+        for (const emission of emissions) {
+          const replaced = await tx
+            .update(examSheetAssignments)
+            .set(action === 'reprint'
+              ? { status: 'anulada', voidedAt: emittedAt, voidedBy: currentUser.id, updatedAt: emittedAt }
+              : { status: 'emitida', tokenDigest: emission.tokenDigest, layoutVersion: emission.layoutVersion, emittedAt, emittedBy: currentUser.id, updatedAt: emittedAt })
+            .where(and(eq(examSheetAssignments.id, emission.assignment.id), eq(examSheetAssignments.status, action === 'reprint' ? 'emitida' : 'pronta')))
+            .returning({ id: examSheetAssignments.id })
+          if (replaced.length !== 1) throw new SheetEmissionConflict()
+          if (action === 'reprint') {
+            await tx.insert(examSheetAssignments).values({
+              examId,
+              examCorrectionId: emission.assignment.examCorrectionId,
+              classroomStudentId: emission.assignment.classroomStudentId,
+              studentNameSnapshot: emission.assignment.studentNameSnapshot,
+              studentEmailSnapshot: emission.assignment.studentEmailSnapshot,
+              publicId: emission.publicId,
+              tokenDigest: emission.tokenDigest,
+              layoutVersion: emission.layoutVersion,
+              pageCount: pagePlan.length,
+              status: 'emitida',
+              issuedBy: currentUser.id,
+              emittedAt,
+              emittedBy: currentUser.id,
+              reprintOfId: emission.assignment.id,
+            })
+          }
+        }
+      })
+    } catch (err) {
+      if (err instanceof SheetEmissionConflict) {
+        return NextResponse.json({ error: 'sheet_changed', message: 'As fichas foram alteradas durante a emissão. Atualize a lista e tente novamente.' }, { status: 409 })
       }
-    })
+      throw err
+    }
   }
 
   return new NextResponse(archiveBody, {

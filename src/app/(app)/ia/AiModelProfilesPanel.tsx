@@ -13,11 +13,63 @@ const sections: Array<{ purpose: Purpose; title: string; description: string }> 
 
 export default function AiModelProfilesPanel() {
   const [profiles, setProfiles] = useState<Profile[]>([])
+  const [textFallbackProfileId, setTextFallbackProfileId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState<Purpose | null>(null)
-  async function load() { const response = await fetch('/api/admin/ai-models'); const body = await response.json(); if (!response.ok) throw new Error(body.error ?? 'Não foi possível carregar modelos.'); setProfiles(body.profiles) }
+  async function load() { const response = await fetch('/api/admin/ai-models'); const body = await response.json(); if (!response.ok) throw new Error(body.error ?? 'Não foi possível carregar modelos.'); setProfiles(body.profiles); setTextFallbackProfileId(body.textFallbackProfileId ?? null) }
   useEffect(() => { load().catch((reason) => setError(reason.message)) }, [])
   async function selectPrimary(profile: Profile) { setSaving(profile.purpose); setError(null); try { const response = await fetch('/api/admin/ai-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...profile, enabled: true }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error ?? 'Não foi possível trocar o modelo.'); await load() } catch (reason) { setError(reason instanceof Error ? reason.message : 'Não foi possível trocar o modelo.') } finally { setSaving(null) } }
   async function pause(purpose: Purpose) { setSaving(purpose); setError(null); try { const response = await fetch(`/api/admin/ai-models?purpose=${purpose}`, { method: 'DELETE' }); const body = await response.json(); if (!response.ok) throw new Error(body.error ?? 'Não foi possível pausar.'); await load() } catch (reason) { setError(reason instanceof Error ? reason.message : 'Não foi possível pausar.') } finally { setSaving(null) } }
-  return <section className="rounded border border-border bg-surface p-5" aria-busy={saving !== null}><h2 className="text-base font-semibold text-content-primary">Quem faz o quê</h2><p className="mt-1 text-sm text-content-secondary">Selecione o modelo principal de cada finalidade. Os demais ficam em reserva para uma troca rápida e consciente.</p>{error && <p role="alert" className="mt-3 text-sm text-red-600">{error}</p>}<p className="sr-only" role="status" aria-live="polite">{saving ? `Atualizando perfil de ${sections.find((section) => section.purpose === saving)?.title ?? 'IA'}.` : ''}</p><div className="mt-5 grid gap-4 lg:grid-cols-3">{sections.map((section) => { const options = profiles.filter((profile) => profile.purpose === section.purpose); const primary = options.find((profile) => profile.enabled); const backups = options.filter((profile) => !profile.enabled); const selectId = `ai-model-${section.purpose}`; return <article key={section.purpose} className="rounded-lg border border-border p-4"><h3 className="font-semibold text-content-primary">{section.title}</h3><p className="mt-1 min-h-10 text-sm text-content-secondary">{section.description}</p><label htmlFor={selectId} className="mt-4 block text-xs font-medium text-content-secondary">Modelo principal de {section.title}</label><select id={selectId} value={primary?.id ?? ''} disabled={saving === section.purpose} onChange={(event) => { const selected = options.find((profile) => profile.id === Number(event.target.value)); if (selected) void selectPrimary(selected) }} className="mt-1 w-full rounded border border-border bg-surface px-3 py-2 text-sm"><option value="">Pausado</option>{options.map((profile) => <option key={profile.id} value={profile.id}>{profile.provider} · {profile.model}</option>)}</select><p className="mt-3 text-xs text-content-secondary"><strong>Reservas:</strong> {backups.length ? backups.map((profile) => `${profile.provider} · ${profile.model}`).join(' | ') : 'nenhuma configurada'}</p><button type="button" onClick={() => void pause(section.purpose)} disabled={!primary || saving === section.purpose} className="mt-4 rounded border border-border px-3 py-2 text-sm font-medium text-content-primary disabled:opacity-50">{saving === section.purpose ? 'Salvando...' : 'Pausar'}</button></article> })}</div><p className="mt-4 text-xs text-content-secondary">Reserva significa disponível para troca pelo dropdown. O fallback automático ainda não está ativo, para evitar troca de provedor sem decisão da gestão.</p></section>
+  async function selectFallback(id: number | null) {
+    setSaving('text_generation'); setError(null)
+    try {
+      const response = await fetch('/api/admin/ai-models', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ textFallbackProfileId: id }),
+      })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error ?? 'Não foi possível trocar a reserva.')
+      await load()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Não foi possível trocar a reserva.')
+    } finally { setSaving(null) }
+  }
+  return <section className="rounded border border-border bg-surface p-5" aria-busy={saving !== null}>
+    <h2 className="text-base font-semibold text-content-primary">Quem faz o quê</h2>
+    <p className="mt-1 text-sm text-content-secondary">Selecione o modelo principal de cada finalidade e uma reserva automática para texto e questões.</p>
+    {error && <p role="alert" className="mt-3 text-sm text-red-600">{error}</p>}
+    <p className="sr-only" role="status" aria-live="polite">{saving ? `Atualizando perfil de ${sections.find((section) => section.purpose === saving)?.title ?? 'IA'}.` : ''}</p>
+    <div className="mt-5 grid gap-4 lg:grid-cols-3">{sections.map((section) => {
+      const options = profiles.filter((profile) => profile.purpose === section.purpose)
+      const primary = options.find((profile) => profile.enabled)
+      const backups = options.filter((profile) => !profile.enabled)
+      const selectId = `ai-model-${section.purpose}`
+      const reserveOptions = options.filter((profile) => profile.provider !== primary?.provider && ['deepseek', 'openai', 'gemini'].includes(profile.provider))
+      const validReserve = reserveOptions.some((profile) => profile.id === textFallbackProfileId)
+      return <article key={section.purpose} className="rounded-lg border border-border p-4">
+        <h3 className="font-semibold text-content-primary">{section.title}</h3>
+        <p className="mt-1 min-h-10 text-sm text-content-secondary">{section.description}</p>
+        <label htmlFor={selectId} className="mt-4 block text-xs font-medium text-content-secondary">Modelo principal de {section.title}</label>
+        <select id={selectId} value={primary?.id ?? ''} disabled={saving === section.purpose} onChange={(event) => {
+          const selected = options.find((profile) => profile.id === Number(event.target.value))
+          if (selected) void selectPrimary(selected)
+        }} className="mt-1 w-full rounded border border-border bg-surface px-3 py-2 text-sm">
+          <option value="">Pausado</option>
+          {options.map((profile) => <option key={profile.id} value={profile.id}>{profile.provider} · {profile.model}</option>)}
+        </select>
+        {section.purpose === 'text_generation' && <>
+          <label htmlFor="ai-text-fallback" className="mt-4 block text-xs font-medium text-content-secondary">Reserva automática de outro provedor</label>
+          <select id="ai-text-fallback" value={validReserve ? textFallbackProfileId ?? '' : ''} disabled={saving === section.purpose} onChange={(event) => void selectFallback(event.target.value ? Number(event.target.value) : null)} className="mt-1 w-full rounded border border-border bg-surface px-3 py-2 text-sm">
+            <option value="">Sem reserva automática</option>
+            {reserveOptions.map((profile) => <option key={profile.id} value={profile.id}>{profile.provider} · {profile.model}</option>)}
+          </select>
+          <p className="mt-2 text-xs text-content-secondary">Se o principal ficar sem saldo, recusar a credencial ou estiver indisponível, a geração continua pela reserva. O consumo é cobrado pelo provedor utilizado.</p>
+          {textFallbackProfileId && !validReserve && <p role="status" className="mt-2 text-xs text-content-secondary">A reserva escolhida usa o mesmo provedor do principal e não será utilizada. Escolha outro provedor.</p>}
+        </>}
+        <p className="mt-3 text-xs text-content-secondary"><strong>Outros modelos:</strong> {backups.length ? backups.map((profile) => `${profile.provider} · ${profile.model}`).join(' | ') : 'nenhum configurado'}</p>
+        <button type="button" onClick={() => void pause(section.purpose)} disabled={!primary || saving === section.purpose} className="mt-4 rounded border border-border px-3 py-2 text-sm font-medium text-content-primary disabled:opacity-50">{saving === section.purpose ? 'Salvando...' : 'Pausar'}</button>
+      </article>
+    })}</div>
+    <p className="mt-4 text-xs text-content-secondary">Somente a reserva escolhida acima participa da troca automática de texto e questões.</p>
+  </section>
 }
