@@ -94,11 +94,34 @@ function CloseForm({ onDone, defaultYear }: { onDone: (message: string) => void;
   </div>
 }
 
+// Filtros da lista ficam salvos no navegador: ao abrir um planejamento e voltar
+// (botão do navegador ou link "← Planejamentos"), a lista reabre no mesmo recorte.
+const FILTERS_STORAGE_KEY = 'planejamento:filtros'
+type StoredFilters = { academicYear: number | ''; segment: Segment | ''; subject: string }
+
+function readStoredFilters(): StoredFilters | null {
+  try {
+    const raw = window.localStorage.getItem(FILTERS_STORAGE_KEY)
+    if (!raw) return null
+    const value = JSON.parse(raw) as Partial<StoredFilters>
+    return {
+      academicYear: typeof value.academicYear === 'number' ? value.academicYear : '',
+      segment: typeof value.segment === 'string' && value.segment in SEGMENT_LABELS ? value.segment as Segment : '',
+      subject: typeof value.subject === 'string' ? value.subject : '',
+    }
+  } catch { return null }
+}
+
+function writeStoredFilters(filters: StoredFilters) {
+  try { window.localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(filters)) } catch { /* armazenamento indisponível */ }
+}
+
 export default function PlanningList({ isManager }: { isManager: boolean }) {
   const currentYear = new Date().getFullYear()
   const [academicYear, setAcademicYear] = useState<number | ''>('')
   const [segment, setSegment] = useState<Segment | ''>('')
   const [subject, setSubject] = useState('')
+  const [filtersReady, setFiltersReady] = useState(false)
   const [plans, setPlans] = useState<PlanRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -114,7 +137,16 @@ export default function PlanningList({ isManager }: { isManager: boolean }) {
     if (!response.ok) { setError(body.error ?? 'Não foi possível carregar.'); return }
     setError(null); setPlans(body.plans)
   }, [academicYear, segment, subject])
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    const stored = readStoredFilters()
+    if (stored) { setAcademicYear(stored.academicYear); setSegment(stored.segment); setSubject(stored.subject) }
+    setFiltersReady(true)
+  }, [])
+  useEffect(() => {
+    if (!filtersReady) return
+    writeStoredFilters({ academicYear, segment, subject })
+    void load()
+  }, [filtersReady, load, academicYear, segment, subject])
 
   const years = [...new Set([currentYear + 1, currentYear, ...(plans ?? []).map((plan) => plan.academicYear)])].sort((a, b) => b - a)
   const subjects = [...new Set(segment ? SEGMENT_SUBJECTS[segment] : Object.values(SEGMENT_SUBJECTS).flat())].sort((a, b) => a.localeCompare(b, 'pt-BR'))
