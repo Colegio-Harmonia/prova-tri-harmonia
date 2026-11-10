@@ -9,6 +9,8 @@ export default defineConfig({
     },
   },
   test: {
+    // PDF, SVG e PGlite competem por CPU/memória quando cada arquivo abre um worker.
+    maxWorkers: 4,
     environment: 'node',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     coverage: {

@@ -47,7 +47,7 @@ describe('notação matemática no pipeline unificado', () => {
 
   it('gera apoio com premissas e exige alternativas completas e paralelas', () => {
     const prompt = buildUnifiedPrompt(ctx, slot)
-    expect(prompt).toContain('O apoio NÃO pode enunciar a conclusão')
+    expect(prompt).toContain('sem explicar o conceito, antecipar a conclusão ou entregar a resposta')
     expect(prompt).toContain('Nenhuma frase do supportText, copiada isoladamente, pode ser a resposta correta')
     expect(prompt).toContain('diferença máxima de 25%')
     expect(prompt).toContain('comentários editoriais nas alternativas')

@@ -33,7 +33,7 @@ describe('persistência da configuração do acervo', () => {
     vi.stubEnv('ACERVO_API_URL', 'http://acervo-env.local:5000')
     expect(await getAcervoApiUrl()).toBe('http://acervo-env.local:5000')
     vi.stubEnv('ACERVO_API_URL', '')
-    expect(await getAcervoApiUrl()).toBe('http://100.105.29.106:5000')
+    expect(await getAcervoApiUrl()).toBe('https://questoes.colegioharmonia.com.br')
   })
 
   it('prioriza o endereço salvo e consulta mudanças sem cache de processo', async () => {

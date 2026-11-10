@@ -570,4 +570,3 @@ function byNumberOrThrow(slots: WholeExamBlueprintSlot[], number: number) {
   if (!slot) throw new Error(`Questão ${number} não existe no blueprint.`)
   return slot
 }
-

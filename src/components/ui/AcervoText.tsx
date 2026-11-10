@@ -1,5 +1,5 @@
 import React from 'react'
-import { MathText } from './MathText'
+import { LazyMathText as MathText } from './LazyMathText'
 import { originalAcervoMediaUrl, type AcervoContentPart } from '@/lib/exams/acervoMedia'
 
 export function AcervoText({ text, parts, examId }: { text: string; parts?: AcervoContentPart[]; examId: number }) {

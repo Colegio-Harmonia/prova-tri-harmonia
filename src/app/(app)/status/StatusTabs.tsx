@@ -1,9 +1,13 @@
 'use client'
 
 import { useRouter, useSearchParams } from 'next/navigation'
+import dynamic from 'next/dynamic'
 import StatusList from './StatusList'
-import QueueList from './QueueList'
 import type { ExamKind } from '@/db/schema'
+
+const QueueList = dynamic(() => import('./QueueList'), {
+  loading: () => <p role="status" className="text-sm text-content-secondary">Carregando fila…</p>,
+})
 
 const PROOF_JOB_TYPES = ['gerar_prova', 'adicionar_questao', 'adaptar_prova']
 const REINFORCEMENT_JOB_TYPES = ['gerar_reforco_enem']

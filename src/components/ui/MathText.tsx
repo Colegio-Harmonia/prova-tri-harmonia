@@ -1,6 +1,6 @@
 import React from 'react'
 import katex from 'katex'
-import { splitLatexSegments } from '@/lib/math/latexRender'
+import { splitLatexSegments } from '@/lib/math/latexSegments'
 
 export function MathText({ text }: { text: string | null | undefined }) {
   return React.createElement(React.Fragment, null, ...splitLatexSegments(text).map((segment, index) => {

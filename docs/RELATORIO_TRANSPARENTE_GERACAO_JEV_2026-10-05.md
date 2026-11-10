@@ -1,7 +1,7 @@
 # Relatório transparente: geração de provas e revisão do Jev
 
-**Data:** 05/10/2026  
-**Finalidade:** compartilhar com outra IA o fluxo implementado, o comportamento observado em produção e os bloqueios ainda sem solução comprovada.  
+**Data:** 05/10/2026
+**Finalidade:** compartilhar com outra IA o fluxo implementado, o comportamento observado em produção e os bloqueios ainda sem solução comprovada.
 **Escopo:** geração das questões de prova, validações locais, auditoria Jev, correção automática e decisão de interromper ou concluir o job.
 
 ## Resumo executivo

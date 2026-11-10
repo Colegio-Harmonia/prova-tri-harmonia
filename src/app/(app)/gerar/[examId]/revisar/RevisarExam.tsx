@@ -2,7 +2,7 @@
 
 import { questionInepLabel } from '@/lib/exams/questionInepLabel'
 
-import { MathText } from '@/components/ui/MathText'
+import { LazyMathText as MathText } from '@/components/ui/LazyMathText'
 import { originalAcervoMedia, originalAcervoMediaUrl, hasOnlyInlineAcervoMedia } from '@/lib/exams/acervoMedia'
 import { AcervoText } from '@/components/ui/AcervoText'
 
@@ -11,7 +11,7 @@ import { questionProvenanceTags, questionOriginLabel, isOriginalBankImage, isQue
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
-import { IMAGE_ALTERNATIVE_PLACEHOLDER } from '@/lib/math/latexRender'
+import { IMAGE_ALTERNATIVE_PLACEHOLDER } from '@/lib/math/latexSegments'
 import { isStaffSuperuser } from '@/lib/auth/roles'
 import { ReviewProgress } from '@/features/assessments/components/ReviewProgress'
 import AddQuestionModal from './AddQuestionModal'

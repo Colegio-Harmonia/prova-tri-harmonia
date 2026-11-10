@@ -5,6 +5,7 @@ import { MULTIPLE_CORRECT_ALTERNATIVES, NO_CORRECT_ALTERNATIVE } from './questio
 
 const noul = (value: number) => ({ type: 'noul' as const, noul: value })
 const good: JevAnswers = {
+  linguagem_turma: noul(0.95), resposta_copiavel_apoio: noul(0.05),
   resposta_substantiva: noul(0.97), copia_escopo_curricular: noul(0.1), apoio_autossuficiente: noul(0.95),
   alinhamento_bncc: noul(0.95),
   resposta_exposta_enunciado: noul(0.05), resposta_induzida: noul(0.05), informacao_suficiente: noul(0.95), calculo_ou_dados: noul(0.95),
@@ -37,11 +38,12 @@ describe('evaluateQualityAnswers', () => {
   it('bloqueia resposta que só repete o currículo (valores reais da Q7 do #391)', () => {
     const result = evaluateQualityAnswers({ type: 'objetiva', correctLetter: 'A' }, { ...good, resposta_substantiva: noul(0.08), copia_escopo_curricular: noul(0.95), resposta_unica: noul(0.22), fatos_corretos: noul(0.2) })
     expect(result.blocked).toBe(true)
-    expect(result.issues.filter((i) => i.severity === 'bloqueante').map((i) => i.criterion)).toEqual(expect.arrayContaining(['resposta_substantiva', 'copia_escopo_curricular']))
+    expect(result.issues.filter((i) => i.severity === 'bloqueante').map((i) => i.criterion)).toEqual(expect.arrayContaining(['copia_escopo_curricular', 'fatos_corretos']))
+    expect(result.scores.resposta_substantiva).toBeUndefined()
   })
 
   it('não bloqueia só porque a cópia do escopo ficou em zona de alerta (controle 205)', () => {
-    const result = evaluateQualityAnswers({ type: 'descritiva', correctLetter: null }, { alinhamento_bncc: noul(0.95), adequacao_turma: noul(0.95), resposta_substantiva: noul(0.97), resposta_exposta_enunciado: noul(0.05), resposta_induzida: noul(0.05), informacao_suficiente: noul(0.95), calculo_ou_dados: noul(0.95), copia_escopo_curricular: noul(0.58), apoio_autossuficiente: noul(0.89), fatos_corretos: noul(0.95), enunciado_coerente: noul(0.8), correcao_objetiva: noul(0.88) })
+    const result = evaluateQualityAnswers({ type: 'descritiva', correctLetter: null }, { ...good, copia_escopo_curricular: noul(0.58), correcao_objetiva: noul(0.88) })
     expect(result.blocked).toBe(false)
     expect(result.issues.map((i) => i.severity)).toEqual(['alerta'])
   })
@@ -66,12 +68,12 @@ describe('evaluateQualityAnswers', () => {
   it('distingue nenhuma alternativa correta de múltiplas corretas', () => {
     const none = evaluateQualityAnswers({ type: 'objetiva', correctLetter: 'A' }, { ...good, gabarito_independente: { type: 'choice', choice: NO_CORRECT_ALTERNATIVE, confidence: 0.94 } })
     const multiple = evaluateQualityAnswers({ type: 'objetiva', correctLetter: 'A' }, { ...good, gabarito_independente: { type: 'choice', choice: MULTIPLE_CORRECT_ALTERNATIVES, confidence: 0.91 } })
-    expect(none.issues[0]?.reason).toContain('nenhuma alternativa')
-    expect(multiple.issues[0]?.reason).toContain('mais de uma alternativa')
+    expect(none.issues.find((issue) => issue.criterion === 'gabarito')?.reason).toContain('nenhuma alternativa')
+    expect(multiple.issues.find((issue) => issue.criterion === 'gabarito')?.reason).toContain('mais de uma alternativa')
   })
 
   it('exige critérios próprios da descritiva e ignora os de objetiva', () => {
-    const result = evaluateQualityAnswers({ type: 'descritiva', correctLetter: null }, { alinhamento_bncc: noul(0.9), adequacao_turma: noul(0.9), resposta_substantiva: noul(0.9), resposta_exposta_enunciado: noul(0.05), resposta_induzida: noul(0.05), informacao_suficiente: noul(0.9), calculo_ou_dados: noul(0.9), copia_escopo_curricular: noul(0.1), apoio_autossuficiente: noul(0.9), fatos_corretos: noul(0.9), enunciado_coerente: noul(0.9), correcao_objetiva: noul(0.05), alternativas_homogeneas: noul(0.01) })
+    const result = evaluateQualityAnswers({ type: 'descritiva', correctLetter: null }, { ...good, correcao_objetiva: noul(0.05), alternativas_homogeneas: noul(0.01) })
     expect(result.blocked).toBe(true)
     expect(result.scores.alternativas_homogeneas).toBeUndefined()
     expect(result.issues.map((i) => i.criterion)).toEqual(['correcao_objetiva'])
@@ -93,7 +95,7 @@ describe('escopo pedagógico do Jev', () => {
     expect(evaluate.mock.calls[1][0].questions.alinhamento_bncc).toBeUndefined()
     expect(evaluate.mock.calls[1][0].questions.nivel_bloom).toBeUndefined()
     expect(evaluate.mock.calls[1][0].state.habilidadeBncc).toBeUndefined()
-    expect(evaluate.mock.calls[1][0].state.turma).toBeUndefined()
+    expect(evaluate.mock.calls[1][0].state.turma).toBe('7º ano A')
     expect(evaluate.mock.calls[1][0].state.dificuldadePlanejada).toBe('media')
     expect(evaluate.mock.calls[1][0].questions.adequacao_turma).toBeUndefined()
   })

@@ -103,7 +103,7 @@ export default function AddQuestionModal({ examId, onClose, onAdded }: { examId:
   }
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/65 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !jobId) onClose() }}>
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-content-primary/65 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !jobId) onClose() }}>
       <section role="dialog" aria-modal="true" aria-labelledby="add-question-title" className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-surface p-5 shadow-2xl sm:p-6">
         <header className="flex items-start justify-between gap-3">
           <div><h2 id="add-question-title" className="text-lg font-semibold">Adicionar questão</h2><p className="mt-1 text-sm text-content-secondary">Escolha a habilidade BNCC. A questão só entra na prova depois de passar pelas validações.</p></div>
@@ -117,30 +117,30 @@ export default function AddQuestionModal({ examId, onClose, onAdded }: { examId:
               <option value="">Selecione uma habilidade</option>
               {skills.map((skill) => <option key={`${skill.code}:${skill.unitRowIndex}`} value={`${skill.code}:${skill.unitRowIndex}`}>{skill.code} · {skill.unitTitle}</option>)}
             </select>
-            {selected && <article className="mt-3 rounded-xl border border-sky-200 bg-sky-50/70 p-4 text-sm">
-              <p className="font-semibold text-sky-950">{selected.code} — {selected.description}</p>
-              {selected.context.length > 0 && <p className="mt-2 text-xs text-sky-900"><span className="font-semibold">Unidade, eixo e objeto de conhecimento:</span> {selected.context.join(' · ')}</p>}
-              <p className="mt-2 text-xs text-sky-900"><span className="font-semibold">Capítulo do planejamento:</span> {selected.unitTitle}</p>
-              {selected.curriculumSummary && <p className="mt-1 text-xs text-sky-900"><span className="font-semibold">Conteúdo relacionado:</span> {selected.curriculumSummary}</p>}
-              <p className="mt-2 text-[10px] text-sky-800">Fonte BNCC: {selected.source || 'base oficial local'} · versão {selected.dataVersion}</p>
+            {selected && <article className="mt-3 rounded-xl border border-status-info-border bg-status-info-surface/70 p-4 text-sm">
+              <p className="font-semibold text-status-info-content">{selected.code} — {selected.description}</p>
+              {selected.context.length > 0 && <p className="mt-2 text-xs text-status-info-content"><span className="font-semibold">Unidade, eixo e objeto de conhecimento:</span> {selected.context.join(' · ')}</p>}
+              <p className="mt-2 text-xs text-status-info-content"><span className="font-semibold">Capítulo do planejamento:</span> {selected.unitTitle}</p>
+              {selected.curriculumSummary && <p className="mt-1 text-xs text-status-info-content"><span className="font-semibold">Conteúdo relacionado:</span> {selected.curriculumSummary}</p>}
+              <p className="mt-2 text-[10px] text-status-info-content">Fonte BNCC: {selected.source || 'base oficial local'} · versão {selected.dataVersion}</p>
             </article>}
             <label className="mt-4 block text-sm font-medium" htmlFor="add-question-type">Tipo de questão</label>
             <select id="add-question-type" value={questionType} onChange={(event) => setQuestionType(event.target.value as 'objetiva' | 'descritiva')} className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm">
               <option value="objetiva">Objetiva</option><option value="descritiva">Discursiva</option>
             </select>
-          </> : <div className="mt-5 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">O planejamento aprovado desta prova não tem habilidades BNCC oficiais disponíveis para seleção.</div>}
+          </> : <div className="mt-5 rounded-lg border border-status-warning-border bg-status-warning-surface p-3 text-sm text-status-warning-content">O planejamento aprovado desta prova não tem habilidades BNCC oficiais disponíveis para seleção.</div>}
           {error && <p role="alert" className="mt-3 rounded-lg bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
           <div className="mt-5 flex justify-end gap-2">
             <button type="button" onClick={onClose} className="rounded-lg border border-border px-4 py-2 text-sm">Cancelar</button>
-            <button type="button" onClick={startGeneration} disabled={!selected || submitting || loadingSkills} className="rounded-lg bg-harmonia-green px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{submitting ? 'Iniciando…' : 'Gerar questão'}</button>
+            <button type="button" onClick={startGeneration} disabled={!selected || submitting || loadingSkills} className="rounded-lg bg-harmonia-green px-4 py-2 text-sm font-semibold text-action-primary-foreground disabled:opacity-50">{submitting ? 'Iniciando…' : 'Gerar questão'}</button>
           </div>
         </> : <div className="mt-5">
-          {done ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900"><div className="flex items-center gap-2 font-semibold"><CheckCircle2 size={19}/> Questão adicionada à prova</div><p className="mt-1 text-sm">A questão foi salva e está disponível para revisão.</p><button type="button" onClick={onClose} className="mt-3 rounded-lg bg-harmonia-green px-4 py-2 text-sm font-semibold text-white">Voltar à prova</button></div>
+          {done ? <div className="rounded-xl border border-status-success-border bg-status-success-surface p-4 text-status-success-content"><div className="flex items-center gap-2 font-semibold"><CheckCircle2 size={19}/> Questão adicionada à prova</div><p className="mt-1 text-sm">A questão foi salva e está disponível para revisão.</p><button type="button" onClick={onClose} className="mt-3 rounded-lg bg-harmonia-green px-4 py-2 text-sm font-semibold text-action-primary-foreground">Voltar à prova</button></div>
             : job?.status === 'erro' ? <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-rose-900"><div className="flex items-center gap-2 font-semibold"><AlertCircle size={18}/> A questão não foi adicionada</div><p className="mt-2 text-sm">{error ?? job.items?.[0]?.lastError ?? job.errorMessage}</p><button type="button" onClick={() => { setJobId(null); setJob(null); setError(null) }} className="mt-3 rounded-lg border border-rose-300 px-4 py-2 text-sm font-semibold">Tentar novamente</button></div>
-              : <><div className="flex items-center gap-2 text-sm font-semibold text-sky-900"><LoaderCircle size={18} className="animate-spin"/> Gerando questão…</div><ol className="mt-4 grid gap-2 sm:grid-cols-2">{FLOW.map(([stage, label], index) => {
+              : <><div className="flex items-center gap-2 text-sm font-semibold text-status-info-content"><LoaderCircle size={18} className="animate-spin"/> Gerando questão…</div><ol className="mt-4 grid gap-2 sm:grid-cols-2">{FLOW.map(([stage, label], index) => {
                 const completed = activeIndex >= 0 && index < activeIndex
                 const active = stage === currentStage
-                return <li key={stage} className={`rounded-lg border p-3 text-xs ${completed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : active ? 'border-sky-300 bg-sky-50 text-sky-900' : 'border-border bg-surface-subtle text-content-muted'}`}><span className="font-semibold">{completed ? 'Concluída' : active ? 'Em andamento' : 'Aguardando'}</span><span className="ml-2">{label}</span></li>
+                return <li key={stage} className={`rounded-lg border p-3 text-xs ${completed ? 'border-status-success-border bg-status-success-surface text-status-success-content' : active ? 'border-status-info-border bg-status-info-surface text-status-info-content' : 'border-border bg-surface-subtle text-content-muted'}`}><span className="font-semibold">{completed ? 'Concluída' : active ? 'Em andamento' : 'Aguardando'}</span><span className="ml-2">{label}</span></li>
               })}</ol><p className="mt-3 text-xs text-content-muted">A questão será anexada somente após a aprovação do Jev.</p></>}
         </div>}
       </section>

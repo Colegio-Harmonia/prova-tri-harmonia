@@ -1,6 +1,6 @@
 # Prompts ativos da geração de questões e do Jev
 
-**Atualizado em:** 05/10/2026  
+**Atualizado em:** 05/10/2026
 **Uso:** compartilhar com outra IA para revisar os prompts e o fluxo de qualidade.
 
 ## Como ler este arquivo
