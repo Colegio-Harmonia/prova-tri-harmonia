@@ -24,6 +24,8 @@ RUN --mount=type=secret,id=env_local,dst=/app/.env.local \
     npm run build
 
 FROM node-base AS runtime
+ARG SOURCE_COMMIT=unversioned
+LABEL org.opencontainers.image.revision=$SOURCE_COMMIT
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -45,6 +47,7 @@ COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/src ./src
 COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/drizzle ./drizzle
 COPY --from=builder /app/services ./services
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
 COPY --from=builder /app/next.config.mjs ./next.config.mjs
