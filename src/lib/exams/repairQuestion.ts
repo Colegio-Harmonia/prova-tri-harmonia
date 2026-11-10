@@ -1,277 +1,316 @@
 import { z } from 'zod'
 import type { CurriculumSelection } from '@/types/exam'
-import type { ExamQuestion } from '@/lib/gemini/examSchema'
+import { examQuestionSchema, type ExamQuestion } from '@/lib/gemini/examSchema'
 import { generateValidatedStructuredContent } from '@/lib/gemini/structuredRepair'
 import { correctSingleQuestion } from '@/lib/gemini/examValidator'
-import { generateUnifiedQuestion, type BlueprintSlot } from '@/lib/generation'
-import { cognitiveObjectives } from './targetSkills'
 import { getOfficialBnccSkill } from '@/lib/curriculum/officialBncc'
 import type { QualityDiagnostic } from './qualityDiagnostics'
 
-type RepairableDiagnostic = QualityDiagnostic & { repairAction: 'reparo_local' }
-type RepairKind = 'bncc_alignment' | 'objective_answer_only' | 'statement' | 'support_statement' | 'single_alternative' | 'alternatives' | 'alternatives_and_key' | 'answer_rubric'
+type RepairKind = 'bncc_alignment' | 'grade_adaptation' | 'objective_answer_only' | 'statement' | 'answer_cue' | 'support_statement' | 'targeted_alternatives' | 'single_alternative' | 'alternatives' | 'alternatives_and_key' | 'answer_rubric'
 
-const statementSchema = z.object({ statement: z.string().min(20) })
-const supportStatementSchema = z.object({ supportText: z.string().min(40), statement: z.string().min(20) })
-const alternativesSchema = z.object({ alternatives: z.array(z.object({ letter: z.string().min(1).max(2), text: z.string().min(1) })).min(2) })
-const alternativesAndKeySchema = alternativesSchema.extend({ correctLetter: z.string().min(1).max(2) })
-const singleAlternativeSchema = z.object({ text: z.string().min(1) })
-const answerRubricSchema = z.object({ expectedAnswer: z.string().min(10), gradingCriteria: z.array(z.string().min(5)).min(3).max(5) })
-const objectiveAnswerOnlySchema = z.object({
-  statement: z.string().min(20),
-  alternatives: z.array(z.object({ letter: z.string().regex(/^[A-E]$/), text: z.string().min(1) })),
-})
-
-const objectSchema = (properties: Record<string, unknown>, required: string[]) => ({ type: 'object', properties, required })
-const STATEMENT_RESPONSE_SCHEMA = objectSchema({ statement: { type: 'string' } }, ['statement'])
-const SUPPORT_STATEMENT_RESPONSE_SCHEMA = objectSchema({ supportText: { type: 'string' }, statement: { type: 'string' } }, ['supportText', 'statement'])
-const ALTERNATIVES_RESPONSE_SCHEMA = objectSchema({ alternatives: { type: 'array', items: objectSchema({ letter: { type: 'string' }, text: { type: 'string' } }, ['letter', 'text']) } }, ['alternatives'])
-const ALTERNATIVES_KEY_RESPONSE_SCHEMA = objectSchema({ alternatives: { type: 'array', items: objectSchema({ letter: { type: 'string' }, text: { type: 'string' } }, ['letter', 'text']) }, correctLetter: { type: 'string' } }, ['alternatives', 'correctLetter'])
-const SINGLE_ALTERNATIVE_RESPONSE_SCHEMA = objectSchema({ text: { type: 'string' } }, ['text'])
-const ANSWER_RUBRIC_RESPONSE_SCHEMA = objectSchema({ expectedAnswer: { type: 'string' }, gradingCriteria: { type: 'array', items: { type: 'string' } } }, ['expectedAnswer', 'gradingCriteria'])
-const OBJECTIVE_ANSWER_ONLY_RESPONSE_SCHEMA = objectSchema({ statement: { type: 'string' }, alternatives: { type: 'array', items: objectSchema({ letter: { type: 'string' }, text: { type: 'string' } }, ['letter', 'text']) } }, ['statement', 'alternatives'])
-
-function repairable(diagnostics: QualityDiagnostic[]) {
-  return diagnostics.filter((item): item is RepairableDiagnostic => item.repairAction === 'reparo_local' && item.severity === 'bloqueante')
-}
-
-/** Uma rodada corrige um grupo coeso; o novo parecer do Jev decide a próxima rodada. */
-export function chooseRepairKind(diagnostics: QualityDiagnostic[], declaredCorrectLetter?: string | null): RepairKind | null {
-  const applicable = repairable(diagnostics)
+/** Rótulo operacional mantido para compatibilidade com os chamadores e logs. */
+export function chooseRepairKind(diagnostics: QualityDiagnostic[], _declaredCorrectLetter?: string | null): RepairKind | null {
+  const applicable = diagnostics.filter((item) => item.blocksApproval && item.repairAction === 'reparo_local')
+  if (!applicable.length) return null
   const codes = new Set(applicable.map((item) => item.code))
   if (codes.has('BNCC_MAPPING') || codes.has('CURRICULUM_MISMATCH')) return 'bncc_alignment'
+  if (codes.has('GRADE_LEVEL_MISMATCH')) return 'grade_adaptation'
   if (codes.has('MISSING_SUPPORT_TEXT')) return 'support_statement'
   if (codes.has('INSUFFICIENT_INFORMATION')) return 'statement'
+  if (codes.has('ANSWER_CUE_EXPOSED')) return 'answer_cue'
+  if (codes.has('ALTERNATIVE_CORRECTION_COMMENT') || codes.has('ALTERNATIVE_REVEALS_ANSWER')) return 'targeted_alternatives'
   if (codes.has('OBJECTIVE_CALCULATION_REQUEST') || codes.has('ALTERNATIVE_EXPOSES_CALCULATION')) return 'objective_answer_only'
   if (codes.has('ANSWER_EXPOSED_IN_STATEMENT')) return 'statement'
-  if (applicable.some((item) => item.code === 'ALTERNATIVE_CONTENT_INCOMPLETE' && item.alternativeLetter === declaredCorrectLetter)) return 'single_alternative'
   if (codes.has('NO_CORRECT_ALTERNATIVE')) return 'alternatives_and_key'
-  if (applicable.some((item) => (item.code === 'ALTERNATIVE_FORMAT_OUTLIER' || item.code === 'ALTERNATIVE_CONTENT_INCOMPLETE') && item.alternativeLetter)) return 'single_alternative'
+  if (applicable.some((item) => (item.code === 'ALTERNATIVE_FORMAT_OUTLIER' || item.code === 'ALTERNATIVE_CONTENT_INCOMPLETE') && item.alternativeLetter)) return 'targeted_alternatives'
   if (codes.has('DUPLICATE_ALTERNATIVE') || codes.has('DISTRACTOR_EQUALS_ANSWER') || codes.has('ALTERNATIVE_AMBIGUITY')) return 'alternatives'
   if (codes.has('GRADING_CRITERIA')) return 'answer_rubric'
-  return null
+  return 'statement'
 }
 
 function curriculumContext(curriculum: CurriculumSelection) {
   return curriculum.units.map((unit) => [unit.tituloCapitulo, unit.conteudo, unit.enrichedContent].filter(Boolean).join(': ')).join('\n').slice(0, 7000)
 }
 
-function invariantIssues(original: ExamQuestion, candidate: ExamQuestion, allowed: Array<keyof ExamQuestion>) {
-  const allowedSet = new Set<string>([...allowed, 'review'])
-  return Object.keys(original).flatMap((key) => {
-    if (allowedSet.has(key)) return []
-    return JSON.stringify(original[key as keyof ExamQuestion]) === JSON.stringify(candidate[key as keyof ExamQuestion])
-      ? []
-      : [`O campo protegido "${key}" não pode ser alterado neste reparo.`]
+function jsonSchemaFor(value: unknown): Record<string, unknown> {
+  if (value === null) return { type: 'string', nullable: true }
+  if (Array.isArray(value)) return { type: 'array', items: value.length ? jsonSchemaFor(value[0]) : { type: 'string' } }
+  if (typeof value === 'string') return { type: 'string' }
+  if (typeof value === 'number') return { type: Number.isInteger(value) ? 'integer' : 'number' }
+  if (typeof value === 'boolean') return { type: 'boolean' }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+    return {
+      type: 'object',
+      properties: Object.fromEntries(entries.map(([key, child]) => [key, jsonSchemaFor(child)])),
+      ...(entries.length ? { required: entries.map(([key]) => key) } : { additionalProperties: true }),
+    }
+  }
+  return {}
+}
+
+function sameJson(left: unknown, right: unknown) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function fieldsAllowedBy(diagnostics: QualityDiagnostic[]): Set<string> {
+  const allowed = new Set<string>()
+  for (const item of diagnostics) {
+    for (const field of item.fields) allowed.add(field.split('.')[0])
+    if (item.repairAction === 'regenerar_questao') {
+      for (const field of ['statement', 'supportText', 'alternatives', 'correctLetter', 'expectedAnswer', 'gradingCriteria', 'solutionBlueprint', 'bloomLevel']) allowed.add(field)
+    }
+    if (item.code === 'NO_CORRECT_ALTERNATIVE' || item.code === 'ANSWER_KEY_MISMATCH' || item.code === 'FACTUAL_INCONSISTENCY') {
+      allowed.add('alternatives')
+      allowed.add('correctLetter')
+    }
+  }
+  return allowed
+}
+
+async function repairAnswersFromDiagnostics(
+  params: {
+    question: ExamQuestion
+    curriculum: CurriculumSelection
+    diagnostics: QualityDiagnostic[]
+    context: string
+    classLabel?: string
+  },
+  diagnostics: QualityDiagnostic[],
+): Promise<{ question: ExamQuestion; warnings: string[]; repairKind: RepairKind } | null> {
+  const repairKind = chooseRepairKind(diagnostics, params.question.correctLetter) ?? 'alternatives'
+  const reported = fieldsAllowedBy(diagnostics)
+  const responseFields = params.question.type === 'objetiva'
+    ? ['alternatives', 'correctLetter']
+    : ['expectedAnswer', 'gradingCriteria']
+  const allowed = new Set(responseFields.filter((field) => reported.has(field)))
+  if (params.question.type === 'objetiva' && diagnostics.some((item) => item.code === 'ANSWER_KEY_MISMATCH' || item.code === 'NO_CORRECT_ALTERNATIVE')) {
+    allowed.add('correctLetter')
+  }
+  if (!allowed.size) return null
+
+  const originalAlternatives = params.question.alternatives ?? []
+  const alternativeDiagnostics = diagnostics.filter((item) => item.fields.some((field) => field === 'alternatives' || field.startsWith('alternatives.')))
+  const targetedLetters = [...new Set(alternativeDiagnostics.flatMap((item) => [item.alternativeLetter, item.location?.match(/alternatives\.([A-E])/i)?.[1]?.toUpperCase()].filter((value): value is string => Boolean(value))))]
+  const scopedAlternatives = alternativeDiagnostics.length > 0
+    && targetedLetters.length > 0
+    && alternativeDiagnostics.every((item) => Boolean(item.alternativeLetter || item.location?.match(/alternatives\.[A-E]/i)))
+  const shape: z.ZodRawShape = {}
+  if (allowed.has('alternatives')) {
+    shape.alternatives = z.array(z.object({ letter: z.string().regex(/^[A-E]$/), text: z.string().trim().min(1) })).length(originalAlternatives.length)
+  }
+  if (allowed.has('correctLetter')) shape.correctLetter = z.enum(['A', 'B', 'C', 'D', 'E']).nullable()
+  if (allowed.has('expectedAnswer')) shape.expectedAnswer = z.string().trim().min(1)
+  if (allowed.has('gradingCriteria')) shape.gradingCriteria = z.string().trim().min(1)
+  const answerSchema = z.object(shape).strict()
+  const responseSchema = {
+    type: 'object',
+    properties: Object.fromEntries(Object.keys(shape).map((field) => [field, field === 'alternatives'
+      ? { type: 'array', items: { type: 'object', properties: { letter: { type: 'string', enum: ['A', 'B', 'C', 'D', 'E'] }, text: { type: 'string' } }, required: ['letter', 'text'], additionalProperties: false }, minItems: originalAlternatives.length, maxItems: originalAlternatives.length }
+      : field === 'correctLetter' ? { type: 'string', nullable: true, enum: ['A', 'B', 'C', 'D', 'E'] } : { type: 'string' }])),
+    required: Object.keys(shape),
+    additionalProperties: false,
+  }
+  const reference = {
+    tipo: params.question.type,
+    enunciadoAprovado: params.question.statement,
+    textoDeApoioAprovado: params.question.supportText ?? null,
+    ...(params.question.type === 'objetiva'
+      ? { alternativas: originalAlternatives, gabaritoAtual: params.question.correctLetter }
+      : { respostaEsperadaAtual: params.question.expectedAnswer, criteriosAtuais: params.question.gradingCriteria }),
+  }
+  const prompt = [
+    'Corrija somente as respostas da questão abaixo, considerando o enunciado aprovado como referência imutável.',
+    `Diagnóstico do Jev: ${JSON.stringify(diagnostics.map((item) => ({ codigo: item.code, evidencia: item.evidence ?? null, defeito: item.message, correcao: item.resolutionCheck ?? item.message, campos: item.fields })))}`,
+    `Questão de referência (leitura apenas): ${JSON.stringify(reference)}`,
+    `Campos de resposta que pode devolver: ${[...allowed].join(', ')}. Não devolva enunciado, apoio, BNCC, turma, solução técnica ou metadados. Não altere campos fora dessa lista.`,
+    params.question.type === 'objetiva'
+      ? allowed.has('alternatives')
+        ? 'Devolva todas as alternativas, com as mesmas letras e exatamente a mesma quantidade, e o gabarito quando autorizado. Preserve as alternativas sem diagnóstico. Cada opção deve ser uma resposta plausível ao enunciado; nenhuma pode conter comentários editoriais de certo ou errado.'
+        : 'Devolva somente o gabarito autorizado. Use a alternativa indicada pela resolução independente do Jev, desde que ela responda ao enunciado. Não altere alternativas nem enunciado.'
+      : 'Devolva a resposta esperada e/ou os critérios autorizados. Responda exatamente ao enunciado, cubra todos os itens pedidos e torne os critérios observáveis para correção.',
+    'Retorne somente o objeto JSON dos campos autorizados.',
+  ].join('\n\n')
+
+  const generated = await generateValidatedStructuredContent<Record<string, unknown>, Record<string, unknown>>({
+    context: `${params.context}/jev-answer-repair`,
+    prompt,
+    responseSchema,
+    zodSchema: answerSchema,
+    maxAttempts: 2,
+    validate: (raw) => {
+      const merged: Record<string, unknown> = { ...params.question }
+      for (const field of allowed) {
+        if (!(field in raw)) continue
+        if (field === 'alternatives' && params.question.alternatives) {
+          merged.alternatives = normalizeAlternativeResponse(raw.alternatives, params.question.alternatives, scopedAlternatives ? targetedLetters : null)
+        } else merged[field] = raw[field]
+      }
+      const parsed = examQuestionSchema.safeParse(merged)
+      if (!parsed.success) return { value: raw, issues: parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`) }
+      const corrected = correctSingleQuestion({ ...parsed.data, review: null } as ExamQuestion, params.curriculum, { deferContentQualityToJev: true })
+      const result: ExamQuestion = { ...params.question }
+      if (allowed.has('alternatives')) result.alternatives = corrected.question.alternatives
+      if (allowed.has('correctLetter')) result.correctLetter = corrected.question.correctLetter
+      if (allowed.has('expectedAnswer')) result.expectedAnswer = corrected.question.expectedAnswer
+      if (allowed.has('gradingCriteria')) result.gradingCriteria = corrected.question.gradingCriteria
+      const finalParsed = examQuestionSchema.safeParse(result)
+      return {
+        value: finalParsed.success ? finalParsed.data as unknown as Record<string, unknown> : raw,
+        issues: finalParsed.success ? [] : finalParsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`),
+      }
+    },
   })
+  const question = generated.value as unknown as ExamQuestion
+  if (sameJson(params.question, question)) return null
+  return { question, warnings: generated.warnings, repairKind }
+}
+
+function normalizeAlternativeResponse(raw: unknown, original: NonNullable<ExamQuestion['alternatives']>, targetedLetters: string[] | null) {
+  const returned = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === 'object'
+      ? 'letter' in raw && 'text' in raw
+        ? [raw]
+        : Object.entries(raw as Record<string, unknown>).map(([key, value], index) => ({ letter: /^[A-E]$/i.test(key) ? key : original[index]?.letter, ...(typeof value === 'string' ? { text: value } : value && typeof value === 'object' ? value as object : {}) }))
+      : []
+  const replacements = new Map<string, string>()
+  returned.forEach((item, index) => {
+    if (!item || typeof item !== 'object') return
+    const candidate = item as { letter?: unknown; text?: unknown }
+    const letter = typeof candidate.letter === 'string' ? candidate.letter.toUpperCase() : original[index]?.letter
+    if (letter && typeof candidate.text === 'string' && candidate.text.trim()) replacements.set(letter, candidate.text)
+  })
+  return original.map((item) => !targetedLetters || targetedLetters.includes(item.letter)
+    ? { ...item, text: replacements.get(item.letter) ?? item.text }
+    : item)
 }
 
 /**
- * Executa somente o reparo escolhido pelo diagnóstico tipado do Jev. A saída
- * contém apenas os campos autorizados; todo o restante vem da questão original.
+ * Uma chamada recebe os diagnósticos do Jev, corrige somente os campos
+ * autorizados e devolve o objeto completo da questão. O chamador reaudita e
+ * controla o orçamento global de no máximo duas intervenções.
  */
 export async function repairQuestionFromDiagnostics(params: {
   question: ExamQuestion
   curriculum: CurriculumSelection
   diagnostics: QualityDiagnostic[]
   context: string
-  blueprintSlot?: BlueprintSlot
+  blueprintSlot?: unknown
+  classLabel?: string
+  scope?: 'full' | 'answers'
+  previousAttempt?: {
+    attempt: number
+    blockingCriteria: string[]
+    changedFields: string[]
+    outcome: string
+  } | null
 }): Promise<{ question: ExamQuestion; warnings: string[]; repairKind: RepairKind } | null> {
-  const applicable = repairable(params.diagnostics)
-  const repairKind = chooseRepairKind(applicable, params.question.correctLetter)
-  if (!repairKind) return null
-  if ((repairKind === 'single_alternative' || repairKind === 'alternatives' || repairKind === 'alternatives_and_key') && params.question.type !== 'objetiva') return null
-  if (repairKind === 'answer_rubric' && params.question.type !== 'descritiva') return null
-  if (repairKind === 'objective_answer_only' && params.question.type !== 'objetiva') return null
+  const diagnostics = params.diagnostics.filter((item) => item.blocksApproval && ['reparo_local', 'regenerar_questao'].includes(item.repairAction))
+  if (!diagnostics.length) return null
+  if (params.scope === 'answers') return repairAnswersFromDiagnostics(params, diagnostics)
+  const repairKind = chooseRepairKind(diagnostics, params.question.correctLetter) ?? 'statement'
+  const allowed = fieldsAllowedBy(diagnostics)
+  if (!allowed.size) return null
 
-  if (repairKind === 'bncc_alignment') {
-    const slot = params.blueprintSlot
-    const unit = params.curriculum.units.find((candidate) => candidate.rowIndex === params.question.curriculumUnitRowIndex)
-      ?? (params.curriculum.units.length === 1 ? params.curriculum.units[0] : undefined)
-    const code = params.question.bnccCodes[0]?.trim().toUpperCase()
-    const officialSkill = code ? getOfficialBnccSkill(code) : null
-    if (!slot || !unit || !code || params.question.bnccStatus !== 'mapeado') return null
-    const sheetTopic = [unit.tituloCapitulo, unit.conteudo, unit.enrichedContent].filter(Boolean).join('\n').trim()
-    const sheetSkillDescription = unit.habilidades.status === 'mapeado'
-      ? unit.habilidades.skills.find((skill) => skill.code.toUpperCase() === code)?.description
-      : null
-    const skillDescription = officialSkill?.text ?? sheetSkillDescription ?? params.question.bnccSummary ?? 'descrição oficial não disponível'
-    const unitCurriculum = { ...params.curriculum, units: [unit] }
-    const instruction = [
-      'REPARO DIRECIONADO PELO JEV: a questão foi reprovada porque não mede a habilidade BNCC declarada.',
-      `HABILIDADE OBRIGATÓRIA ${code}: ${skillDescription}`,
-      officialSkill?.context.length ? `CONTEXTO OFICIAL DA HABILIDADE: ${officialSkill.context.join('; ')}.` : '',
-      officialSkill?.source ? `REFERÊNCIA DA BNCC: ${officialSkill.source} (${officialSkill.dataVersion}).` : '',
-      `TEMA E CONTEÚDO DA PLANILHA ESCOLAR (única fonte de fatos e material de ensino):\n${sheetTopic}`,
-      `DIAGNÓSTICO DO JEV: ${applicable.map((item) => item.evidence ?? item.message).join('; ')}`,
-      `A questão deve exigir a ação indicada pelo verbo da habilidade aplicada ao objeto de conhecimento, não apenas recordar uma definição. Preserve o código BNCC ${code}, o tipo ${params.question.type}, o capítulo e o tema da planilha. Não introduza fatos ou assuntos de fora do conteúdo da planilha. Refaça a questão de forma coerente, incluindo resposta e alternativas/rubrica quando aplicável. A versão anterior era: ${params.question.statement}`,
-    ].filter(Boolean).join('\n\n')
-    const generated = await generateUnifiedQuestion({
-      questionNumber: params.question.number,
-      subject: params.curriculum.subject,
-      gradeYear: params.curriculum.gradeYear,
-      segment: params.curriculum.segment,
-      curriculumContent: sheetTopic,
-      targetSkills: [{ code, description: skillDescription }],
-      objectives: cognitiveObjectives(unit),
-      contentPlanInstruction: instruction,
-      questionType: params.question.type,
-    }, slot)
-    const corrected = correctSingleQuestion({
-      ...generated.question,
-      number: params.question.number,
-      curriculumUnitRowIndex: unit.rowIndex,
-      bnccCodes: [code],
-      bnccStatus: 'mapeado',
-      bnccSummary: officialSkill?.text ?? params.question.bnccSummary ?? null,
-      review: null,
-    }, unitCurriculum, { allowMathReviewFallback: true, deferContentQualityToJev: true })
-    return {
-      question: corrected.question,
-      warnings: [...generated.issues.map((issue) => issue.reason), ...corrected.issues.map((issue) => `Conferência para o Jev: ${issue}`), ...corrected.warnings, `Reparo da habilidade ${code} orientado pelo diagnóstico do Jev (${officialSkill?.dataVersion ?? 'texto BNCC disponível no currículo'}).`],
-      repairKind,
-    }
-  }
-
-  const common = `Você executa um reparo CIRÚRGICO em uma questão escolar.\n\nDISCIPLINA: ${params.curriculum.subject}\nSÉRIE: ${params.curriculum.gradeYear}º ano (${params.curriculum.segment})\nBNCC: ${params.question.bnccCodes.join(', ') || 'não mapeada'}\nFONTE CURRICULAR (limite factual; não copie títulos nem invente fatos):\n${curriculumContext(params.curriculum)}\n\nQUESTÃO ATUAL:\n${JSON.stringify(params.question)}\n\nDIAGNÓSTICO TIPADO DO JEV:\n${JSON.stringify(applicable)}\n\nRetorne SOMENTE os campos solicitados em JSON, sem markdown.`
-
-  const validate = (patch: Partial<ExamQuestion>, allowed: Array<keyof ExamQuestion>) => {
-    const merged = { ...params.question, ...patch, review: null }
-    const corrected = correctSingleQuestion(merged, params.curriculum, { deferContentQualityToJev: true })
-    return {
-      value: corrected.question,
-      // correctSingleQuestion fornece evidências; só o Jev decide se elas
-      // comprometem a qualidade. As invariantes limitam o escopo do reparo.
-      issues: invariantIssues(params.question, corrected.question, allowed),
-      warnings: [...corrected.warnings, ...corrected.issues.map((issue) => `Conferência para o Jev: ${issue}`)],
-      repairInstructions: applicable.map((item) => ({ code: item.code, fields: item.fields, protectedFields: item.protectedFields, message: item.message })),
-    }
-  }
-
-  if (repairKind === 'objective_answer_only') {
-    const statementNeedsRepair = applicable.some((item) => item.code === 'OBJECTIVE_CALCULATION_REQUEST')
-    const targetLetters = [...new Set(applicable
-      .filter((item) => item.code === 'ALTERNATIVE_EXPOSES_CALCULATION' && item.alternativeLetter)
-      .map((item) => item.alternativeLetter!))].sort()
-    if (!statementNeedsRepair && targetLetters.length === 0) return null
-    const currentAlternatives = params.question.alternatives ?? []
-    const targetText = JSON.stringify(currentAlternatives.filter((item) => targetLetters.includes(item.letter)))
-    const prompt = common + '\n\nREPARO DIRECIONADO EXCLUSIVAMENTE PELO JEV.\n'
-      + (statementNeedsRepair
-        ? 'Reescreva o comando para solicitar somente a resposta final ou os produtos finais necessários. Remova pedidos para mostrar fórmula usada, cálculos, etapas ou justificativas de resolução.\n'
-        : 'Copie o enunciado literalmente, sem alterá-lo: ' + params.question.statement + '\n')
-      + (targetLetters.length
-        ? 'Reescreva somente as alternativas ' + targetLetters.join(', ') + '. Cada uma deve trazer os resultados finais e as interpretações conceituais solicitadas, sem expor fórmula usada para resolver, conta armada, etapas ou justificativa de cálculo. Preserve uma expressão algébrica quando ela própria for a resposta pedida. Mantenha padrão, unidade e estrutura das opções não sinalizadas. Alvo e texto atual: ' + targetText + '\n'
-        : 'Retorne alternatives como lista vazia: [].\n')
-      + 'Preserve literalmente texto de apoio, gabarito, alternativas não sinalizadas e todos os demais campos. Não adicione dados. Retorne {"statement":"...","alternatives":[{"letter":"A","text":"..."}]} contendo exatamente as letras sinalizadas; se nenhuma alternativa foi sinalizada, use [].'
-    const generated = await generateValidatedStructuredContent({
-      context: params.context + '/objective-answer-only',
-      prompt,
-      responseSchema: OBJECTIVE_ANSWER_ONLY_RESPONSE_SCHEMA,
-      zodSchema: objectiveAnswerOnlySchema,
-      maxAttempts: 2,
-      validate: (value) => {
-        const returnedLetters = value.alternatives.map((item) => item.letter).sort()
-        const expectedLetters = [...targetLetters].sort()
-        const candidateAlternatives = currentAlternatives.map((item) => {
-          const replacement = value.alternatives.find((candidate) => candidate.letter === item.letter)
-          return replacement ? { ...item, text: replacement.text } : item
-        })
-        const candidate = { ...params.question, statement: value.statement, alternatives: candidateAlternatives, review: null }
-        const corrected = correctSingleQuestion(candidate, params.curriculum, { deferContentQualityToJev: true })
-        const invariants = invariantIssues(params.question, corrected.question, ['statement', 'alternatives'])
-        const untouchedAlternatives = currentAlternatives.filter((item) => !targetLetters.includes(item.letter))
-        const correctedUntouched = (corrected.question.alternatives ?? []).filter((item) => !targetLetters.includes(item.letter))
-        const issues = [
-          ...(JSON.stringify(returnedLetters) === JSON.stringify(expectedLetters) ? [] : ['O reparo deve retornar exatamente as letras sinalizadas (' + (expectedLetters.join(', ') || 'nenhuma') + ').']),
-          ...(!statementNeedsRepair && value.statement !== params.question.statement ? ['O enunciado estava fora do alvo e deve permanecer literalmente inalterado.'] : []),
-          ...(JSON.stringify(untouchedAlternatives) === JSON.stringify(correctedUntouched) ? [] : ['Alternativas não sinalizadas devem permanecer literalmente inalteradas.']),
-          ...invariants,
-        ]
-        return {
-          value: corrected.question,
-          issues,
-          warnings: [...corrected.warnings, ...corrected.issues.map((item) => 'Conferência para o Jev: ' + item)],
-          repairInstructions: applicable.map((item) => ({ code: item.code, fields: item.fields, protectedFields: item.protectedFields, message: item.message })),
+  const alternativeDiagnostics = diagnostics.filter((item) => item.fields.some((field) => field === 'alternatives' || field.startsWith('alternatives.')))
+  const targetedLetters = [...new Set(alternativeDiagnostics.map((item) => item.alternativeLetter).filter((letter): letter is string => Boolean(letter)))].sort()
+  const alternativesAreScoped = alternativeDiagnostics.length > 0 && alternativeDiagnostics.every((item) => Boolean(item.alternativeLetter))
+  const officialSkills = params.question.bnccCodes.map((code) => {
+    const skill = getOfficialBnccSkill(code)
+    return skill ? `${code}: ${skill.text}${skill.context.length ? ` Contexto: ${skill.context.join('; ')}` : ''}` : `${code}: ${params.question.bnccSummary ?? 'descrição oficial indisponível'}`
+  }).join('\n')
+  const diagnosis = diagnostics.map((item, index) => ({
+    numero: index + 1,
+    codigo: item.code,
+    local: item.location ?? (item.alternativeLetter ? `alternatives.${item.alternativeLetter}` : item.fields.join(', ') || 'questão'),
+    evidencia: item.evidence ?? null,
+    defeito: item.message,
+    correcaoObrigatoria: item.resolutionCheck ?? item.message,
+    camposQuePodeAlterar: item.fields,
+    camposProtegidos: item.protectedFields,
+  }))
+  const allowedFields = [...allowed]
+  const requiresFullRewrite = diagnostics.some((item) => item.repairAction === 'regenerar_questao')
+  const previousAttemptPrompt = params.previousAttempt
+    ? `TENTATIVA ANTERIOR (não repita):\n- Correção anterior: ${params.previousAttempt.attempt}.\n- Critérios que continuaram bloqueando: ${params.previousAttempt.blockingCriteria.join(', ') || 'nenhum'}.\n- Campos que mudaram: ${params.previousAttempt.changedFields.join(', ') || 'nenhum'}.\n- Resultado da auditoria: ${params.previousAttempt.outcome}.\nMude a abordagem no campo e trecho que ainda causam o bloqueio; não devolva a mesma redação.`
+    : ''
+  const prompt = [
+    'Corrija uma questão escolar reprovada pelo Jev. Antes de editar, resolva a questão e localize no JSON o campo e trecho exatos que causam cada defeito. Use essa localização somente no seu raciocínio; edite os campos autorizados e devolva o JSON COMPLETO da questão.',
+    `Disciplina: ${params.curriculum.subject}. Etapa: ${params.curriculum.segment}. Série: ${params.curriculum.gradeYear}º ano. Turma: ${params.classLabel ?? 'não informada'}.`,
+    `Habilidades BNCC oficiais (referência da habilidade, não fonte de conteúdo):\n${officialSkills || 'não informadas'}`,
+    `ESCOPO ESCOLAR: o planejamento selecionado delimita tema, objetivos e conteúdo. Não copie títulos/tópicos como resposta nem introduza conteúdo fora desse escopo. Use os dados numéricos já presentes na questão/blueprint; se uma situação hipotética precisar de valores de exemplo, identifique-a como hipotética e mantenha os cálculos internamente coerentes. Não invente fatos históricos, estatísticas, datas ou nomes próprios.\n${curriculumContext(params.curriculum)}`,
+    `DIAGNÓSTICOS DO JEV — corrija cada item e confirme a condição indicada em correcaoObrigatoria:\n${JSON.stringify(diagnosis, null, 2)}`,
+    `QUESTÃO ATUAL COMPLETA:\n${JSON.stringify(params.question, null, 2)}`,
+    `CAMPOS AUTORIZADOS A MUDAR: ${allowedFields.join(', ')}.${alternativesAreScoped ? ` Em alternatives, somente as letras ${targetedLetters.join(', ')} podem mudar.` : ''} Preserve todos os demais campos literalmente, inclusive número, tipo, código BNCC, origem, vínculo ao planejamento, peso, recurso visual e metadados.`,
+    previousAttemptPrompt,
+    requiresFullRewrite
+      ? 'O Jev classificou pelo menos um defeito como regeneração necessária. Reescreva a questão por inteiro, cobrindo todos os diagnósticos, e preserve número, tipo, capítulo, habilidade BNCC, nível da turma e recurso visual exigido. Mantenha os dados válidos e não reutilize o enunciado/apoio defeituoso.'
+      : 'Faça a menor alteração que resolva todos os diagnósticos deste grupo. Em resposta induzida, transforme a conclusão antecipada em dado/premissa sem removê-la por completo da lógica. Em cálculo, resolva primeiro e altere somente a origem divergente. Em alternativas, preserve literalmente as opções não autorizadas.',
+    'Regras: se nenhuma alternativa responde corretamente, inclua uma correta e ajuste o gabarito; se o enunciado não puder ser resolvido, altere apenas o enunciado para torná-lo resolvível com os dados existentes; ausência de gráfico/visual, sozinha, não exige criar imagem nem bloquear a questão. Não inclua comentários de certo/errado no texto das alternativas nem mostre cálculos quando o aluno só deve selecionar o resultado. Preserve tema, dados válidos e nível da turma.',
+    'Retorne SOMENTE um objeto JSON completo da questão, com todas as chaves existentes no objeto atual. Sem markdown, explicações ou campos omitidos.',
+  ].join('\n\n')
+  const responseSchema = { ...jsonSchemaFor(params.question), required: Object.keys(params.question), additionalProperties: false }
+  const generated = await generateValidatedStructuredContent<unknown, ExamQuestion>({
+    context: `${params.context}/jev-full-question-repair`,
+    prompt,
+    responseSchema,
+    // A saída completa pode conter erro de tipo em um campo protegido (p.ex.
+    // solutionBlueprint como texto). Primeiro aceitamos o objeto JSON e
+    // restauramos esses campos da versão auditada; depois validamos a questão.
+    zodSchema: z.record(z.string(), z.unknown()),
+    maxAttempts: 2,
+    validate: (value) => {
+      const candidateRaw = value as Record<string, unknown>
+      const normalized: Record<string, unknown> = { ...params.question }
+      for (const field of allowed) {
+        if (!(field in candidateRaw)) continue
+        const rawField = candidateRaw[field]
+        if (field === 'alternatives' && params.question.alternatives) {
+          normalized.alternatives = normalizeAlternativeResponse(rawField, params.question.alternatives, alternativesAreScoped ? targetedLetters : null)
+          continue
         }
-      },
-    })
-    return { question: generated.value, warnings: generated.warnings, repairKind }
-  }
-
-  if (repairKind === 'statement') {
-    const generated = await generateValidatedStructuredContent({
-      context: `${params.context}/statement`, prompt: `${common}\n\nReescreva SOMENTE "statement" para corrigir o diagnóstico. Se faltam informações, reformule a pergunta para usar apenas os dados já disponíveis no texto de apoio/questão; não acrescente números nem fatos. Preserve texto de apoio, alternativas, gabarito, tema da planilha e habilidade BNCC.`,
-      responseSchema: STATEMENT_RESPONSE_SCHEMA, zodSchema: statementSchema, maxAttempts: 2,
-      validate: (value) => validate(value, ['statement']),
-    })
-    return { question: generated.value, warnings: generated.warnings, repairKind }
-  }
-
-  if (repairKind === 'support_statement') {
-    const generated = await generateValidatedStructuredContent({
-      context: `${params.context}/support-statement`, prompt: `${common}\n\nCrie SOMENTE um "supportText" autocontido, factual e suficiente, e ajuste SOMENTE "statement" para fazer referência clara a ele. Preserve a resposta, alternativas, gabarito e habilidade BNCC. O apoio não pode entregar a resposta nem copiar linguagem de planejamento.`,
-      responseSchema: SUPPORT_STATEMENT_RESPONSE_SCHEMA, zodSchema: supportStatementSchema, maxAttempts: 2,
-      validate: (value) => validate(value, ['supportText', 'statement']),
-    })
-    return { question: generated.value, warnings: generated.warnings, repairKind }
-  }
-
-  if (repairKind === 'single_alternative') {
-    const issue = applicable.find((item) => (item.code === 'ALTERNATIVE_FORMAT_OUTLIER' || item.code === 'ALTERNATIVE_CONTENT_INCOMPLETE') && item.alternativeLetter)
-    const letter = issue?.alternativeLetter
-    const originalAlternative = params.question.alternatives?.find((item) => item.letter === letter)
-    if (!letter || !originalAlternative) return null
-    const generated = await generateValidatedStructuredContent({
-      context: `${params.context}/alternative-${letter}`,
-      prompt: `${common}\n\nREPARO DIRECIONADO PELO JEV: o diagnóstico informa por que a alternativa ${letter} falhou. Corrija especificamente esse apontamento e reescreva SOMENTE o texto dessa alternativa. Primeiro resolva a questão pelo enunciado e pelo texto de apoio. A alternativa ${letter} deve cobrir todos os itens pedidos, na mesma ordem e com os mesmos componentes, unidades, notação e nível de detalhe das demais. Se ${letter} é o gabarito, escreva a resposta completa e matematicamente correta; se for distrator, mantenha um erro plausível, sem torná-la correta. Não invente dados fora da planilha. Preserve literalmente as outras alternativas, o enunciado, o apoio, a letra do gabarito e os demais campos. Texto atual de ${letter}: ${originalAlternative.text}. Retorne {"text":"..."}.`,
-      responseSchema: SINGLE_ALTERNATIVE_RESPONSE_SCHEMA,
-      zodSchema: singleAlternativeSchema,
-      maxAttempts: 2,
-      validate: (value) => {
-        const alternatives = (params.question.alternatives ?? []).map((item) => item.letter === letter ? { ...item, text: value.text } : item)
-        const corrected = correctSingleQuestion({ ...params.question, alternatives, review: null }, params.curriculum, { deferContentQualityToJev: true })
-        const untouchedOptions = (params.question.alternatives ?? []).filter((item) => item.letter !== letter)
-        const correctedUntouchedOptions = (corrected.question.alternatives ?? []).filter((item) => item.letter !== letter)
-        const unchanged = JSON.stringify(untouchedOptions) === JSON.stringify(correctedUntouchedOptions)
-        const protectedFields = invariantIssues(params.question, corrected.question, ['alternatives'])
+        const current = params.question[field as keyof ExamQuestion]
+        if (typeof current === 'string' && typeof rawField === 'string') normalized[field] = rawField
+        else if (typeof current === 'number' && typeof rawField === 'number') normalized[field] = rawField
+        else if (typeof current === 'boolean' && typeof rawField === 'boolean') normalized[field] = rawField
+        else if (current === null && (rawField === null || typeof rawField === 'string' || (rawField && typeof rawField === 'object'))) normalized[field] = rawField
+        else if (rawField === null && current !== undefined) normalized[field] = null
+        else if (current === undefined) normalized[field] = rawField
+        else if (current && typeof current === 'object' && rawField && typeof rawField === 'object') normalized[field] = rawField
+      }
+      const parsed = examQuestionSchema.safeParse(normalized)
+      if (!parsed.success) {
         return {
-          value: corrected.question,
-          issues: [...protectedFields, ...(unchanged ? [] : ['As alternativas fora do alvo devem permanecer literalmente inalteradas.'])],
-          warnings: [...corrected.warnings, ...corrected.issues.map((item) => `Conferência para o Jev: ${item}`)],
-          repairInstructions: [{ code: issue?.code ?? 'ALTERNATIVE_FORMAT_OUTLIER', fields: [`alternatives.${letter}`], message: issue?.message ?? `Reescreva somente a alternativa ${letter}.`, protectedFields: ['statement', 'supportText', 'correctLetter'] }],
+          value: params.question,
+          issues: parsed.error.issues.map((issue) => `${issue.path.join('.') || 'questão'}: ${issue.message}`),
+          warnings: [],
+          repairInstructions: diagnosis.map((item) => ({ code: item.codigo, fields: item.camposQuePodeAlterar, protectedFields: item.camposProtegidos, message: item.correcaoObrigatoria })),
         }
-      },
-    })
-    return { question: generated.value, warnings: generated.warnings, repairKind }
-  }
-
-  if (repairKind === 'alternatives' || repairKind === 'alternatives_and_key') {
-    const correct = params.question.alternatives?.find((item) => item.letter === params.question.correctLetter)
-    const withKey = repairKind === 'alternatives_and_key'
-    const expectedAlternativeCount = params.curriculum.segment === 'anos-iniciais' ? 4 : 5
-    const generated = await generateValidatedStructuredContent({
-      context: `${params.context}/${withKey ? 'alternatives-key' : 'alternatives'}`,
-      prompt: `${common}\n\nRefaça SOMENTE "alternatives"${withKey ? ' e "correctLetter"' : ''}. Gere exatamente ${expectedAlternativeCount} opções com as letras ${Array.from({ length: expectedAlternativeCount }, (_, index) => String.fromCharCode(65 + index)).join(', ')}. ${withKey ? 'Derive uma única resposta correta a partir do enunciado e do apoio; se nenhuma opção atual responder à pergunta, inclua a resposta correta em uma alternativa e informe sua letra.' : `Preserve literalmente a alternativa correta ${params.question.correctLetter}: ${correct?.text ?? ''}; substitua apenas os distratores problemáticos.`} As opções devem ser homogêneas, plausíveis e mutuamente exclusivas.`,
-      responseSchema: withKey ? ALTERNATIVES_KEY_RESPONSE_SCHEMA : ALTERNATIVES_RESPONSE_SCHEMA,
-      zodSchema: withKey ? alternativesAndKeySchema : alternativesSchema,
-      maxAttempts: 2,
-      validate: (value) => {
-        const patch = value as { alternatives: ExamQuestion['alternatives']; correctLetter?: string }
-        const extra: string[] = []
-        if (patch.alternatives?.length !== expectedAlternativeCount) extra.push(`A questão precisa ter exatamente ${expectedAlternativeCount} alternativas.`)
-        if (!withKey && patch.alternatives?.find((item) => item.letter === params.question.correctLetter)?.text !== correct?.text) extra.push('A alternativa correta deve ser preservada literalmente.')
-        const result = validate(patch, withKey ? ['alternatives', 'correctLetter'] : ['alternatives'])
-        return { ...result, issues: [...result.issues, ...extra] }
-      },
-    })
-    return { question: generated.value, warnings: generated.warnings, repairKind }
-  }
-
-  const generated = await generateValidatedStructuredContent({
-    context: `${params.context}/answer-rubric`, prompt: `${common}\n\nReescreva SOMENTE "expectedAnswer" e "gradingCriteria". A resposta-modelo deve responder integralmente ao enunciado. Retorne de 3 a 5 critérios objetivos, observáveis e sem inventar exigências ausentes.`,
-    responseSchema: ANSWER_RUBRIC_RESPONSE_SCHEMA, zodSchema: answerRubricSchema, maxAttempts: 2,
-    validate: (value) => validate({ expectedAnswer: value.expectedAnswer, gradingCriteria: value.gradingCriteria.map((item, index) => `${index + 1}) ${item}`).join(' ') }, ['expectedAnswer', 'gradingCriteria']),
+      }
+      const corrected = correctSingleQuestion({ ...parsed.data, review: null } as ExamQuestion, params.curriculum, { deferContentQualityToJev: true })
+      const finalPayload: Record<string, unknown> = { ...corrected.question }
+      for (const field of Object.keys(params.question)) {
+        if (!allowed.has(field)) finalPayload[field] = params.question[field as keyof ExamQuestion]
+      }
+      if (alternativesAreScoped && params.question.alternatives) {
+        finalPayload.alternatives = normalizeAlternativeResponse(corrected.question.alternatives, params.question.alternatives, targetedLetters)
+      }
+      const finalParsed = examQuestionSchema.safeParse(finalPayload)
+      const issues = [
+        ...(!finalParsed.success ? finalParsed.error.issues.map((issue) => `${issue.path.join('.') || 'questão'}: ${issue.message}`) : []),
+        ...(params.question.type === 'objetiva' && (!corrected.question.alternatives?.length || !corrected.question.correctLetter) ? ['A questão objetiva precisa conter alternativas e gabarito.'] : []),
+        ...(params.question.type === 'objetiva' && corrected.question.correctLetter && !corrected.question.alternatives?.some((item) => item.letter === corrected.question.correctLetter) ? ['O gabarito precisa apontar para uma alternativa existente.'] : []),
+        ...(params.question.type === 'descritiva' && !corrected.question.expectedAnswer?.trim() ? ['A questão descritiva precisa manter resposta esperada.'] : []),
+      ]
+      return {
+        value: finalParsed.success ? finalParsed.data : params.question,
+        issues,
+        warnings: [...corrected.warnings, ...corrected.issues.map((issue) => `O Jev reavaliará: ${issue}`)],
+        repairInstructions: diagnosis.map((item) => ({ code: item.codigo, fields: item.camposQuePodeAlterar, protectedFields: item.camposProtegidos, message: item.correcaoObrigatoria })),
+      }
+    },
   })
+  if (sameJson(params.question, generated.value)) return null
   return { question: generated.value, warnings: generated.warnings, repairKind }
 }

@@ -159,7 +159,7 @@ export async function transcribeDiscursiveAnswer(params: { image: Buffer; mimeTy
         }, { headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, timeout: 90_000 })).data
       : (await axios.post(`${GEMINI_BASE}/${profile.model}:generateContent?key=${apiKey}`, {
           contents: [{ parts: [{ inlineData: { mimeType: params.mimeType, data: params.image.toString('base64') } }, { text: transcriptionPrompt() }] }],
-          generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 8_000 },
+          generationConfig: { responseMimeType: 'application/json' },
         }, { timeout: 90_000 })).data
     const transcription = parseProviderResponse(profile.provider, data)
     const usage = profile.provider === 'anthropic'
@@ -221,7 +221,7 @@ export async function transcribeDiscursiveAnswers(params: { answers: Array<{ que
             ...params.answers.flatMap((answer) => [{ inlineData: { mimeType: answer.mimeType, data: answer.image.toString('base64') } }, { text: `Esta imagem corresponde à questão ${answer.questionNumber}.` }]),
             { text: prompt },
           ] }],
-          generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 8_000 },
+          generationConfig: { responseMimeType: 'application/json' },
         }, { timeout: 90_000 })).data
     const body = data as { content?: Array<{ type?: string; text?: string }>; candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }
     const text = profile.provider === 'anthropic'

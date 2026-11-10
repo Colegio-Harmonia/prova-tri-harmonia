@@ -48,8 +48,16 @@ export function classifyAiFailure(error: unknown): string {
     if (error.code === 'ECONNABORTED') return 'timeout'
     const status = error.response?.status
     if (status === 401 || status === 403) return 'provider_auth'
+    if (status === 402) return 'provider_payment_required'
     if (status === 429) return 'rate_limited'
     if (status && status >= 500) return 'provider_unavailable'
+    if (status && status >= 400) {
+      const providerStatus = (error.response?.data as { error?: { status?: unknown } } | undefined)?.error?.status
+      const safeProviderStatus = typeof providerStatus === 'string' && /^[A-Z_]{2,40}$/.test(providerStatus)
+        ? `_${providerStatus.toLowerCase()}`
+        : ''
+      return `provider_http_${status}${safeProviderStatus}`
+    }
     return 'provider_request_failed'
   }
 

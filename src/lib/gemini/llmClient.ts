@@ -1,8 +1,11 @@
 import axios from 'axios'
 import { GEMINI_RESPONSE_SCHEMA } from './examSchema'
-import { normalizeAiUsage, recordAiOperation, type AiUsage } from '@/lib/ai/operationTelemetry'
+import { classifyAiFailure, normalizeAiUsage, recordAiOperation, type AiUsage } from '@/lib/ai/operationTelemetry'
 import { AI_BUDGET_EXHAUSTED_CODE, AiBudgetExceededError, reserveAiOperation } from '@/lib/ai/operationBudget'
 import { activeAiModel, estimateAiCostMicrousd, type ActiveAiModel } from '@/lib/ai/modelProfiles'
+import { parseResponseJson } from './responseJson'
+import { getTextFallbackModel } from '@/lib/ai/textFallback'
+import { canUseTextFallback, providerFailureMessage } from '@/lib/ai/providerFailure'
 
 // Trocado de Gemini pra DeepSeek (14/07/2026) — o crédito pré-pago do
 // Gemini acabou e a escola não tem orçamento pra recarregar toda hora.
@@ -25,14 +28,15 @@ const DEFAULT_MODEL = 'deepseek-v4-flash' // mais barato; "deepseek-v4-pro" fica
 
 export async function llmAvailable(): Promise<boolean> {
   const profile = await activeAiModel('text_generation')
-  if (profile.provider === 'deepseek') return Boolean(process.env.DEEPSEEK_API_KEY)
-  if (profile.provider === 'openai') return Boolean(process.env.OPENAI_API_KEY)
-  if (profile.provider === 'gemini') return Boolean(process.env.GEMINI_API_KEY)
-  return false
+  const configured = (model: ActiveAiModel) => Boolean(model.provider === 'deepseek' ? process.env.DEEPSEEK_API_KEY : model.provider === 'openai' ? process.env.OPENAI_API_KEY : model.provider === 'gemini' ? process.env.GEMINI_API_KEY : undefined)
+  if (configured(profile)) return true
+  const fallback = await getTextFallbackModel()
+  return Boolean(fallback && fallback.provider !== profile.provider && configured(fallback))
 }
 
 export class AiProviderError extends Error {
-  constructor(message: string, public readonly durationMs: number, public readonly cause?: unknown, public readonly failureCode?: string) {
+  profile?: ActiveAiModel
+  constructor(message: string, public readonly durationMs: number, public readonly cause?: unknown, public readonly failureCode?: string, public readonly responseText?: string, public readonly usage?: AiUsage) {
     super(message)
     this.name = 'AiProviderError'
   }
@@ -50,8 +54,8 @@ export type StructuredCompletion = {
 export type StructuredCompletionOptions = {
   /** Temperatura menor privilegia aderência ao contrato; maior, variedade textual. */
   temperature?: number
-  /** Limite por chamada, evitando respostas longas cortadas ou dispersas. */
-  maxTokens?: number
+  /** Evita gastar a janela de resposta com raciocínio na geração da prova inteira. */
+  reasoningEffort?: 'minimal'
 }
 
 function buildJsonInstruction(schema: object): string {
@@ -67,8 +71,33 @@ function buildJsonInstruction(schema: object): string {
 // SINGLE_QUESTION_RESPONSE_SCHEMA pra pedir só 1 questão em vez da prova.
 export async function generateStructuredCompletion(prompt: string, schema: object = GEMINI_RESPONSE_SCHEMA, options: StructuredCompletionOptions = {}): Promise<StructuredCompletion> {
   const profile = await activeAiModel('text_generation')
+  // Uma reserva só é usada se a gestão a escolheu explicitamente e pertence
+  // a outro provedor. Nunca seleciona qualquer perfil desativado do catálogo.
+  const fallback = await getTextFallbackModel()
+  const reserve = fallback?.provider !== profile.provider ? fallback : null
+  const key = `${profile.id}:${profile.provider}:${profile.model}`
+  if (reserve && (paymentCooldowns.get(key) ?? 0) > Date.now()) {
+    return generateCompletionWithProfile(reserve, prompt, schema, options)
+  }
+  try {
+    return await generateCompletionWithProfile(profile, prompt, schema, options)
+  } catch (error) {
+    const code = classifyAiFailure(error)
+    if (!reserve || !canUseTextFallback(code)) throw error
+    if (code === 'provider_payment_required') paymentCooldowns.set(key, Date.now() + 5 * 60_000)
+    await recordAiOperation({ operation: 'text_generation/provider-fallback', provider: profile.provider, model: profile.model, modelProfileId: profile.id, status: 'failed', attempt: 1, durationMs: error instanceof AiProviderError ? error.durationMs : null, errorCode: code })
+    console.warn('[ai-fallback] usando reserva configurada', { provider: profile.provider, model: profile.model, failureCode: code, fallbackProvider: reserve.provider, fallbackModel: reserve.model })
+    return generateCompletionWithProfile(reserve, prompt, schema, options)
+  }
+}
+
+const paymentCooldowns = new Map<string, number>()
+
+async function generateCompletionWithProfile(profile: ActiveAiModel, prompt: string, schema: object, options: StructuredCompletionOptions): Promise<StructuredCompletion> {
   if (profile.provider !== 'deepseek' && profile.provider !== 'openai' && profile.provider !== 'gemini') {
-    throw new AiProviderError('O perfil de texto ativo ainda não possui adaptador habilitado.', 0, undefined, 'provider_not_implemented')
+    const error = new AiProviderError('O perfil de texto ativo ainda não possui adaptador habilitado.', 0, undefined, 'provider_not_implemented')
+    error.profile = profile
+    throw error
   }
   const apiKey = profile.provider === 'openai'
     ? process.env.OPENAI_API_KEY
@@ -76,10 +105,13 @@ export async function generateStructuredCompletion(prompt: string, schema: objec
       ? process.env.GEMINI_API_KEY
       : process.env.DEEPSEEK_API_KEY
   const keyName = profile.provider === 'openai' ? 'OPENAI_API_KEY' : profile.provider === 'gemini' ? 'GEMINI_API_KEY' : 'DEEPSEEK_API_KEY'
-  if (!apiKey) throw new AiProviderError(`${keyName} não configurado`, 0, undefined, 'provider_not_configured')
+  if (!apiKey) {
+    const error = new AiProviderError(`${keyName} não configurado`, 0, undefined, 'provider_not_configured')
+    error.profile = profile
+    throw error
+  }
   const model = profile.model || (profile.provider === 'openai' ? 'gpt-4.1-mini' : profile.provider === 'gemini' ? 'gemini-3.7-flash' : DEFAULT_MODEL)
   const temperature = options.temperature ?? 0.6
-  const maxTokens = options.maxTokens ?? 8_000
   const startedAt = Date.now()
 
   try {
@@ -90,11 +122,9 @@ export async function generateStructuredCompletion(prompt: string, schema: objec
             model,
             messages: [{ role: 'user', content: prompt + buildJsonInstruction(schema) }],
             response_format: { type: 'json_object' },
-            // GPT-5 usa o nome atual do parâmetro; modelos OpenAI anteriores
-            // continuam no campo legado para preservar compatibilidade.
-            ...(model.startsWith('gpt-5') ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens }),
             // A família GPT-5 aceita somente a temperatura padrão (1).
             ...(model.startsWith('gpt-5') ? {} : { temperature }),
+            ...(model === 'gpt-5-mini' && options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}),
           },
         }
       : profile.provider === 'gemini'
@@ -105,7 +135,6 @@ export async function generateStructuredCompletion(prompt: string, schema: objec
               generationConfig: {
                 responseMimeType: 'application/json',
                 responseSchema: schema,
-                maxOutputTokens: maxTokens,
                 temperature,
               },
             },
@@ -121,9 +150,6 @@ export async function generateStructuredCompletion(prompt: string, schema: objec
             // modo de raciocínio do DeepSeek aumenta respostas vazias ou
             // incompletas nesse contrato, sem acrescentar garantia estrutural.
             thinking: { type: 'disabled' },
-            // Nunca passamos de 8.000 no DeepSeek; o teto de saída dele pode
-            // ser menor que o dos modelos de raciocínio (16.000 na auditoria).
-            max_tokens: Math.min(maxTokens, 8_000),
             temperature,
           },
         }
@@ -148,17 +174,25 @@ export async function generateStructuredCompletion(prompt: string, schema: objec
       throw new AiProviderError(`${profile.provider === 'openai' ? 'OpenAI' : profile.provider === 'gemini' ? 'Gemini' : 'DeepSeek'} cortou a resposta por limite de tokens.`, durationMs, undefined, 'output_truncated')
     }
 
-    try {
-      const usage = profile.provider === 'gemini'
+    const usage = profile.provider === 'gemini'
         ? normalizeAiUsage({ prompt_tokens: data?.usageMetadata?.promptTokenCount, completion_tokens: data?.usageMetadata?.candidatesTokenCount, total_tokens: data?.usageMetadata?.totalTokenCount })
         : normalizeAiUsage(data?.usage)
-      return { value: JSON.parse(text), provider: profile.provider, model, usage, durationMs, profile }
+    try {
+      const parsed = parseResponseJson(text)
+      if (parsed.repaired) console.info('[ai-json] formatação corrigida localmente; conteúdo seguirá para validação.')
+      return { value: parsed.value, provider: profile.provider, model, usage, durationMs, profile }
     } catch {
-      throw new AiProviderError(`${profile.provider === 'openai' ? 'OpenAI' : profile.provider === 'gemini' ? 'Gemini' : 'DeepSeek'} retornou JSON inválido.`, durationMs, undefined, 'invalid_json')
+      throw new AiProviderError(`${profile.provider === 'openai' ? 'OpenAI' : profile.provider === 'gemini' ? 'Gemini' : 'DeepSeek'} retornou JSON inválido.`, durationMs, undefined, 'invalid_json', text, usage)
     }
   } catch (error) {
-    if (error instanceof AiProviderError) throw error
-    throw new AiProviderError('Falha ao chamar o provedor de IA.', Date.now() - startedAt, error)
+    if (error instanceof AiProviderError) {
+      error.profile = profile
+      throw error
+    }
+    const code = classifyAiFailure(error)
+    const failure = new AiProviderError(code === 'provider_payment_required' ? providerFailureMessage(code) : 'Falha ao chamar o provedor de IA.', Date.now() - startedAt, error, code)
+    failure.profile = profile
+    throw failure
   }
 }
 
@@ -174,7 +208,7 @@ export async function generateStructuredContent(prompt: string, schema: object =
     return completion.value
   } catch (error) {
     if (operation) {
-      const failedProfile = profile ?? await activeAiModel('text_generation')
+      const failedProfile = (error instanceof AiProviderError ? error.profile : undefined) ?? profile ?? await activeAiModel('text_generation')
       await recordAiOperation({
         operation,
         provider: failedProfile.provider,
@@ -182,7 +216,7 @@ export async function generateStructuredContent(prompt: string, schema: object =
         status: 'failed',
         attempt: 1,
         durationMs: error instanceof AiProviderError ? error.durationMs : null,
-        errorCode: error instanceof AiBudgetExceededError ? AI_BUDGET_EXHAUSTED_CODE : 'provider_request_failed',
+        errorCode: error instanceof AiBudgetExceededError ? AI_BUDGET_EXHAUSTED_CODE : classifyAiFailure(error),
       })
     }
     throw error

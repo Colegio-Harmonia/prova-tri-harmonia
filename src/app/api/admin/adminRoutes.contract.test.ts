@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   findOperations: vi.fn(),
   findDecisions: vi.fn(),
   findProfiles: vi.fn(),
+  findSetting: vi.fn(),
 }))
 
 vi.mock('@/auth/auth', () => ({ auth: mocks.auth }))
@@ -18,6 +19,7 @@ vi.mock('@/db/client', () => ({
       aiOperations: { findMany: mocks.findOperations },
       jevDecisions: { findMany: mocks.findDecisions },
       aiModelProfiles: { findMany: mocks.findProfiles },
+      applicationSettings: { findFirst: mocks.findSetting },
     },
   },
 }))
@@ -38,6 +40,7 @@ describe('contratos administrativos de API', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.findDecisions.mockResolvedValue([])
+    mocks.findSetting.mockResolvedValue(undefined)
   })
 
   it('rejeita auditoria administrativa sem sessao', async () => {
@@ -129,6 +132,7 @@ describe('contratos administrativos de API', () => {
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
       profiles: [{ id: 1, purpose: 'text_generation', provider: 'deepseek', model: 'deepseek-v4-pro' }],
+      textFallbackProfileId: null,
     })
   })
 

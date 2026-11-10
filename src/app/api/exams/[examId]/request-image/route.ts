@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
+import axios from 'axios'
 import { eq } from 'drizzle-orm'
 import { db } from '@/db/client'
 import { generatedExams } from '@/db/schema'
 import { auth } from '@/auth/auth'
-import { resolveQuestionImage } from '@/lib/images/questionImageService'
-import { generateIllustrationBrief } from '@/lib/images/illustrationBrief'
+import { ImageValidationRejectedError, resolveQuestionImage, uploadToStaging } from '@/lib/images/questionImageService'
+import { compactIllustrationBrief, generateIllustrationBrief } from '@/lib/images/illustrationBrief'
+import { renderQuestionDataVisual } from '@/lib/illustrations/questionDataVisual'
 import { AiBudgetExceededError } from '@/lib/ai/operationBudget'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { authorizeExamAccess } from '@/lib/exams/authorizeExamAccess'
@@ -58,6 +60,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
 
   try {
     const questionContext = [question.supportText, question.statement, question.alternatives?.map((a) => `${a.letter}) ${a.text}`).join('\n')].filter(Boolean).join('\n')
+    const dataVisual = !parsed.data.expectedText ? await renderQuestionDataVisual(exam.subject, question) : null
     // Provas anteriores ainda não possuem whatIfImage. Criamos e guardamos o
     // briefing uma vez, sem voltar a usar o enunciado bruto como prompt.
     const hadWhatIfImage = Boolean(question.whatIfImage?.trim())
@@ -65,15 +68,22 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     // Pedido manual não depende de uma chamada adicional de IA. O contexto
     // informado pelo professor basta para buscar ou gerar a imagem, em
     // qualquer disciplina ou tipo de questão.
-    const whatIfImage = question.whatIfImage?.trim()
+    const whatIfImage = dataVisual ? null : question.whatIfImage?.trim()
       || explicitQuery
       || await generateIllustrationBrief({ subject: exam.subject, statement: question.statement, supportText: question.supportText })
-    if (!hadWhatIfImage) {
-      question.whatIfImage = whatIfImage
+    const brief = whatIfImage ? compactIllustrationBrief(whatIfImage) : null
+    if (!hadWhatIfImage && brief) {
+      question.whatIfImage = brief
       await db.update(generatedExams).set({ generationPayload: payload }).where(eq(generatedExams.id, examId))
     }
-    const query = parsed.data.query?.trim() || whatIfImage
-    const resolved = await resolveQuestionImage(query, questionContext, parsed.data.expectedText)
+    const query = dataVisual
+      ? dataVisual.kind === 'grid' ? 'Malha quadriculada com os quadradinhos descritos no enunciado'
+        : dataVisual.kind === 'polygon' ? 'Polígono desenhado com os vértices descritos no enunciado'
+          : 'Gráfico das leituras de temperatura descritas no enunciado'
+      : parsed.data.query?.trim() || brief || 'Ilustração didática'
+    const resolved = dataVisual
+      ? { ...(await uploadToStaging(dataVisual.buffer, 'image/png', `questao-${question.number}-${dataVisual.kind}-${Date.now()}.png`)), source: dataVisual.kind === 'grid' ? 'diagrama' as const : 'grafico' as const }
+      : await resolveQuestionImage(query, questionContext, parsed.data.expectedText, { reportFailure: true })
     if (!resolved) {
       return NextResponse.json({ error: 'Não foi possível encontrar nem gerar uma imagem para essa busca.' }, { status: 502 })
     }
@@ -83,7 +93,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     }
     question.needsImage = true
     question.imageQuery = query
-    question.whatIfImage = whatIfImage
+    if (brief) question.whatIfImage = brief
     // Uma imagem pedida manualmente pelo revisor já é, por definição, uma
     // escolha humana — mas ainda passa pelo mesmo par aprovar/rejeitar da
     // tela de revisão antes de ir pro documento final (nunca aprovado
@@ -99,6 +109,24 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
       return NextResponse.json({ error: 'O limite diário de IA foi atingido. A ilustração poderá ser gerada após o próximo reset da cota.' }, { status: 429 })
     }
     console.error('[exams/request-image] erro:', err)
-    return NextResponse.json({ error: 'Erro ao buscar/gerar imagem.' }, { status: 502 })
+    if (err instanceof z.ZodError) {
+      return NextResponse.json({ error: `A descrição da imagem veio em formato inválido (${err.issues.map((issue) => issue.path.join('.') || issue.message).join(', ')}). Tente novamente.`, stage: 'descricao' }, { status: 502 })
+    }
+    if (err instanceof ImageValidationRejectedError) {
+      return NextResponse.json({ error: `A imagem foi criada, mas reprovada na conferência visual: ${err.reason.slice(0, 300)}`, stage: 'validacao_visual' }, { status: 502 })
+    }
+    if (axios.isAxiosError(err)) {
+      const status = err.response?.status
+      const requestId = err.response?.headers?.['x-request-id'] ?? err.response?.headers?.['request-id']
+      return NextResponse.json({ error: `O provedor de imagem falhou${status ? ` (HTTP ${status})` : ' por conexão ou tempo limite'}${requestId ? `; solicitação ${String(requestId).slice(0, 100)}` : ''}. Tente novamente.`, stage: 'provedor', providerStatus: status ?? null }, { status: 502 })
+    }
+    const message = err instanceof Error ? err.message : ''
+    if (/não configurad[oa]|perfil de imagem ativo|ative um perfil/i.test(message)) {
+      return NextResponse.json({ error: message.slice(0, 300), stage: 'configuracao' }, { status: 502 })
+    }
+    if (/Drive|DRIVE_ROOT_FOLDER_ID|arquivo enviado|integridade/i.test(message)) {
+      return NextResponse.json({ error: `Falha ao salvar a imagem no Drive: ${message.slice(0, 300)}`, stage: 'armazenamento' }, { status: 502 })
+    }
+    return NextResponse.json({ error: 'Falha ao gerar ou validar a imagem. Consulte o registro do servidor para o detalhe técnico.', stage: 'geracao' }, { status: 502 })
   }
 }

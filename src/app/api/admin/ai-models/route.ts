@@ -5,6 +5,7 @@ import { auth } from '@/auth/auth'
 import { db } from '@/db/client'
 import { aiModelProfiles, users } from '@/db/schema'
 import { isStaffSuperuser } from '@/lib/auth/roles'
+import { getTextFallbackModel, saveTextFallbackModel } from '@/lib/ai/textFallback'
 
 const bodySchema = z.object({
   id: z.number().int().positive().optional(),
@@ -27,7 +28,30 @@ async function requireAdmin() {
 export async function GET() {
   if (!await requireAdmin()) return NextResponse.json({ error: 'Sem permissão.' }, { status: 403 })
   const profiles = await db.query.aiModelProfiles.findMany({ orderBy: (table, { asc }) => [asc(table.purpose), asc(table.provider), asc(table.model)] })
-  return NextResponse.json({ profiles })
+  const fallback = await getTextFallbackModel()
+  return NextResponse.json({ profiles, textFallbackProfileId: fallback?.id ?? null })
+}
+
+export async function PATCH(req: NextRequest) {
+  const user = await requireAdmin()
+  if (!user) return NextResponse.json({ error: 'Sem permissão.' }, { status: 403 })
+  const parsed = z.object({ textFallbackProfileId: z.number().int().positive().nullable() }).safeParse(await req.json())
+  if (!parsed.success) return NextResponse.json({ error: 'Reserva inválida.' }, { status: 400 })
+  const id = parsed.data.textFallbackProfileId
+  if (id !== null) {
+    const profile = await db.query.aiModelProfiles.findFirst({ where: eq(aiModelProfiles.id, id) })
+    if (!profile || profile.purpose !== 'text_generation' || !['deepseek', 'gemini', 'openai'].includes(profile.provider)) {
+      return NextResponse.json({ error: 'Escolha um modelo de texto compatível.' }, { status: 400 })
+    }
+    const profiles = await db.query.aiModelProfiles.findMany({ where: eq(aiModelProfiles.purpose, 'text_generation') })
+    if (profiles.some((primary) => primary.enabled && primary.provider === profile.provider)) {
+      return NextResponse.json({ error: 'Escolha uma reserva de outro provedor para proteger contra falta de saldo.' }, { status: 400 })
+    }
+    const key = profile.provider === 'deepseek' ? process.env.DEEPSEEK_API_KEY : profile.provider === 'openai' ? process.env.OPENAI_API_KEY : process.env.GEMINI_API_KEY
+    if (!key) return NextResponse.json({ error: 'A credencial deste provedor ainda não está configurada no servidor.' }, { status: 400 })
+  }
+  await saveTextFallbackModel(id, user.id)
+  return NextResponse.json({ textFallbackProfileId: id })
 }
 
 export async function POST(req: NextRequest) {

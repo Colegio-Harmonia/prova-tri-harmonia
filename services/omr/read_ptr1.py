@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local reader for the fixed PTR1 answer sheet.
+"""Local reader for the versioned PTR1/PTR2/PTR3 answer sheets.
 
 It never sends a scan outside the server. ZXing is the primary QR decoder,
 OpenCV is the bounded fallback, and the four corner markers rectify the page
@@ -17,7 +17,7 @@ try:
 except ImportError:
     zxingcpp = None
 
-READER_VERSION = "ptr1-qr-v5-geometry-safe"
+READER_VERSION = "ptr1-ptr2-ptr3-qr-v7"
 QR_DECODE_BUDGET_MS = 4_500
 
 MM = 300 / 25.4
@@ -337,14 +337,25 @@ def normalize_page(image):
         rotation = (pre_rotation + rotation) % 360
     return normalized, markers_found, qr_text, qr_engine, qr_attempts, qr_duration_ms, rotation
 
-def bubble_readings(image):
+def layout_from_qr(token):
+    parts = token.split('.') if isinstance(token, str) else []
+    return parts[3] if len(parts) == 6 and parts[0] == 'PTR1' else None
+
+
+def bubble_readings(image, layout_version='PTR1'):
+    # O prefixo PTR1 é a versão do token; o quarto campo identifica a
+    # geometria assinada. Nunca adivinhar coordenadas de uma versão futura.
+    geometry = {'PTR1': (137.6, 13), 'PTR2': (141, 9), 'PTR3': (102, 9)}.get(layout_version)
+    if geometry is None:
+        raise ValueError('LAYOUT_UNSUPPORTED')
+    first_center, row_gap = geometry
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 51, 10)
     rows = []
     for index in range(15):
         column, row = (0, index) if index < 8 else (1, index - 8)
         base_x_mm = 9.3 if column == 0 else 108
-        center_y = round((132.1 + 5.5 + row * 13) * MM)
+        center_y = round((first_center + row * row_gap) * MM)
         scores = []
         for option in range(5):
             center_x = round((base_x_mm + 37 + option * 8.5) * MM)
@@ -396,8 +407,11 @@ def main():
         sharpness = 0.0
         normalization_error = normalization_error or 'OMR_NORMALIZATION_ERROR'
     try:
-        bubbles = bubble_readings(normalized)
-    except cv2.error:
+        layout_version = layout_from_qr(qr)
+        bubbles = bubble_readings(normalized, layout_version) if layout_version in ('PTR1', 'PTR2', 'PTR3') else []
+        if qr and layout_version not in ('PTR1', 'PTR2', 'PTR3'):
+            normalization_error = normalization_error or 'LAYOUT_UNSUPPORTED'
+    except (cv2.error, ValueError):
         bubbles = []
         normalization_error = normalization_error or 'OMR_BUBBLE_READ_ERROR'
     result = {

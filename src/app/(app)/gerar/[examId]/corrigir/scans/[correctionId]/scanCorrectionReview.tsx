@@ -496,6 +496,9 @@ export default function ScanCorrectionReview({
           const scan = evidenceByQuestion.get(question.number);
           if (!answer) return null;
           const max = question.weight ?? answer.weight ?? 1;
+          const weightLabel = exam?.generationPayload.metadata.generationEngine === "whole-exam-v1"
+            ? `vale ${max.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}% da prova`
+            : `vale ${max} ponto(s)`;
           const questionTranscribing = question.type === "descritiva" && Boolean(scan?.reading?.transcriptionActive);
           const readingNeedsReview = question.type === "descritiva" && scan?.reading?.reviewStatus === "pending" && !questionTranscribing;
           return (
@@ -512,7 +515,7 @@ export default function ScanCorrectionReview({
                     {question.type === "descritiva"
                       ? "Resposta escrita"
                       : "Objetiva"}{" "}
-                    · vale {max} ponto(s)
+                    · {weightLabel}
                   </p>
                   {question.supportText && (
                     <p className="mt-3 whitespace-pre-wrap text-sm text-content-secondary">

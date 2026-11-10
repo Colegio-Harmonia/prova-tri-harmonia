@@ -37,13 +37,15 @@ export async function suggestGrade(params: {
   gradingCriteria: string | null
   studentAnswer: string
   maxGrade: number
+  maxGradeLabel?: 'ponto(s)' | '% da prova'
 }): Promise<GradeSuggestion> {
   const { statement, expectedAnswer, gradingCriteria, studentAnswer, maxGrade } = params
+  const maxGradeLabel = params.maxGradeLabel ?? 'ponto(s)'
   const safeStudentAnswer = prepareStudentAnswerForAi(studentAnswer)
 
   const prompt = `Você é um professor corrigindo uma questão descritiva. Avalie a resposta do aluno na escala oficial desta questão.
 
-VALOR MÁXIMO DA QUESTÃO: ${maxGrade.toFixed(2)} ponto(s).
+VALOR MÁXIMO DA QUESTÃO: ${maxGrade.toFixed(2)} ${maxGradeLabel}.
 Retorne o campo "grade" obrigatoriamente entre 0 e ${maxGrade.toFixed(2)}, inclusive. Não use a escala genérica de 0 a 10, exceto quando o máximo desta questão for 10.
 
 Enunciado da questão:

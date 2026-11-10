@@ -1,3 +1,4 @@
+import { isQuestionImageApproved } from '@/lib/exams/questionOrigin'
 import type { ExamQuestion } from '@/lib/gemini/examSchema'
 import type { MergedAdaptation } from './mergeLibraries'
 
@@ -46,7 +47,7 @@ function questionForPrompt(q: ExamQuestion) {
     supportText: q.supportText ?? null,
     statement: q.statement,
     alternatives: q.alternatives ?? null,
-    hasImage: Boolean(q.image?.approved),
+    hasImage: Boolean(isQuestionImageApproved(q)),
   }
 }
 

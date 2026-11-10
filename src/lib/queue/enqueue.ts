@@ -1,6 +1,6 @@
 import { db } from '@/db/client'
 import { generationBatches, generationJobs, type GenerationJobType } from '@/db/schema'
-import { gerarProvaJobPayloadSchema, type GerarAtividadeJobPayload, type GerarProvaJobPayload, type GerarReforcoEnemJobPayload } from './types'
+import { adicionarQuestaoJobPayloadSchema, gerarProvaJobPayloadSchema, type AdicionarQuestaoJobPayload, type GerarAtividadeJobPayload, type GerarProvaJobPayload, type GerarReforcoEnemJobPayload } from './types'
 import type { CurriculumPlanItem } from '@/types/exam'
 
 export type GerarProvaBatchInput = {
@@ -11,11 +11,15 @@ export type GerarProvaBatchInput = {
   subjects: string[]
   config: {
     bimester?: number
+    questionSource?: 'acervo' | 'ia'
     questionCount: number
     objectivePercentage?: number
     enemBankQuestionIds?: number[]
     assessmentKind?: 'padrao' | 'enem'
     contentPlan?: CurriculumPlanItem[]
+    curriculumPlanIds?: Record<string, number>
+    curriculumPlanVersionIds?: Record<string, number>
+    contentPlanIncludesEnem?: boolean
     assignedTo?: number
   }
 }
@@ -38,6 +42,12 @@ export function buildGerarProvaJobPayloads(input: GerarProvaBatchInput): GerarPr
   if (input.config.contentPlan?.length && subjects.length > 1) {
     throw new BatchValidationError('A matriz da avaliação é definida por disciplina; gere uma disciplina por vez para usá-la.')
   }
+  if (input.config.questionCount > 0) {
+    const missingPlans = subjects.filter((subject) => !input.config.curriculumPlanIds?.[subject])
+    if (missingPlans.length) {
+      throw new BatchValidationError(`Selecione um planejamento aprovado na aba Planejamentos para: ${missingPlans.join(', ')}.`)
+    }
+  }
 
   return subjects.map((subject) => {
     const parsed = gerarProvaJobPayloadSchema.safeParse({
@@ -45,13 +55,18 @@ export function buildGerarProvaJobPayloads(input: GerarProvaBatchInput): GerarPr
       gradeYear: input.gradeYear,
       academicYear: input.academicYear,
       subject,
+      generationEngine: 'whole-exam-v1',
       bimester: input.config.bimester,
       questionCount: input.config.questionCount,
+      questionSource: input.config.questionSource,
       objectivePercentage: input.config.objectivePercentage,
       enemBankQuestionIds: bankIds,
       classLabel: input.classLabel,
       assessmentKind: input.config.assessmentKind,
       contentPlan: input.config.contentPlan,
+      curriculumPlanId: input.config.curriculumPlanIds?.[subject],
+      curriculumPlanVersionId: input.config.curriculumPlanVersionIds?.[subject],
+      contentPlanIncludesEnem: input.config.contentPlanIncludesEnem,
       assignedTo: input.config.assignedTo,
     })
     if (!parsed.success) {
@@ -83,7 +98,7 @@ export async function enqueueReforcoEnemJob(payload: GerarReforcoEnemJobPayload,
 export async function enqueueAtividadeJob(payload: GerarAtividadeJobPayload, requestedBy: number): Promise<number> {
   const [job] = await db
     .insert(generationJobs)
-    .values({ jobType: 'gerar_atividade', payload, requestedBy })
+    .values({ jobType: 'gerar_atividade', payload: { ...payload, generationEngine: 'whole-exam-v1' }, requestedBy })
     .returning({ jobId: generationJobs.id })
   return job.jobId
 }
@@ -114,6 +129,17 @@ export async function enqueuePontuarProvaJob(examId: number, requestedBy: number
       requestedBy,
     })
     .returning({ jobId: generationJobs.id })
+  return job.jobId
+}
+
+export async function enqueueAdicionarQuestaoJob(payload: AdicionarQuestaoJobPayload, requestedBy: number): Promise<number> {
+  const parsed = adicionarQuestaoJobPayloadSchema.parse(payload)
+  const [job] = await db.insert(generationJobs).values({
+    jobType: 'adicionar_questao',
+    payload: parsed,
+    requestedBy,
+    priority: 3,
+  }).returning({ jobId: generationJobs.id })
   return job.jobId
 }
 

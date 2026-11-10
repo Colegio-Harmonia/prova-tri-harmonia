@@ -44,4 +44,18 @@ describe('notação matemática no pipeline unificado', () => {
     expect(instruction).toContain('\\\\frac')
     expect(instruction).toContain('2^{n-1}')
   })
+
+  it('gera apoio com premissas e exige alternativas completas e paralelas', () => {
+    const prompt = buildUnifiedPrompt(ctx, slot)
+    expect(prompt).toContain('O apoio NÃO pode enunciar a conclusão')
+    expect(prompt).toContain('Nenhuma frase do supportText, copiada isoladamente, pode ser a resposta correta')
+    expect(prompt).toContain('diferença máxima de 25%')
+    expect(prompt).toContain('comentários editoriais nas alternativas')
+  })
+
+  it('adiciona instruções específicas para regeneração segura', () => {
+    const prompt = buildUnifiedPrompt({ ...ctx, regenerationMode: 'safe' }, slot)
+    expect(prompt).toContain('MODO BASE SEGURA')
+    expect(prompt).toContain('Preserve tipo, capítulo, habilidade e recurso visual obrigatórios')
+  })
 })

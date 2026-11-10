@@ -33,6 +33,7 @@ function getBreadcrumbs(pathname: string): Crumb[] {
     { href: '/desempenho', label: 'Desempenho' },
     { href: '/usuarios', label: 'Usuários' },
     { href: '/ia', label: 'Operações de IA' },
+    { href: '/configuracoes', label: 'Configurações' },
     { href: '/design-system', label: 'Design System' },
   ].find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`))
 

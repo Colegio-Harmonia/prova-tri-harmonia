@@ -3,20 +3,24 @@ import dns from 'node:dns/promises'
 import net from 'node:net'
 import axios from 'axios'
 import sharp from 'sharp'
+import { normalizeQuestionImage } from './normalizeQuestionImage'
 import { getDriveClient, findOrCreateFolder } from '@/lib/docs/driveClient'
 import { searchWikimediaImage } from './wikimediaSearch'
 import { generateIllustration } from './imageGenerate'
 import { tryRenderChart } from './chartRender'
 import { renderBlueprintVisual, tryRenderTechnicalVisual } from './technicalVisualRender'
 import { validateGeneratedQuestionImage } from './imageValidation'
-import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
+import type { ExamGenerationResult, ExamQuestion } from '@/lib/gemini/examSchema'
 import { getIllustrationGenerator } from '@/lib/illustrations/registry'
 import { AiBudgetExceededError } from '@/lib/ai/operationBudget'
+import { mapInBatches, QUESTION_GENERATION_CONCURRENCY } from '@/lib/exams/questionConcurrency'
 
 export type ResolvedQuestionImage = {
   source: 'busca' | 'gerada' | 'grafico' | 'diagrama' | 'quimica' | 'importado' | 'enem'
   driveFileId: string
   previewUrl: string
+  width?: number
+  height?: number
   /** Só preenchido pra source:'importado'/'enem' — de onde a imagem veio, pra referência/crédito. */
   sourceUrl?: string
 }
@@ -73,7 +77,15 @@ async function waitForUploadedImageIntegrity(
   throw new Error(`O Drive não confirmou a integridade da imagem enviada após nova verificação (${lastReason}).`)
 }
 
-export async function uploadToStaging(buffer: Buffer, mimeType: string, name: string): Promise<{ driveFileId: string; previewUrl: string }> {
+export async function uploadToStaging(buffer: Buffer, mimeType: string, name: string): Promise<{ driveFileId: string; previewUrl: string; width?: number; height?: number }> {
+  let dimensions: { width: number; height: number } | undefined
+  if (!/^(formula|tabela)-/.test(name)) {
+    const normalized = await normalizeQuestionImage(buffer)
+    buffer = normalized.buffer
+    mimeType = 'image/png'
+    name = name.replace(/\.[^.]+$/, '.png')
+    dimensions = { width: normalized.width, height: normalized.height }
+  }
   const rootId = process.env.DRIVE_ROOT_FOLDER_ID
   if (!rootId) throw new Error('DRIVE_ROOT_FOLDER_ID não configurado')
 
@@ -110,7 +122,7 @@ export async function uploadToStaging(buffer: Buffer, mimeType: string, name: st
   // instead of raw image bytes when hotlinked in an <img> tag — Google's
   // `/thumbnail` endpoint is the one meant for that and renders reliably in
   // the /revisar review screen.
-  return { driveFileId, previewUrl: `https://drive.google.com/thumbnail?id=${driveFileId}&sz=w800` }
+  return { driveFileId, previewUrl: `https://drive.google.com/thumbnail?id=${driveFileId}&sz=w800`, ...dimensions }
 }
 
 // Bloqueia URL apontando pra rede interna do servidor — o professor
@@ -183,8 +195,8 @@ export async function importImageFromUrl(
   const mimeType = contentType.split(';')[0].trim()
   const ext = mimeType.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg'
 
-  const { driveFileId, previewUrl } = await uploadToStaging(Buffer.from(data), mimeType, `${source}-${Date.now()}.${ext}`)
-  return { source, driveFileId, previewUrl, sourceUrl: url }
+  const uploaded = await uploadToStaging(Buffer.from(data), mimeType, `${source}-${Date.now()}.${ext}`)
+  return { source, ...uploaded, sourceUrl: url }
 }
 
 /**
@@ -197,20 +209,20 @@ export async function importImageFromUrl(
  * a geração da prova inteira; o professor ainda aprova/rejeita por
  * questão (essa etapa é o verdadeiro check de aplicabilidade, não esta).
  */
-export async function resolveQuestionImage(imageQuery: string, questionContext: string, expectedText?: string): Promise<ResolvedQuestionImage | null> {
+export async function resolveQuestionImage(imageQuery: string, questionContext: string, expectedText?: string, options?: { reportFailure?: boolean }): Promise<ResolvedQuestionImage | null> {
   // Texto verificável exige DALL-E e validação visual; bancos externos não
   // oferecem garantia de correspondência literal com o conteúdo pedido.
-  if (expectedText) return resolveGeneratedImage(imageQuery, questionContext, expectedText)
+  if (expectedText) return resolveGeneratedImage(imageQuery, questionContext, expectedText, options)
   try {
     const technical = await tryRenderTechnicalVisual(imageQuery, questionContext)
     if (technical) {
-      const { driveFileId, previewUrl } = await uploadToStaging(technical.buffer, 'image/png', `${technical.source}-${Date.now()}.png`)
-      return { source: technical.source, driveFileId, previewUrl }
+      const uploaded = await uploadToStaging(technical.buffer, 'image/png', `${technical.source}-${Date.now()}.png`)
+      return { source: technical.source, ...uploaded }
     }
     const chart = await tryRenderChart(imageQuery, questionContext)
     if (chart) {
-      const { driveFileId, previewUrl } = await uploadToStaging(chart, 'image/png', `grafico-${Date.now()}.png`)
-      return { source: 'grafico', driveFileId, previewUrl }
+      const uploaded = await uploadToStaging(chart, 'image/png', `grafico-${Date.now()}.png`)
+      return { source: 'grafico', ...uploaded }
     }
   } catch (err) {
     console.warn('[questionImageService] renderização determinística falhou, tentando Wikimedia/IA:', err instanceof Error ? err.message : err)
@@ -225,17 +237,23 @@ export async function resolveQuestionImage(imageQuery: string, questionContext: 
     if (found) {
       const { data } = await axios.get<ArrayBuffer>(found.url, { responseType: 'arraybuffer', timeout: 15_000 })
       const mimeType = /\.png$/i.test(found.url) ? 'image/png' : 'image/jpeg'
-      const { driveFileId, previewUrl } = await uploadToStaging(Buffer.from(data), mimeType, `wikimedia-${Date.now()}.${mimeType === 'image/png' ? 'png' : 'jpg'}`)
-      return { source: 'busca', driveFileId, previewUrl }
+      const uploaded = await uploadToStaging(Buffer.from(data), mimeType, `wikimedia-${Date.now()}.${mimeType === 'image/png' ? 'png' : 'jpg'}`)
+      return { source: 'busca', ...uploaded }
     }
   } catch (err) {
     console.warn('[questionImageService] busca no Wikimedia falhou, tentando gerar:', err instanceof Error ? err.message : err)
   }
 
-  return resolveGeneratedImage(imageQuery, questionContext)
+  return resolveGeneratedImage(imageQuery, questionContext, undefined, options)
 }
 
-async function resolveGeneratedImage(imageQuery: string, questionContext: string, expectedText?: string): Promise<ResolvedQuestionImage | null> {
+export class ImageValidationRejectedError extends Error {
+  constructor(public readonly reason: string) {
+    super(`A imagem gerada não passou na conferência visual: ${reason}`)
+  }
+}
+
+async function resolveGeneratedImage(imageQuery: string, questionContext: string, expectedText?: string, options?: { reportFailure?: boolean }): Promise<ResolvedQuestionImage | null> {
   try {
     const generated = await generateIllustration(imageQuery, questionContext, expectedText)
     const validation = await validateGeneratedQuestionImage({
@@ -247,13 +265,14 @@ async function resolveGeneratedImage(imageQuery: string, questionContext: string
     })
     if (!validation.usable || !validation.layoutComplete || !validation.textLegible || (!expectedText && validation.containsInstructionalText) || (Boolean(expectedText) && !validation.textMatchesExpected)) {
       console.warn('[questionImageService] imagem gerada rejeitada pelo controle de qualidade:', validation.reason)
+      if (options?.reportFailure) throw new ImageValidationRejectedError(validation.reason)
       return null
     }
     const ext = generated.mimeType.includes('png') ? 'png' : 'jpg'
-    const { driveFileId, previewUrl } = await uploadToStaging(Buffer.from(generated.base64, 'base64'), generated.mimeType, `gerada-${Date.now()}.${ext}`)
-    return { source: 'gerada', driveFileId, previewUrl }
+    const uploaded = await uploadToStaging(Buffer.from(generated.base64, 'base64'), generated.mimeType, `gerada-${Date.now()}.${ext}`)
+    return { source: 'gerada', ...uploaded }
   } catch (err) {
-    if (err instanceof AiBudgetExceededError) throw err
+    if (err instanceof AiBudgetExceededError || options?.reportFailure) throw err
     console.warn('[questionImageService] geração via IA também falhou:', err instanceof Error ? err.message : err)
     return null
   }
@@ -267,14 +286,20 @@ async function resolveGeneratedImage(imageQuery: string, questionContext: string
  */
 export async function attachImagesToExam(
   exam: ExamGenerationResult,
-  options: { requireResolvedImages?: boolean; maxAttemptsPerImage?: number; subject?: string } = {},
+  options: { requireResolvedImages?: boolean; maxAttemptsPerImage?: number; subject?: string; sequential?: boolean; concurrency?: number; onQuestionStart?: (questionNumber: number) => Promise<void> | void } = {},
 ): Promise<ExamGenerationResult> {
   const attempts = Math.max(1, options.maxAttemptsPerImage ?? 1)
   const unresolved: number[] = []
-  const questions = await Promise.all(
-    exam.questions.map(async (q) => {
-      if (!q.needsImage) return q
-      if (!q.imageQuery) {
+  const resolveQuestion = async (q: ExamQuestion) => {
+      const requiresImage = q.needsImage ?? q.hasImage ?? false
+      if (q.source === 'acervo') {
+        if (requiresImage && !q.image) unresolved.push(q.number)
+        return q
+      }
+      const imageDescription = q.imageDescription ?? q.imageQuery
+      if (requiresImage) await options.onQuestionStart?.(q.number)
+      if (!requiresImage) return q
+      if (!imageDescription) {
         unresolved.push(q.number)
         return q
       }
@@ -287,27 +312,33 @@ export async function attachImagesToExam(
           if (generator) {
             const rendered = await generator.render(q.visualPlan.parameters)
             const png = rendered.mimeType === 'image/png' ? rendered.content : await sharp(rendered.content, { density: 180 }).png().toBuffer()
-            const { driveFileId, previewUrl } = await uploadToStaging(png, 'image/png', `visual-${q.number}-${Date.now()}.png`)
+            const uploaded = await uploadToStaging(png, 'image/png', `visual-${q.number}-${Date.now()}.png`)
             const source: ResolvedQuestionImage['source'] = q.visualPlan.renderer === 'chemistry.structure' ? 'quimica' : 'diagrama'
-            return { ...q, image: { source, driveFileId, previewUrl, approved: false, provenance: rendered.provenance } }
+            return { ...q, image: { source, ...uploaded, approved: false, provenance: rendered.provenance } }
           }
         }
         const blueprintVisual = await renderBlueprintVisual(q.solutionBlueprint)
         if (blueprintVisual) {
-          const { driveFileId, previewUrl } = await uploadToStaging(blueprintVisual.buffer, 'image/png', `${blueprintVisual.source}-${Date.now()}.png`)
-          return { ...q, image: { source: blueprintVisual.source, driveFileId, previewUrl, approved: false } }
+          const uploaded = await uploadToStaging(blueprintVisual.buffer, 'image/png', `${blueprintVisual.source}-${Date.now()}.png`)
+          return { ...q, image: { source: blueprintVisual.source, ...uploaded, approved: false } }
         }
       } catch (error) {
         console.warn(`[questionImageService] visual da ficha técnica falhou na questão ${q.number}; usando contingência:`, error instanceof Error ? error.message : error)
       }
       for (let attempt = 1; attempt <= attempts; attempt++) {
-        const resolved = await resolveQuestionImage(q.imageQuery, visualContext)
+        const resolved = await resolveQuestionImage(imageDescription, visualContext)
         if (resolved) return { ...q, image: { ...resolved, approved: false } }
       }
       unresolved.push(q.number)
       return q
-    }),
-  )
+  }
+  let questions: ExamQuestion[]
+  if (options.sequential) {
+    questions = []
+    for (const question of exam.questions) questions.push(await resolveQuestion(question))
+  } else {
+    questions = await mapInBatches(exam.questions, resolveQuestion, options.concurrency ?? QUESTION_GENERATION_CONCURRENCY)
+  }
   if (options.requireResolvedImages && unresolved.length) {
     throw new RequiredQuestionImageError(unresolved)
   }

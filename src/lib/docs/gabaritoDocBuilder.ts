@@ -1,14 +1,27 @@
 import type { docs_v1 } from 'googleapis'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
-import { findMarkerRange, buildReplaceMarkerRequests, type TextRange } from './richTextInsert'
+import { findMarkerRange, type TextRange } from './richTextInsert'
 import type { AssessmentMeta } from './assessmentMeta'
-import { stripLatexDelimiters } from '@/lib/math/latexRender'
+import { textToOps, buildOpsRequests } from './provaDocBuilder'
+import { buildLatexImageCache } from './latexImageCache'
+import { presentAcervoExam } from '@/lib/exams/acervoPresentation'
+import { originalAcervoMedia } from '@/lib/exams/acervoMedia'
+import { buildAcervoImageCache } from './acervoImageCache'
+import type { LatexImageCache, LatexImageInfo } from './latexImageCache'
 
-export function buildGabaritoBody(exam: ExamGenerationResult): { text: string; boldRanges: TextRange[] } {
+export function buildGabaritoBody(exam: ExamGenerationResult): { text: string; boldRanges: TextRange[]; imageAnchors: Array<{ at: number; mediaId: number }> } {
+  exam = presentAcervoExam(exam)
   let text = ''
   const boldRanges: TextRange[] = []
+  const imageAnchors: Array<{ at: number; mediaId: number }> = []
 
   for (const q of exam.questions) {
+    const appendOriginalImages = () => {
+      for (const media of originalAcervoMedia(q, 'resolucao')) {
+        imageAnchors.push({ at: text.length, mediaId: media.id })
+        text += '\n'
+      }
+    }
     const start = text.length
     const numberLabel = `${q.number}. `
     text += numberLabel
@@ -21,21 +34,35 @@ export function buildGabaritoBody(exam: ExamGenerationResult): { text: string; b
       // texto plano aqui — o Docs não interpreta `**`/`#` e eles só
       // sujariam o documento.
       if (q.commentedResolution) {
-        const plain = stripLatexDelimiters(q.commentedResolution).replace(/\*\*|__|^#+\s*/gm, '')
+        const plain = q.commentedResolution.replace(/\*\*|__|^#+\s*/gm, '')
         text += `   Resolução comentada: ${plain}\n\n`
       }
+      appendOriginalImages()
     } else {
-      // Gabarito não tem o mesmo pipeline de imagem inline da Prova — em
-      // vez de tipografar a fórmula, tira os delimitadores $...$ e mostra
-      // o LaTeX cru como texto (ex: "3 \cdot 2^{n-1}"). Legível o
-      // suficiente pro professor conferir a resposta, mesmo sem ficar
-      // bonito como no documento da prova.
-      text += `Resposta esperada: ${q.expectedAnswer?.trim() ? stripLatexDelimiters(q.expectedAnswer) : 'NÃO CADASTRADA — definir antes de corrigir'}\n`
-      text += `   Critérios de correção: ${stripLatexDelimiters(q.gradingCriteria ?? '—')}\n`
+      text += `Resposta esperada: ${q.expectedAnswer?.trim() ? q.expectedAnswer : 'NÃO CADASTRADA — definir antes de corrigir'}\n`
+      appendOriginalImages()
+      text += `   Critérios de correção: ${(q.gradingCriteria ?? '—')}\n`
     }
   }
 
-  return { text, boldRanges }
+  return { text, boldRanges, imageAnchors }
+}
+
+export function buildGabaritoOps(exam: ExamGenerationResult, latexCache: LatexImageCache, resolutionImages: Map<number, LatexImageInfo>): ReturnType<typeof textToOps> {
+  const { text, boldRanges, imageAnchors } = buildGabaritoBody(exam)
+  const boundaries = [...new Set([0, text.length, ...boldRanges.flatMap((range) => [range.start, range.end]), ...imageAnchors.map((anchor) => anchor.at)])].sort((a, b) => a - b)
+  const ops: ReturnType<typeof textToOps> = []
+  for (let index = 0; index < boundaries.length - 1; index++) {
+    const start = boundaries[index]!
+    const end = boundaries[index + 1]!
+    for (const anchor of imageAnchors.filter((entry) => entry.at === start)) {
+      const image = resolutionImages.get(anchor.mediaId)
+      if (image) ops.push({ kind: 'image', driveFileId: image.driveFileId, size: { widthPt: image.widthPt, heightPt: image.heightPt } })
+      else ops.push({ kind: 'text', text: 'Imagem da resolução original indisponível.' })
+    }
+    ops.push(...textToOps(text.slice(start, end), latexCache, boldRanges.some((range) => start >= range.start && start < range.end)))
+  }
+  return ops
 }
 
 export async function applyGabaritoContent(
@@ -44,6 +71,7 @@ export async function applyGabaritoContent(
   exam: ExamGenerationResult,
   meta: AssessmentMeta,
 ): Promise<void> {
+  exam = presentAcervoExam(exam)
   await docs.documents.batchUpdate({
     documentId,
     requestBody: {
@@ -60,9 +88,13 @@ export async function applyGabaritoContent(
   const markerRange = findMarkerRange(document, '{{CORPO_GABARITO}}')
   if (!markerRange) throw new Error('Marcador {{CORPO_GABARITO}} não encontrado no template do Gabarito.')
 
-  const { text, boldRanges } = buildGabaritoBody(exam)
+  const [cache, resolutionImages] = await Promise.all([buildLatexImageCache(exam), buildAcervoImageCache(exam, 'resolucao')])
+  const ops = buildGabaritoOps(exam, cache, resolutionImages)
   await docs.documents.batchUpdate({
     documentId,
-    requestBody: { requests: buildReplaceMarkerRequests(markerRange, text, boldRanges) },
+    requestBody: { requests: [
+      { deleteContentRange: { range: { startIndex: markerRange.start, endIndex: markerRange.end } } },
+      ...buildOpsRequests(ops, markerRange.start),
+    ] },
   })
 }

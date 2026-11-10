@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { isQuestionImageApproved } from '@/lib/exams/questionOrigin'
 import type { ExamQuestion } from '@/lib/gemini/examSchema'
 
 type FormItemRequest = {
@@ -19,8 +20,25 @@ export function activityFormEditUrl(formId: string): string {
   return `https://docs.google.com/forms/d/${formId}/edit`
 }
 
-function questionTitle(question: ExamQuestion): string {
-  return `Questão ${question.number}. ${question.statement}`
+const DISPLAYED_TEXT_LINE_BREAKS = /[\r\n\v\f\u0085\u2028\u2029]/
+
+function singleLineDisplayedText(text: string): string {
+  return text.replace(/[\r\n\v\f\u0085\u2028\u2029]+/g, ' ').trim()
+}
+
+function choiceValue(alternative: { letter: string; text: string }): string {
+  // Options and answer keys must use exactly the same normalized value.
+  return singleLineDisplayedText(`${alternative.letter}) ${alternative.text}`)
+}
+
+function questionDisplay(question: ExamQuestion): { title: string; description?: string } {
+  const multiline = DISPLAYED_TEXT_LINE_BREAKS.test(question.statement)
+  // Keep paragraphs and subquestions intact in the field that accepts newlines.
+  const description = [question.supportText, multiline ? question.statement : null].filter(Boolean).join('\n\n')
+  return {
+    title: multiline ? `Questão ${question.number}` : `Questão ${question.number}. ${question.statement}`,
+    ...(description ? { description } : {}),
+  }
 }
 
 /** Distributes the 0–100 scale without fractions, always totaling 100. */
@@ -36,14 +54,13 @@ function objectiveGrading(question: ExamQuestion, pointValue: number) {
   if (!correct) throw new Error(`A questão ${question.number} não tem uma alternativa correta válida para o Quiz.`)
   return {
     pointValue,
-    correctAnswers: { answers: [{ value: `${correct.letter}) ${correct.text}` }] },
+    correctAnswers: { answers: [{ value: choiceValue(correct) }] },
   }
 }
 
 function discursiveGrading(pointValue: number) {
-  // Forms exige um answer key no payload de grading. Uma lista vazia mantém
-  // a resposta discursiva sem autocorreção e deixa a pontuação para a docente.
-  return { pointValue, correctAnswers: { answers: [] } }
+  // Paragraph questions are graded manually: do not send an automatic answer key.
+  return { pointValue }
 }
 
 export function buildActivityFormRequests(description: string, questions: ExamQuestion[]): FormBatchRequest[] {
@@ -61,9 +78,9 @@ export function buildActivityFormRequests(description: string, questions: ExamQu
   for (const [index, question] of questions.entries()) {
     const pointValue = points[index]
     const item = {
-      title: questionTitle(question),
-      ...(question.supportText ? { description: question.supportText } : {}),
+      ...questionDisplay(question),
       questionItem: {
+        ...(isQuestionImageApproved(question) ? { image: { sourceUri: `https://drive.google.com/uc?id=${encodeURIComponent(question.image.driveFileId)}`, altText: `Imagem da questão ${question.number}` } } : {}),
         question: {
           required: true,
           ...(question.type === 'objetiva'
@@ -72,7 +89,7 @@ export function buildActivityFormRequests(description: string, questions: ExamQu
                 choiceQuestion: {
                   type: 'RADIO',
                   shuffle: false,
-                  options: (question.alternatives ?? []).map((alternative) => ({ value: `${alternative.letter}) ${alternative.text}` })),
+                  options: (question.alternatives ?? []).map((alternative) => ({ value: choiceValue(alternative) })),
                 },
               }
             : { grading: discursiveGrading(pointValue), textQuestion: { paragraph: true } }),
@@ -85,25 +102,56 @@ export function buildActivityFormRequests(description: string, questions: ExamQu
   return requests
 }
 
+export type ActivityFormStage = 'create_form' | 'configure_form' | 'add_form_questions'
+
+export class ActivityFormCreationError extends Error {
+  constructor(public readonly stage: ActivityFormStage, cause: unknown) {
+    super(`Falha na etapa ${stage} do Google Forms.`, { cause })
+    this.name = 'ActivityFormCreationError'
+  }
+}
+
 export async function createActivityForm(
   accessToken: string,
   params: { title: string; description: string; questions: ExamQuestion[] },
 ): Promise<{ formId: string; responderUri: string; editUrl: string }> {
+  // Validate/assemble before creating a file, so bad local data leaves no orphan.
+  const requests = buildActivityFormRequests(params.description, params.questions)
   const headers = { Authorization: `Bearer ${accessToken}` }
-  const { data: created } = await axios.post<{ formId: string; responderUri?: string }>(
-    'https://forms.googleapis.com/v1/forms',
-    { info: { title: params.title, documentTitle: params.title } },
-    { headers },
-  )
-  if (!created.formId || !created.responderUri) throw new Error('O Google Forms não devolveu os dados necessários do formulário.')
+  let formId: string | undefined
+  let stage: ActivityFormStage = 'create_form'
+  try {
+    const { data: created } = await axios.post<{ formId: string; responderUri?: string }>(
+      'https://forms.googleapis.com/v1/forms',
+      { info: { title: params.title, documentTitle: params.title } },
+      { headers },
+    )
+    formId = created.formId
+    if (!formId || !created.responderUri) throw new Error('O Google Forms não devolveu os dados necessários do formulário.')
 
-  await axios.post(
-    `https://forms.googleapis.com/v1/forms/${created.formId}:batchUpdate`,
-    { requests: buildActivityFormRequests(params.description, params.questions) },
-    { headers },
-  )
+    // Enable Quiz first. Graded items are submitted only after this is confirmed.
+    const batchUrl = `https://forms.googleapis.com/v1/forms/${formId}:batchUpdate`
+    stage = 'configure_form'
+    await axios.post(batchUrl, { requests: requests.slice(0, 2) }, { headers })
+    stage = 'add_form_questions'
+    await axios.post(batchUrl, { requests: requests.slice(2) }, { headers })
 
-  return { formId: created.formId, responderUri: created.responderUri, editUrl: activityFormEditUrl(created.formId) }
+    return { formId, responderUri: created.responderUri, editUrl: activityFormEditUrl(formId) }
+  } catch (cause) {
+    // Log only Google's error message, never the Axios request/config (OAuth token).
+    if (axios.isAxiosError(cause)) {
+      const message = cause.response?.data?.error?.message
+      console.warn('[activity-form] Google recusou a requisição.', {
+        stage,
+        httpStatus: cause.response?.status ?? null,
+        googleMessage: typeof message === 'string' ? message.slice(0, 600) : null,
+      })
+    }
+    if (formId) await deleteActivityForm(accessToken, formId).catch(() => {
+      console.warn('[activity-form] Não foi possível remover o formulário incompleto.', { stage, formId })
+    })
+    throw new ActivityFormCreationError(stage, cause)
+  }
 }
 
 /** Dá à professora responsável edição do Quiz, sem transferir a propriedade. */

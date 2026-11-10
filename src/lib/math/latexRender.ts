@@ -9,12 +9,22 @@ export type TextSegment =
 
 export const IMAGE_ALTERNATIVE_PLACEHOLDER = '[alternativa apresentada como imagem — indisponível no texto]'
 
+function isEscaped(text: string, index: number): boolean {
+  let backslashes = 0
+  while (index > 0 && text[--index] === '\\') backslashes++
+  return backslashes % 2 === 1
+}
+
 function isMathDollarStart(text: string, index: number): boolean {
-  const previous = text[index - 1] ?? ''
-  // Bloqueia só o "$" de moeda (ex: "R$ 30,00"), sempre precedido de letra.
-  // Um número antes do "$" é início legítimo de fórmula (ex: "2$\frac{3}{4}$");
-  // descartá-lo desincronizava o parser e engolia o texto seguinte como LaTeX.
-  return !/\p{L}/u.test(previous)
+  if (isEscaped(text, index)) return false
+  // Currency is literal, while adjacent notation such as cos$^{8}$ is math.
+  return !(/\b(?:R|US|CA|AU|NZ|HK)$/.test(text.slice(0, index)) && /^\s*-?\d/.test(text.slice(index + 1)))
+}
+
+function findMathCloser(text: string, closer: string, start: number): number {
+  let index = text.indexOf(closer, start)
+  while (index !== -1 && isEscaped(text, index)) index = text.indexOf(closer, index + closer.length)
+  return index
 }
 
 // Conteúdo que não é fórmula: reticências usadas para marcar trecho omitido
@@ -37,9 +47,33 @@ function mergeChemicalSubscripts(text: string): string {
   return text.replace(CHEM_SUBSCRIPT_FORMULA, (match) => `$${match.replace(/\$/g, '')}$`)
 }
 
+// Também reconhece a notação sem delimitadores recebida do acervo e de
+// questões antigas. Só promove trechos que contêm comandos ou expoentes.
+const GROUP = String.raw`\{(?:[^{}]|\{[^{}]*\})*\}`
+const SCRIPT = String.raw`[_^](?:${GROUP}|[A-Za-z0-9+-])`
+const ATOM = String.raw`(?:\\[A-Za-z]+(?:${GROUP})*|\d+(?:${GROUP}\d+|[.,]\d+)?|(?<![A-Za-z])(?:[A-Za-z](?=[_^])|(?![eaou]\b)[A-Za-z](?![A-Za-z])))(?:${SCRIPT})*`
+const BARE_EXPRESSION = new RegExp(String.raw`${ATOM}(?:(?:\s*[=+*/-]\s*|\s*)${ATOM})*`, 'g')
+
+function splitBareMath(content: string): TextSegment[] {
+  const parts: TextSegment[] = []
+  let end = 0
+  for (const match of content.matchAll(BARE_EXPRESSION)) {
+    if (!/\\[A-Za-z]+|[_^]/.test(match[0])) continue
+    if (match.index! > end) parts.push({ type: 'text', content: content.slice(end, match.index) })
+    parts.push({ type: 'math', latex: match[0], display: false })
+    end = match.index! + match[0].length
+  }
+  if (end < content.length) parts.push({ type: 'text', content: content.slice(end) })
+  return parts
+}
+
 /** Extrai $...$, $$...$$, \(...\) e \[...\], sem confundir R$ com matemática. */
 export function splitLatexSegments(text: string | null | undefined): TextSegment[] {
-  const safe = mergeChemicalSubscripts(text ?? '')
+  // Fontes químicas podem anexar o estado físico como um segundo subscrito
+  // (CO_{3}_{(aq)}). Um átomo vazio mantém o estado na mesma posição sem
+  // atribuir dois subscritos ao mesmo símbolo, o que é inválido em LaTeX.
+  const safe = mergeChemicalSubscripts((text ?? '').replace(/\thickspace\b|\\thickspace\b/g, '\\;').replace(/\times\b/g, '\\times').replace(/\text(?=\{)/g, '\\text'))
+    .replace(/(?<=\})(?<!\{\})_\{(\((?:aq|s|l|g)\))\}/g, '{}_{$1}')
   const segments: TextSegment[] = []
   let cursor = 0
   let textStart = 0
@@ -65,7 +99,7 @@ export function splitLatexSegments(text: string | null | undefined): TextSegment
       continue
     }
 
-    const closeAt = safe.indexOf(closer, cursor + opener.length)
+    const closeAt = findMathCloser(safe, closer, cursor + opener.length)
     if (closeAt === -1) {
       cursor += opener.length
       continue
@@ -91,7 +125,7 @@ export function splitLatexSegments(text: string | null | undefined): TextSegment
     textStart = cursor
   }
   pushText(safe.length)
-  return segments
+  return segments.flatMap((segment) => segment.type === 'text' ? splitBareMath(segment.content) : [segment])
 }
 
 export function hasLatexSegments(text: string | null | undefined): boolean {

@@ -5,6 +5,7 @@ import { computeCanonicalDomain, hasCanonicalDomain, comparableNumber } from './
 import { getRuleEngine } from './rules'
 import { detectAlternativeAmbiguities } from './alternatives'
 import { parseSingleNumber } from './similarity'
+import { alternativesCountForSegment } from '@/lib/gemini/promptBuilder'
 
 const NUMERIC_TOLERANCE = 1e-6
 
@@ -66,7 +67,7 @@ export function runLocalQualityGate(
 
   // === 2. Alternativas (objetiva) ===
   if (ctx.questionType === 'objetiva') {
-    const expectedCount = ctx.segment === 'anos-iniciais' ? 4 : 5
+    const expectedCount = alternativesCountForSegment(ctx.segment as 'anos-iniciais' | 'anos-finais' | 'ensino-medio')
     const alts = question.alternatives ?? []
 
     if (alts.length !== expectedCount) {

@@ -19,19 +19,23 @@ export const gerarProvaJobPayloadSchema = z
     gradeYear: z.number().int(),
     academicYear: z.number().int().min(2020).max(2100).optional(),
     subject: z.string().min(1),
+    generationEngine: z.literal('whole-exam-v1').optional(),
     bimester: z.number().int().min(1).max(4).optional(),
     questionCount: z.number().int().min(0).max(30),
+    questionSource: z.enum(['acervo', 'ia']).optional(),
     objectivePercentage: z.number().int().min(0).max(100).optional().default(70),
     enemBankQuestionIds: z.array(z.number().int()).max(30).optional().default([]),
     classLabel: z.string().min(1).optional(),
     assessmentKind: z.enum(ASSESSMENT_KINDS).optional().default('padrao'),
     contentPlan: z.array(curriculumPlanItemSchema).max(60).optional(),
     assignedTo: z.number().int().positive().optional(),
-    // Planejamento interno aprovado a usar no lugar da planilha (opcional).
+    // Planejamento aprovado selecionado na aba Planejamentos.
     curriculumPlanId: z.number().int().positive().optional(),
+    curriculumPlanVersionId: z.number().int().positive().optional(),
+    contentPlanIncludesEnem: z.boolean().optional(),
   })
   .refine((v) => v.questionCount + v.enemBankQuestionIds.length >= 10 && v.questionCount + v.enemBankQuestionIds.length <= 30, {
-    message: 'O total de questões (geradas por IA + banco ENEM) precisa ficar entre 10 e 30.',
+    message: 'O total de questões (acervo ou IA + banco ENEM) precisa ficar entre 10 e 30.',
   })
   .refine((v) => v.assessmentKind === 'padrao' || v.segment === 'ensino-medio', {
     message: 'Simulado ENEM só existe no Ensino Médio.',
@@ -41,6 +45,23 @@ export const gerarProvaJobPayloadSchema = z
   })
 
 export type GerarProvaJobPayload = z.infer<typeof gerarProvaJobPayloadSchema>
+
+export const gerarImagensProvaJobPayloadSchema = z.object({
+  examId: z.number().int().positive(),
+}).strict()
+
+export type GerarImagensProvaJobPayload = z.infer<typeof gerarImagensProvaJobPayloadSchema>
+
+/** Questão adicional solicitada na revisão; é gerada e auditada antes de entrar na prova. */
+export const adicionarQuestaoJobPayloadSchema = z.object({
+  examId: z.number().int().positive(),
+  questionNumber: z.number().int().positive(),
+  bnccCode: z.string().trim().regex(/^[A-Z]{2}\d{2}[A-Z]{2,4}\d{2,3}$/i),
+  questionType: z.enum(['objetiva', 'descritiva']),
+  unitRowIndex: z.number().int().min(0),
+}).strict()
+
+export type AdicionarQuestaoJobPayload = z.infer<typeof adicionarQuestaoJobPayloadSchema>
 
 // Payload do job 'pontuar_prova' (Subtarefa 2) — pontua todas as
 // correções 'revisado' da prova, na escala do scoring_method dela.
@@ -108,6 +129,7 @@ export function isActivityGradeCompatible(segment: ActivitySegment, gradeYear: n
 // o conjunto, e o professor escolhe livremente o recorte (a UI não trava
 // seleção). O worker revalida com este mesmo schema.
 export const gerarAtividadeJobPayloadSchema = z.object({
+  generationEngine: z.literal('whole-exam-v1').optional(),
   segment: z.enum(['anos-iniciais', 'anos-finais', 'ensino-medio']),
   gradeYear: z.number().int().min(1).max(9),
   academicYear: z.number().int().min(2020).max(2100).optional(),
@@ -153,6 +175,6 @@ export type AdaptarProvaJobPayload = z.infer<typeof adaptarProvaJobPayloadSchema
 // Decisão de retry após falha de execução. `attempts` já foi incrementado
 // no claim (conta a tentativa que acabou de falhar) — se ainda há
 // tentativas sobrando, o job volta pra fila; senão vira erro definitivo.
-export function nextStatusAfterFailure(attempts: number, maxAttempts: number): Extract<GenerationJobStatus, 'pendente' | 'erro'> {
-  return attempts < maxAttempts ? 'pendente' : 'erro'
+export function nextStatusAfterFailure(attempts: number, maxAttempts: number, retryable = true): Extract<GenerationJobStatus, 'pendente' | 'erro'> {
+  return retryable && attempts < maxAttempts ? 'pendente' : 'erro'
 }

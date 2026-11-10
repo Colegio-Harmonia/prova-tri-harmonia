@@ -29,7 +29,7 @@ describe('reinforcementSelectionDecision', () => {
 
   it('mapeia decisão tipada do provedor', async () => {
     const evaluate = vi.fn(async (_options: Parameters<typeof evaluateWithJev>[0]) => ({
-      model: 'jev', source: 'provider' as const, stateHash: 'hash', cacheKey: 'key',
+      model: 'jev', source: 'provider' as const, stateHash: 'hash', cacheKey: 'key', failure: null,
       answers: {
         allocation: { type: 'choice' as const, choice: 'profundidade_banco' },
         bloom_profile: { type: 'choice' as const, choice: 'aplicacao_contextual' },

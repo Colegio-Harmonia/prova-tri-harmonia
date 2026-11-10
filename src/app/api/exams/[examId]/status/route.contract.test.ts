@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
+  generateExamDocs: vi.fn(),
   auth: vi.fn(),
   findUser: vi.fn(),
   findExam: vi.fn(),
@@ -31,7 +32,7 @@ vi.mock('@/lib/scan-sheets/sheetAssignments', async () => {
 })
 vi.mock('@/lib/queue/enqueue', () => ({ enqueuePontuarProvaJob: mocks.enqueuePontuarProvaJob }))
 vi.mock('@/lib/exams/activityWorkflow', () => ({ isSelfManagedActivity: mocks.isSelfManagedActivity }))
-vi.mock('@/lib/docs/generateExamDocs', () => ({ generateExamDocs: vi.fn() }))
+vi.mock('@/lib/docs/generateExamDocs', () => ({ generateExamDocs: mocks.generateExamDocs }))
 vi.mock('@/lib/notifications/googleChat', () => ({ sendChatAssignmentNotification: vi.fn(), sendChatReviewReadyNotification: vi.fn() }))
 
 import { POST } from './route'
@@ -43,13 +44,13 @@ const exam = {
   classroomCourseId: 'course-7',
   assignedTo: null,
   createdBy: 9,
-  generationPayload: { questions: [] },
+  generationPayload: { metadata: {}, questions: [{ number: 1, type: 'objetiva' }] },
 }
 
-function request() {
+function request(action = 'marcar_impresso') {
   return new NextRequest('http://test.local/api/exams/31/status', {
     method: 'POST',
-    body: JSON.stringify({ action: 'marcar_impresso' }),
+    body: JSON.stringify({ action }),
     headers: { 'Content-Type': 'application/json' },
   })
 }
@@ -71,6 +72,39 @@ describe('impressão com cartões-resposta', () => {
       assignments: [{ id: 81, status: 'pronta' }, { id: 82, status: 'emitida' }, { id: 83, status: 'pronta' }],
     })
     mocks.update.mockReturnValue({ set: mocks.set.mockReturnValue({ where: mocks.where.mockResolvedValue(undefined) }) })
+  })
+
+  it.each([
+    ['aprovar_prova', 'em_revisao', false],
+    ['aprovar', 'revisao_concluida', false],
+    ['finalizar_atividade', 'rascunho', true],
+    ['finalizar_atividade_parcial', 'rascunho', true],
+  ])('permite %s com questões sem aceite individual e auditoria reprovada ou indisponível', async (action, status, isActivity) => {
+    const payload = {
+      metadata: {
+        generationProgress: action.endsWith('_parcial') ? { complete: false } : undefined,
+        qualityTest: { reports: [{ results: [
+          { questionNumber: 1, approved: false, auditStatus: 'jev_unavailable', issues: [{ severity: 'bloqueante', reason: 'Auditoria indisponível' }] },
+          { questionNumber: 2, approved: false, issues: [{ severity: 'bloqueante', reason: 'Alternativas semelhantes' }] },
+        ] }] },
+      },
+      questions: [
+        { number: 1, type: 'objetiva', statement: 'Questão', alternatives: [], correctLetter: null, review: null, image: { approved: false } },
+        { number: 2, type: 'descritiva', statement: 'Explique.', expectedAnswer: null, gradingCriteria: null },
+      ],
+    }
+    mocks.findExam.mockResolvedValue({ ...exam, status, generationPayload: payload })
+    mocks.isSelfManagedActivity.mockReturnValue(isActivity)
+    mocks.generateExamDocs.mockResolvedValue({
+      driveFolderId: 'folder', prova: { docId: 'p', url: 'prova-url' },
+      gabarito: { docId: 'g', url: 'gabarito-url' }, mapa: { docId: 'm', url: 'mapa-url' },
+    })
+
+    const response = await POST(request(action), params())
+
+    expect(response.status).toBe(200)
+    expect(mocks.generateExamDocs).toHaveBeenCalledWith(expect.objectContaining({ questions: payload.questions }), expect.any(Object))
+    expect(mocks.set).toHaveBeenCalledWith(expect.objectContaining({ status: 'aprovado' }))
   })
 
   it('prepara cartões da turma antes de marcar a prova como impressa', async () => {

@@ -1,3 +1,4 @@
+import { isOriginalBankImage } from '@/lib/exams/questionOrigin'
 import { NextRequest, NextResponse } from 'next/server'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
@@ -26,7 +27,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
   if (!question || !version) return NextResponse.json({ error: 'Versão de imagem não encontrada.' }, { status: 404 })
   const now = new Date().toISOString()
   if (question.image) question.imageHistory = [...(question.imageHistory ?? []), { ...question.image, replacedAt: now, changedBy: session.user.email }]
-  question.image = { source: version.source, driveFileId: version.driveFileId, previewUrl: version.previewUrl, approved: false, sourceUrl: version.sourceUrl, provenance: version.provenance }
+  question.image = { source: version.source, driveFileId: version.driveFileId, previewUrl: version.previewUrl, approved: false, sourceUrl: version.sourceUrl, provenance: version.provenance, originalBankMedia: version.originalBankMedia }
+  question.image.approved = isOriginalBankImage(question)
   question.needsImage = true
   question.imageAuditLog = [...(question.imageAuditLog ?? []), { action: 'restored', at: now, actor: session.user.email, driveFileId: version.driveFileId }]
   await db.update(generatedExams).set({ generationPayload: payload }).where(eq(generatedExams.id, examId))

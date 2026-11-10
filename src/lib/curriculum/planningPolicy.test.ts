@@ -61,7 +61,7 @@ describe('versões e conteúdo do planejamento (Bloco 7)', () => {
   it('valida unidades, códigos BNCC, repetição e metas sem salvar parcial', () => {
     const ok = normalizePlanUnits([{ title: ' Frações ', skills: [{ code: 'ef05ma03 ', description: '' }] }])
     expect(ok.errors).toEqual([])
-    expect(ok.units[0]).toEqual({ title: 'Frações', content: null, objectives: null, skills: [{ code: 'EF05MA03', description: null, targetMasteryPercent: 100 }] })
+    expect(ok.units[0]).toEqual({ title: 'Frações', content: null, objectives: null, enemSkills: null, skills: [{ code: 'EF05MA03', description: null, targetMasteryPercent: 100 }] })
     const bad = normalizePlanUnits([{ title: '', skills: [{ code: 'XX1' }, { code: 'EF05MA03', targetMasteryPercent: 120 }, { code: 'EF05MA03' }] }])
     expect(bad.errors).toEqual([
       'Unidade 1: informe o título.',

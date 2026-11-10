@@ -163,7 +163,6 @@ async function readLocalOmr(imageBytes: Buffer): Promise<{ result: LocalOmrResul
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.0,
-        maxOutputTokens: 4096,
       },
     },
     { timeout: 120_000 },

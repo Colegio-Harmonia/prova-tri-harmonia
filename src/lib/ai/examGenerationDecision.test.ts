@@ -16,7 +16,7 @@ describe('examGenerationDecision', () => {
 
   it('usa a decisão tipada e produz orientação sem alterar a matriz', async () => {
     const evaluate = vi.fn(async (options: Parameters<typeof evaluateWithJev>[0]) => ({
-      model: 'jev-test', source: 'provider' as const, routing: options.route({
+      model: 'jev-test', source: 'provider' as const, failure: null, routing: options.route({
         cognitive_emphasis: { type: 'choice', choice: 'transferencia' }, contextualization: { type: 'choice', choice: 'autentica' },
         difficulty_profile: { type: 'choice', choice: 'desafiador' }, visual_support: { type: 'choice', choice: 'contido' }, ready: { type: 'noul', noul: 0.91 },
       }), answers: {

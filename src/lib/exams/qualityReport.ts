@@ -1,11 +1,11 @@
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import type { CurriculumSelection } from '@/types/exam'
-import { isNotApplicableEvidence, normalizeQualityChecks, runQuestionQualityTest, type QualityReportResult } from './questionQualityTest'
+import { isNotApplicableEvidence, normalizeQualityChecks, questionQualityFingerprint, runQuestionQualityTest, type QualityReportResult } from './questionQualityTest'
 import { diagnosticFromIssue } from './qualityDiagnostics'
 
-// Versão canônica do relatório persistido. Ao subir a versão, provas antigas
-// passam a ser reauditadas automaticamente na próxima aprovação (auto-cura).
-export const QUALITY_REPORT_VERSION = 'quality-test-v5'
+// Versão canônica do relatório persistido. Ao subir a versão, relatórios
+// antigos são normalizados na próxima aprovação sem reauditar conteúdo válido.
+export const QUALITY_REPORT_VERSION = 'quality-test-v10'
 
 export function latestQualityReport(payload: ExamGenerationResult) {
   return payload.metadata.qualityTest?.reports?.at(-1)
@@ -13,12 +13,31 @@ export function latestQualityReport(payload: ExamGenerationResult) {
 
 /** Sem relatório nenhum (ex.: prova regenerada), é preciso reauditar com IA. */
 export function qualityReportNeedsRecompute(payload: ExamGenerationResult): boolean {
-  return !payload.metadata.qualityTest?.reports?.length
+  if (payload.metadata.generationEngine === 'whole-exam-v1') {
+    return payload.questions.filter((q) => q.source === 'enem_bank').some((question) => {
+      const result = latestQualityReport(payload)?.results.find((r) => r.questionNumber === question.number)
+      return !['official_bank_verified', 'official_bank_invalid'].includes(result?.auditStatus ?? '') || result?.questionFingerprint !== questionQualityFingerprint(question, payload.metadata.classLabel)
+    })
+  }
+  if (payload.metadata.qualityTest?.version !== QUALITY_REPORT_VERSION) return true
+  const results = payload.metadata.qualityTest?.reports?.at(-1)?.results
+  if (!results?.length || results.length !== payload.questions.length) return true
+  return payload.questions.some((question) => {
+    const result = results.find((item) => item.questionNumber === question.number)
+    if (result?.auditStatus === 'jev_unavailable') return true
+    if (question.source === 'enem_bank' && !['official_bank_verified', 'official_bank_invalid'].includes(result?.auditStatus ?? '')) return true
+    return !result || result.questionFingerprint !== questionQualityFingerprint(question, payload.metadata.classLabel)
+  })
 }
 
 /** Relatório de versão antiga: dá para limpar sem IA (só normalização). */
 export function qualityReportNeedsNormalization(payload: ExamGenerationResult): boolean {
   return Boolean(payload.metadata.qualityTest?.reports?.length) && payload.metadata.qualityTest?.version !== QUALITY_REPORT_VERSION
+}
+
+function isLegacyClassroomCheck(value: string): boolean {
+  const normalized = value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR')
+  return normalized.includes('grade_level_mismatch') || normalized.includes('adequacao_turma') || /adequacao.{0,40}turma/.test(normalized)
 }
 
 /**
@@ -34,18 +53,26 @@ export function normalizeStoredQualityReport(payload: ExamGenerationResult): Exa
   const reports = qualityTest.reports.map((report) => ({
     ...report,
     results: report.results.map((result) => {
-      const checks = normalizeQualityChecks(result.checks)
-      const issues = result.issues.map((issue) =>
-        issue.severity === 'bloqueante' && (isNotApplicableEvidence(issue.reason) || /teste de qualidade\s*—\s*(linguagem|alinhamento)/i.test(issue.reason))
+      const checks = normalizeQualityChecks(result.checks).map((check) => isLegacyClassroomCheck(check.criterion)
+        ? { ...check, status: 'não_aplicável' as const, evidence: 'Critério antigo de adequação à turma removido; não participa mais da validação Jev.' }
+        : check)
+      const issues = result.issues.map((issue) => {
+        if (isLegacyClassroomCheck(issue.reason)) {
+          return { ...issue, severity: 'alerta' as const, reason: `Critério antigo de adequação à turma removido: ${issue.reason}` }
+        }
+        return issue.severity === 'bloqueante' && (isNotApplicableEvidence(issue.reason) || /teste de qualidade\s*—\s*(linguagem|alinhamento)/i.test(issue.reason))
           ? { ...issue, severity: 'alerta' as const }
-          : issue,
-      )
+          : issue
+      })
+      const diagnostics = (result.diagnostics ?? issues.map((issue) => diagnosticFromIssue(issue))).map((item) => isLegacyClassroomCheck(`${item.code} ${item.message} ${item.evidence ?? ''}`)
+        ? { ...item, severity: 'alerta' as const, repairAction: 'nenhuma' as const, message: 'Critério antigo de adequação à turma removido; não bloqueia esta questão.', blocksApproval: false }
+        : item)
       return {
         ...result,
         checks,
         issues,
-        diagnostics: result.diagnostics ?? issues.map((issue) => diagnosticFromIssue(issue)),
-        approved: !issues.some((issue) => issue.severity === 'bloqueante') && !checks.some((check) => check.status === 'reprovado' && !['linguagem', 'alinhamento'].includes(check.criterion)),
+        diagnostics,
+        approved: result.auditStatus !== 'jev_unavailable' && !issues.some((issue) => issue.severity === 'bloqueante') && !checks.some((check) => check.status === 'reprovado' && !['linguagem', 'alinhamento'].includes(check.criterion)),
       }
     }),
   }))
@@ -68,17 +95,32 @@ export async function recomputeQualityReport(params: {
   /** Mantém o histórico de fases anteriores (senão substitui por este relatório). */
   preserveReports?: boolean
 }): Promise<{ payload: ExamGenerationResult; report: QualityReportResult[]; warnings: string[] }> {
-  const quality = await runQuestionQualityTest(params.curriculum, params.payload.questions)
+  const questions = params.payload.metadata.generationEngine === 'whole-exam-v1'
+    ? params.payload.questions.filter((q) => q.source === 'enem_bank')
+    : params.payload.questions
+  const quality = await runQuestionQualityTest(params.curriculum, questions, new Map(), params.payload.metadata.classLabel)
   const previous = params.payload.metadata.qualityTest
   const report = { phase: params.phase, results: quality.report }
   const reports = params.preserveReports && previous?.reports?.length
     ? [...previous.reports.filter((item) => item.phase !== params.phase), report]
     : [report]
+  const generationProgress = params.payload.metadata.generationProgress
+  const approvedNumbers = new Set(quality.report.filter((item) => item.approved).map((item) => item.questionNumber))
+  const pendingQuestionNumbers = generationProgress?.pendingQuestionNumbers.filter((number) => !approvedNumbers.has(number)) ?? []
+  const pendingReasons = generationProgress?.pendingReasons
+    ? Object.fromEntries(Object.entries(generationProgress.pendingReasons).filter(([number]) => pendingQuestionNumbers.includes(Number(number))))
+    : undefined
 
   const payload: ExamGenerationResult = {
     ...params.payload,
     metadata: {
       ...params.payload.metadata,
+      ...(generationProgress ? { generationProgress: {
+        ...generationProgress,
+        complete: pendingQuestionNumbers.length === 0,
+        pendingQuestionNumbers,
+        ...(pendingReasons ? { pendingReasons } : {}),
+      } } : {}),
       qualityTest: {
         version: QUALITY_REPORT_VERSION,
         checkedAt: new Date().toISOString(),

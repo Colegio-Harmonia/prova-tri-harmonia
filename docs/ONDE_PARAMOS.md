@@ -4,6 +4,218 @@
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
 > Última atualização: 05/10/2026 (PR #43 em produção; substituição automática da aprovação corrigida).
 
+
+
+## Tag Bloom sem identificação do provedor — 23/10/2026
+
+A revisão mostra apenas `Bloom: aplicar` (ou o nível classificado), conforme
+solicitação. Origem JEV, modelo, scores e demais dados de auditoria permanecem
+no payload. Alteração exclusivamente de apresentação; nenhuma classificação
+foi recalculada. Publicação concluída a partir da imagem em execução, com fonte isolada em
+/tmp/prova-bloom-label-release (commit 2e923e6). Lint e build Docker passaram.
+Chrome autenticado na prova 494 confirmou 12 tags Bloom sem o sufixo Jev.
+Web saudável; somente web recriado. Rollback: prova-tri:before-bloom-label.
+
+## Prova 494: scores decimais JEV e tags INEP — 23/10/2026
+
+Diagnóstico em produção: 142 dos 144 scores Bloom retornados pelo JEV eram
+decimais. O filtro Number.isInteger descartava essas respostas válidas,
+causando 11 pendências e fazendo um inteiro menor vencer na Q5 (criar).
+Três questões INEP ficaram sem habilidade porque era oferecida no_match.
+
+Correção: aceitar scores finitos 0–9; escolher a opção oficial mais aderente
+sem abstenção; restringir o contexto a disciplina/ano/etapa e tarefa; repetir
+classificações incompletas até três vezes e deixar a fila repetir o erro em
+vez de concluir a geração incompleta. ENEM do banco mantém suas classificações.
+Tags mostram só ENEM: H21 ou SAEB: código; hierarquia completa segue no payload.
+
+As 12 questões da prova 494 foram reclassificadas pelo JEV real, com atualização
+transacional somente das classificações, auditoria administrativa e comparação
+do payload anterior. Texto, respostas e status preservados. Q5 agora: aplicar.
+
+Publicação isolada a partir do container anterior em /tmp/prova494-release,
+com commits locais 91ef3e9 (snapshot) e 83c0de7 (correção), evitando alterações
+não relacionadas da árvore compartilhada. Imagem prova-tri:fix-494 também
+etiquetada prova-tri:local; web/worker recriados, web saudável. Rollback:
+prova-tri:before-494-fix. Sem migrations.
+
+62 testes passaram; TypeScript, lint e build Docker concluídos. Chrome
+autenticado na URL pública confirmou 12 tags INEP curtas, 12 Bloom classificados,
+zero pendências e zero Sem correspondência. API autenticada: 12/12 completas.
+
+## Banca nas tags e crédito Techy/SAE nos Docs — 23/10/2026
+
+A revisão mostra a tag `Banca: nome — ano` quando a origem da API traz banca,
+aceitando texto ou objeto com `label`. O Google Docs mantém banca/ano como
+prioridade; questões do acervo sem banca e com origem Techy ou SAE recebem
+`Importado do Techy` ou `Importado do SAE` antes do enunciado. A regra atende
+à nova solicitação, complementando a preferência anterior de omitir rótulos
+operacionais no impresso. ARCO não é identificado como SAE apenas por ter
+sido recebido pela plataforma SAE. ENEM mantém sua identificação atual.
+
+Validação local: 37 testes passaram (origem, prova e gabarito); TypeScript,
+lint focado e `git diff --check` sem erros. Não houve build novo, publicação,
+regeneração de documentos existentes nem alteração de questões no banco.
+
+## Bloom e classificação INEP pelo JEV — 23/10/2026
+
+Solicitação: classificar a demanda real das questões por Bloom e pela matriz
+INEP, em área → competência → habilidade, para questões geradas por IA e
+trazidas do acervo. Conforme esclarecimento do usuário, questões do banco ENEM
+preservam as classificações existentes, sem nova classificação Bloom/INEP pelo
+JEV. Os classificadores excluem ENEM também nas entradas diretas e em lotes
+mistos; não carregam catálogo nem chamam o provedor quando o lote é só ENEM.
+A classificação final roda antes da persistência nos dois motores de geração
+e na substituição/adição de questões. No Ensino Médio, o JEV escolhe em três
+etapas no catálogo ENEM do banco, restringindo as opções aos filhos de cada
+escolha. No Fundamental, usa o catálogo SAEB existente, por disciplina e ano,
+com tópico/eixo → descritor e aproximação explícita fora do ano de referência.
+A política segue a distinção já existente: ENEM no Médio e SAEB no Fundamental.
+Não foram acrescentados descritores ausentes do catálogo atual.
+
+`bloomAssessment` distingue confirmação de indisponibilidade. O novo
+`inepAssessment`, opcional no JSONB existente, salva códigos, descrições,
+origem, modelo, confiança e data; `saeb` continua alimentando o mapa da prova.
+Sem correspondência, catálogo indisponível ou falha do JEV, a revisão informa
+a pendência. A classificação não adiciona veto de aprovação. Corrigida também
+a substituição de prova inteira que restaurava o Bloom antigo da questão.
+Decisões têm cache de 24 horas dependente do conteúdo e catálogo. Questões
+anteriores não foram reclassificadas, e nenhum dado de produção foi alterado.
+
+Validação local: 79 testes passaram; TypeScript, lint dos arquivos envolvidos
+e `git diff --check` sem erros. Build concluído, com avisos preexistentes de Edge Runtime e
+imagens em telas de turmas. Publicação e validação com provedor real pendentes. Checkout contém outras mudanças anteriores;
+essa entrega não publica nem inclui essas mudanças em um commit abrangente.
+Após o esclarecimento sobre acervo/ENEM: 45 testes focados passaram, incluindo
+preservação do ENEM em lote misto e ausência de chamadas em lote só ENEM;
+TypeScript e lint focados sem erros. Não houve alteração na exportação Docs.
+
+## Quantidade do ENEM dentro do total da prova — 21/10/2026
+
+O campo numérico de seleção automática do ENEM tinha uma função no cliente,
+mas não era renderizado. Agora a composição mostra o total da prova e o
+campo `Quantas do total serão do ENEM?`, com confirmação da quantidade. Ao
+selecionar 4 em uma prova de 12, são enviados os 4 IDs do banco e
+`questionCount: 8` para acervo/IA. O total permanece 12; capítulos são
+redistribuídos apenas entre as oito questões restantes. A seleção manual
+segue disponível e preservada ao completar a quantidade, inclusive para
+itens de páginas/filtros anteriores. Zero e prova integralmente ENEM são
+suportados. Ao reduzir o total, a seleção é limitada ao novo total.
+
+A busca automática usa os filtros atuais. Candidatas insuficientes geram
+erro explícito e preservam a seleção anterior; falhas de rede preservam seu
+diagnóstico. Rascunhos ainda não aplicados e buscas em andamento bloqueiam
+avanço/envio. Respostas de seleções anteriores são descartadas se filtros,
+contexto ou total mudarem. O contrato existente do servidor foi preservado.
+
+Validação: 17 testes passaram; TypeScript e lint dos arquivos envolvidos
+sem erros. Fluxo real dos componentes exercitado no Chrome com API simulada:
+0, 4 e 12 questões ENEM mantendo total 12; envio final capturado com quatro
+IDs e oito questões restantes, com matriz dos capítulos somando oito.
+Nenhum job real foi criado. Build e publicação ainda não executados.
+
+## Fórmulas na revisão da prova 484 — 21/10/2026
+
+Diagnóstico do payload real: fórmulas inline usavam caixas com overflow,
+criando pequenas barras de rolagem. Respostas discursivas e critérios eram
+importados do texto sem delimitadores, embora o HTML original preservasse as
+anotações LaTeX completas. A apresentação agora recupera essas anotações para
+resposta, resolução e critérios originais, inclusive nas provas já salvas,
+mantendo edições docentes. Novas importações usam a mesma formatação. O
+gabarito também prepara esses campos antes de criar seu texto e cache.
+
+As fórmulas inline deixam de ser caixas de rolagem e a revisão preserva as
+quebras de parágrafo. Corrigido ainda o estado físico anexado como segundo
+subscrito na questão 5: um átomo vazio permite manter `(aq)` na mesma posição
+sem subscrito duplo inválido, inclusive após reunir fragmentos químicos.
+
+Validação: 79 testes passaram; TypeScript e lint dos arquivos envolvidos sem
+erros. No payload real da prova 484, conferidas 235 ocorrências de fórmulas
+nos enunciados, alternativas, respostas, critérios e resoluções: nenhum erro
+de renderização. Prévia das questões 1 e 3 conferida no Chrome: 28 fórmulas,
+nenhum contêiner de rolagem inline, nenhum erro nem overflow horizontal da
+página. Nenhum conteúdo ou status foi alterado no banco. Correção local;
+build e publicação ainda não executados.
+
+## API do acervo por lista de IDs — 21/10/2026
+
+`findAcervoQuestion` passou a consultar `GET /api/v1/questoes?bncc=...` e
+depois `GET /api/v1/questoes/{id}`. A lista é validada contra a BNCC e o total
+informado, deduplicada e embaralhada sem reposição. O limite antigo de 20
+sorteios foi removido: a busca pode alcançar qualquer ID da lista até achar
+uma questão compatível. IDs da prova e do histórico são excluídos antes do
+download; identidade editorial e conteúdo continuam sendo conferidos.
+
+O histórico JSON passa a guardar também `questionId`, inclusive ao adicionar
+e trocar questões. Históricos antigos continuam aceitos. Tentativas com erro
+de detalhe ou mídia não são registradas como uso e não provam esgotamento.
+Mídias preservam o aceite de original e passam a apontar para a URL pelo ID.
+Não requer migração nova.
+
+Verificação ao vivo da API configurada: EF01CI01 retornou 127 IDs únicos,
+com total consistente; detalhe por ID respondeu HTTP 200, ID e BNCC corretos.
+Nos testes, 68 passaram e um teste anterior de `questionConcurrency` falhou:
+ele espera concorrência 1, enquanto o código existente usa 3. Esses arquivos
+não foram alterados nesta tarefa. Lint dos arquivos envolvidos passou.
+Publicação e build não executados.
+
+## Recusa de quebras de linha no Forms — 20/10/2026
+
+Nova tentativa da atividade 465, após publicação dos ajustes anteriores,
+registrou a causa precisa: `Displayed text cannot contain newlines` na etapa
+`add_form_questions`. Os enunciados das questões 5 e 10 contêm LF; nenhuma
+alternativa dessa atividade contém CR/LF. A exportação usava o enunciado inteiro
+como título do item. Agora, enunciados com quebras vão integralmente para a
+descrição, após o texto de apoio, com título curto `Questão N`. Para outros
+itens, a apresentação anterior é mantida. Alternativas multilinha, quando
+existirem, são normalizadas somente na exportação usando a mesma regra para
+as opções e o gabarito. O conteúdo salvo das questões permanece preservado.
+
+Validação: 18 testes focados passaram e lint sem erros. No payload real da
+atividade 465, os 10 itens e as duas imagens são preservados; os enunciados
+multilinha de 5 e 10 aparecem íntegros nas descrições, sem quebras nos títulos,
+opções ou gabaritos. Correção local; nova publicação e criação autenticada do
+Formulário ainda pendentes.
+
+## Imagens originais e Google Forms — 20/10/2026
+
+Mídias originais importadas do acervo e do banco ENEM passam a ter aceite
+automático. A regra reconhece também os originais legados e é compartilhada
+pela revisão, aprovação, documentos e exportação para Forms. Novas importações
+registram `originalBankMedia`; substituições por outras imagens continuam com
+sua revisão própria. A restauração preserva a procedência. Nenhuma alteração
+de conteúdo ou de status foi feita no banco durante esta correção.
+
+Na atividade 465, os logs confirmam `HTTP 400 / INVALID_ARGUMENT` dentro de
+`create_form`, mas não registraram o detalhe do Google nem qual chamada falhou.
+Ajustes: configuração do Quiz confirmada antes de enviar itens com pontuação;
+discursivas com pontuação manual, sem `correctAnswers` vazio; inclusão das
+imagens aceitas nos itens; limpeza de Forms incompletos quando a configuração
+falha; diagnóstico distingue criação, configuração e inclusão de questões e
+registra somente a mensagem de erro do Google, sem o objeto HTTP com token.
+O motivo específico do erro anterior ainda depende de reprodução autenticada.
+
+Validação: 56 testes focados passaram; TypeScript e lint dos arquivos focados
+sem erros. Com os dados reais, a prova 467 tem cinco
+mídias originais aceitas automaticamente e nenhuma imagem pendente; o payload
+do Forms da atividade 465 contém 10 itens, duas imagens e 100 pontos. Criação
+real no Google e publicação da aplicação ainda não executadas. A árvore tem
+alterações anteriores extensas; este ajuste não foi publicado isoladamente.
+
+## Configurações do acervo — 19/10/2026
+
+Implementada a página `/configuracoes`, acessível pelo menu da Coordenação e
+Direção, para editar o IP ou URL base da API do acervo (incluindo porta).
+A configuração é persistida em `application_settings`, com alteração e
+auditoria na mesma transação; aplicação e workers consultam o endereço salvo
+em cada busca. Sem valor salvo, mantém `ACERVO_API_URL` e o endereço padrão.
+A API `/api/admin/settings/acervo` exige usuário ativo da gestão.
+
+Validação: 47 testes passaram (normalização, permissões, persistência,
+auditoria transacional e consultas ao acervo). Migração nova:
+`drizzle/0053_application_settings.sql`, ainda não aplicada ao banco deste
+ambiente. Publicação e build não executados nesta alteração.
+
 ## 1. Fonte da verdade
 
 | O quê | Onde |
@@ -409,20 +621,43 @@ mesma geração três vezes.
 Quando o Jev bloqueia `alinhamento_bncc`, o diagnóstico agora roteia para um
 reparo dirigido da questão: o prompt inclui o código, a descrição oficial e o
 contexto da habilidade via `@bncc/dados`, além do tema e conteúdo da unidade
-escolhida na planilha escolar. A planilha segue como única fonte dos temas e
-fatos de ensino; o dataset BNCC serve para definir a habilidade cognitiva que a
-questão precisa medir. Depois do reparo, o Jev avalia novamente o item.
+escolhida no planejamento aprovado da turma na aba Planejamentos. A fonte
+ativa da geração é esse planejamento persistido; a geração não consulta a
+planilha. O dataset BNCC complementa o código com descrição e contexto da
+habilidade. Depois do reparo, o Jev avalia novamente o item.
 
-Se uma questão continuar bloqueada depois do reparo dirigido e uma
-substituição, a prova é preservada para revisão humana, com aprovação bloqueada
-pelo relatório de qualidade, em vez de descartar o pedido inteiro. A fila
-mostra separadamente espera e tempo de geração. Ações na fila permitem repetir
-uma prova concluída usando a mesma configuração em um clique.
+O fluxo permite até três ciclos de reparo dirigidos, sempre em paralelo, e não
+salva provas com itens reprovados. Se o job precisar ser retomado, os itens
+aprovados são preservados e somente os rejeitados pelo Jev são gerados
+novamente. A fila mostra separadamente espera e tempo de geração. Ações na fila
+permitem repetir uma prova concluída usando a mesma configuração em um clique.
+
+O lote #290 levou cerca de seis minutos no total (aproximadamente 3min15s na
+fila e 2min15s de geração). A geração inicial já roda em paralelo. Jobs novos
+resolvem e validam o planejamento aprovado por ano letivo, segmento, série,
+disciplina e bimestre; sem ele, não entram na fila nem usam a planilha como
+fallback. O worker agora processa dois jobs em paralelo por padrão; a variável
+`GENERATION_WORKER_CONCURRENCY` permite configurar de 1 a 4 workers. Reparos de
+questões reprovadas também rodam em paralelo. Não há migration.
 
 Dependência adicionada: `@bncc/dados@0.6.0` (código MIT; dataset CC BY 4.0,
 embutido sem consulta de rede). A fonte e a versão do registro oficial entram
 no prompt e nos avisos do reparo. Não há migration. Typecheck executado; testes
 automatizados não foram executados nesta alteração.
+
+### Atualização de concorrência e auditoria (06/10/2026)
+
+A geração percorre uma questão por vez. Para cada item, completa o enunciado,
+validação local do Jev, respostas, recurso visual e auditoria final individual
+antes de iniciar o próximo. O Jev recebe uma questão completa por chamada, e o
+parecer aprovado é salvo como checkpoint para retomadas. Quando o planejador
+identifica que o enunciado depende de um visual ausente, a questão é recriada
+uma vez para ser autossuficiente. Uma reprovação na auditoria final recebe um
+reparo direcionado e uma nova validação; se continuar bloqueada, fica marcada
+com erro e conserva conteúdo e diagnóstico. Itens concluídos não voltam a
+aguardar validação. A recriação do enunciado inclui a versão completa reprovada,
+as notas BNCC/turma e instruções alternativas específicas para corrigir cada
+dimensão abaixo de 70%. Não há migration.
 
 ## 2.16 Resposta completa nas alternativas e parecer do Jev por letra (05/10/2026)
 
@@ -500,6 +735,30 @@ Ainda aberto: a prova #405 foi recusada na questão 3 pela auditoria Jev
 (`calculo_ou_dados` e `correcao_objetiva`, ambos como alerta); o cálculo da
 questão está correto (divisão proporcional da taxa), então vale revisar se o
 juiz está sendo rígido demais com divisão proporcional de valores monetários.
+
+## 2.10 Em andamento (05/10/2026): Jev final, reparo dirigido e contexto BNCC oficial
+
+Implementação local na branch `codex/jev-generation-completion` (não implantada):
+
+- Removida a auditoria Jev completa duplicada antes da preparação visual. A
+  auditoria ocorre depois da geração/visuais e inclui as questões do banco.
+- Reparo que devolve conteúdo idêntico é detectado. O diagnóstico tipado do Jev
+  é enviado à substituição; cada questão recebe no máximo um fallback de
+  regeneração nessa fase e o resultado passa por nova auditoria.
+- Se restarem reprovações, o core lança erro com questões e diagnósticos; não
+  persiste uma prova como concluída/disponível para revisão do professor.
+- Geração e auditoria continuam paralelas por questão. Cada chamada recebe
+  contexto da turma; a descrição, o componente, o ano, a unidade e o objeto da
+  BNCC vêm de `@bncc/dados`. Código de habilidade sem registro oficial é
+  rejeitado no pipeline unificado e na seleção explícita de atividades.
+- Removida da geração a consulta remota de descrição BNCC quando a planilha não
+  a trazia; os metadados oficiais locais já fornecem essa informação e evitam
+  latência/falha de rede por código.
+- O contrato de geração não exige cinco alternativas nem respostas descritivas
+  artificiosamente longas.
+
+Verificação executada: `npm run typecheck` após as alterações de geração e
+reparo. Testes e deploy não foram executados.
 
 ## 3. Estado verificado em 30/09/2026 (fim do dia)
 
@@ -802,3 +1061,16 @@ exista no oficial, que foi copiado da árvore do servidor.
 Ao terminar uma sessão: registre o que foi feito em "Relato dos branches",
 atualize "Estado verificado" e "Pendências", ajuste a data no topo e faça
 commit no mesmo PR do código.
+
+
+## 09/11/2026 — Seleção ENEM pelo planejamento no fluxo de prova completa
+
+- A composição por capítulo agora inclui os itens ENEM no total: 12 = 4 ENEM + 8 acervo/IA. O worker posiciona os originais em vagas compatíveis, preservando capítulo, alvo e quantidade.
+- A seleção automática chama `/api/enem-bank/recommend`: usa a versão aprovada visualizada, conteúdos, alvos ENEM/BNCC, idioma e contexto da turma. Classificação do item e aderência ao planejamento são decisões separadas.
+- `plannedEnemSkill` percorre o fluxo `whole-exam-v1`; `planningAlignment` registra o parecer independente e é exibido na revisão. Um alvo não preenche `saeb` como classificação comprovada. Pareceres continuam diagnósticos para a revisão docente.
+- Buscas automáticas excluem itens ENEM já usados em provas aprovadas/aplicadas no mesmo ano e recorte de turma/planejamento. Reutilização explicitamente selecionada recebe aviso.
+- Quando falta BNCC, o acervo é consultado por disciplina/conteúdo antes da IA, preservando as classificações e mídias originais. Busca sem BNCC é limitada a 48 detalhes e 24 conferências por posição; o log e o motivo de complemento registram o limite.
+- Seleção ENEM confere até 12 candidatos por posição na recomendação; na conferência dos IDs explicitamente selecionados, até 30. Falta de cobertura não redistribui habilidades nem completa a cota ENEM com IA.
+- A versão do planejamento acompanha fila, prova e substituições. A unidade original e seu alvo são preservados; alvo forçado fora da unidade gera erro explícito.
+- Catálogo: H7 de Linguagens corrigida conforme matriz oficial; reparo idempotente em `scripts/repair-enem-h7.ts`. Editor valida C:H na área; exportações CSV/impressão incluem ENEM. Inglês e Espanhol são consultados por idioma, sem presumir que idioma vazio significa Inglês.
+- Validação: testes de seleção e integração do núcleo, TypeScript, lint e build de produção; consulta real ao planejamento 105 v3 selecionou um item ENEM compatível. Uma asserção textual antiga de `unifiedPromptNotation.test.ts` falha igualmente nos arquivos anteriores a esta correção; não foi alterada.

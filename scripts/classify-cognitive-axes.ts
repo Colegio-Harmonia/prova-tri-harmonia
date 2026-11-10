@@ -88,7 +88,6 @@ async function classifyBatch(axes: Axis[], batch: Question[]): Promise<Map<numbe
       model: DEEPSEEK_MODEL,
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' },
-      max_tokens: 4096,
     },
     { headers: { Authorization: `Bearer ${DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 60000 },
   )

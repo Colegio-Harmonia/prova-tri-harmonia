@@ -3,12 +3,14 @@
 import { signIn } from 'next-auth/react'
 import { useEffect, useMemo, useState } from 'react'
 import { downloadSheetAssignments } from './downloadSheetAssignments'
+import { CURRENT_SHEET_LAYOUT } from '@/lib/scan-sheets/sheetLayout'
 
 type ClassroomCourse = { id: string; name: string; section: string | null }
 type Assignment = {
   id: number
   studentNameSnapshot: string
-  status: 'pronta' | 'emitida' | 'cancelada'
+  status: 'pronta' | 'emitida' | 'anulada'
+  layoutVersion: string
   pageCount: number
   emittedAt: string | null
 }
@@ -44,6 +46,8 @@ export default function SheetAssignmentsPanel({
   )
   const readyAssignments = assignments?.filter((assignment) => assignment.status === 'pronta') ?? []
   const emittedAssignments = assignments?.filter((assignment) => assignment.status === 'emitida') ?? []
+  const outdatedAssignments = emittedAssignments.filter((assignment) => assignment.layoutVersion !== CURRENT_SHEET_LAYOUT)
+  const activeAssignments = assignments?.filter((assignment) => assignment.status !== 'anulada') ?? []
 
   async function loadCourses() {
     const response = await fetch('/api/classroom/courses')
@@ -133,6 +137,19 @@ export default function SheetAssignmentsPanel({
     }
   }
 
+  async function reprintCompactSheets() {
+    setEmitting(true); setError(null); setNotice(null)
+    try {
+      await downloadSheetAssignments(examId, outdatedAssignments.map((assignment) => assignment.id), 'reprint')
+      await loadAssignments()
+      setNotice('Modelo compacto emitido. Use os novos cartões; os QR dos cartões substituídos foram anulados.')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Não foi possível reemitir os cartões.')
+    } finally {
+      setEmitting(false)
+    }
+  }
+
   return (
     <section className="rounded-lg border border-harmonia-green/30 bg-harmonia-green/5 p-4" aria-labelledby="sheet-assignments-title">
       <h2 id="sheet-assignments-title" className="font-semibold text-harmonia-green">Folhas de resposta</h2>
@@ -164,7 +181,7 @@ export default function SheetAssignmentsPanel({
         <div className="mt-3 rounded border bg-white p-3 text-sm">
           <p><strong>Turma vinculada:</strong> {linkedCourse ? `${linkedCourse.name}${linkedCourse.section ? ` — ${linkedCourse.section}` : ''}` : 'turma do Classroom'}</p>
           {assignments === null ? <p className="mt-2 text-neutral-500">Carregando fichas…</p> : <>
-            <p className="mt-2 text-neutral-600">{assignments.length === 0 ? 'Nenhuma ficha preparada ainda.' : `${assignments.length} fichas no lote: ${readyAssignments.length} prontas e ${emittedAssignments.length} já emitidas.`}</p>
+            <p className="mt-2 text-neutral-600">{activeAssignments.length === 0 ? 'Nenhuma ficha preparada ainda.' : `${activeAssignments.length} fichas no lote: ${readyAssignments.length} prontas e ${emittedAssignments.length} já emitidas.`}</p>
             <div className="mt-3 flex flex-wrap gap-2">
               <button type="button" onClick={snapshotRoster} disabled={snapshotting} className="rounded border border-harmonia-green px-4 py-2 text-sm font-medium text-harmonia-green disabled:opacity-60">
                 {snapshotting ? 'Congelando alunos…' : assignments.length === 0 ? 'Preparar fichas da turma' : 'Atualizar lista antes da impressão'}
@@ -175,8 +192,12 @@ export default function SheetAssignmentsPanel({
               {emittedAssignments.length > 0 && <button type="button" onClick={downloadEmittedSheets} disabled={emitting} className="rounded border border-harmonia-green px-4 py-2 text-sm font-medium text-harmonia-green disabled:opacity-60">
                 {emitting ? 'Gerando ZIP…' : `Baixar ${emittedAssignments.length} ${emittedAssignments.length === 1 ? 'cartão emitido' : 'cartões emitidos'} em ZIP`}
               </button>}
+              {outdatedAssignments.length > 0 && <button type="button" onClick={reprintCompactSheets} disabled={emitting} className="rounded bg-harmonia-green px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
+                {emitting ? 'Gerando ZIP…' : 'Reemitir no modelo compacto'}
+              </button>}
             </div>
-            {assignments.length > 0 && <ul className="mt-3 max-h-36 space-y-1 overflow-y-auto text-xs text-neutral-600">{assignments.map((assignment) => <li key={assignment.id}>{assignment.studentNameSnapshot} · {assignment.pageCount} {assignment.pageCount === 1 ? 'página' : 'páginas'} · {assignment.status === 'emitida' ? 'emitida' : 'pronta para emissão'}</li>)}</ul>}
+            {outdatedAssignments.length > 0 && <p className="mt-2 text-xs text-neutral-600">Baixar cartões emitidos conserva o modelo original. Reemitir gera o modelo compacto e substitui os QR antigos; use essa opção antes de entregar as folhas aos alunos.</p>}
+            {activeAssignments.length > 0 && <ul className="mt-3 max-h-36 space-y-1 overflow-y-auto text-xs text-neutral-600">{activeAssignments.map((assignment) => <li key={assignment.id}>{assignment.studentNameSnapshot} · {assignment.pageCount} {assignment.pageCount === 1 ? 'página' : 'páginas'} · {assignment.status === 'emitida' ? 'emitida' : 'pronta para emissão'}</li>)}</ul>}
           </>}
         </div>
       )}

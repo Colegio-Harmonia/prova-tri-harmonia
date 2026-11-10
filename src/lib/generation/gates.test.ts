@@ -41,15 +41,9 @@ describe('gates determinísticos', () => {
     expect(() => gateTruth(ctx, { truthStrategy: 'calculavel', domain: 'linear_system' }, truth)).toThrow(/recalculador/i)
   })
 
-  it('Gate 1 rejeita evidência que não existe no material', () => {
+  it('Gate 1 não exige que a evidência do texto de apoio apareça como frase no escopo do planejamento', () => {
     const plan: QuestionPlan = { truthStrategy: 'fonte_ancorada', sourceMaterial: 'A Revolução Francesa começou em 1789.' }
-    const truth: TruthObject = { strategy: 'fonte_ancorada', values: {}, derivation: 'x', sourceEvidence: 'A independência do Brasil ocorreu em 1822.' }
-    expect(() => gateTruth(ctx, plan, truth)).toThrow(/não existe literalmente/i)
-  })
-
-  it('Gate 1 aceita evidência literal do material', () => {
-    const plan: QuestionPlan = { truthStrategy: 'fonte_ancorada', sourceMaterial: 'A Revolução Francesa começou em 1789, na França.' }
-    const truth: TruthObject = { strategy: 'fonte_ancorada', values: {}, derivation: 'x', sourceEvidence: 'A Revolução Francesa começou em 1789' }
+    const truth: TruthObject = { strategy: 'fonte_ancorada', values: {}, derivation: 'x', sourceEvidence: 'Em uma situação hipotética, a equipe observou dados de duas fontes de energia.' }
     expect(() => gateTruth(ctx, plan, truth)).not.toThrow()
   })
 
@@ -111,6 +105,16 @@ describe('gateAnchoredClaim', () => {
 
   it('aceita evidência literal do texto de apoio', () => {
     expect(() => gateAnchoredClaim(support, truth({ sourceEvidence: 'a eletricidade que consomem pode vir de usinas hidrelétricas ou térmicas' }))).not.toThrow()
+  })
+
+  it('rejeita quando o apoio repete literalmente a resposta que deve ser inferida', () => {
+    const answer = 'A origem da eletricidade define a redução das emissões.'
+    expect(() => gateAnchoredClaim(answer, truth({ sourceEvidence: answer }))).toThrow(/contém literalmente a resposta/i)
+  })
+
+  it('também rejeita resposta copiada de apoio curto', () => {
+    const answer = 'A planta produz glicose.'
+    expect(() => gateAnchoredClaim(answer, truth({ claim: answer, sourceEvidence: answer }))).toThrow(/contém literalmente a resposta/i)
   })
 
   it('rejeita evidência que não está no texto de apoio, mesmo que esteja no currículo', () => {

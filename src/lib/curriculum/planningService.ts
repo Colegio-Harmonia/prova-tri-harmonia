@@ -45,20 +45,22 @@ async function versionContent(versionId: number, tx: Tx | typeof db = db) {
   const units = await tx.select().from(curriculumPlanUnits).where(eq(curriculumPlanUnits.versionId, versionId)).orderBy(asc(curriculumPlanUnits.position))
   const skills = units.length ? await tx.select().from(curriculumPlanSkills).where(inArray(curriculumPlanSkills.unitId, units.map((unit) => unit.id))).orderBy(asc(curriculumPlanSkills.position)) : []
   return units.map((unit) => ({
-    title: unit.title, content: unit.content, objectives: unit.objectives,
+    title: unit.title, content: unit.content, objectives: unit.objectives, enemSkills: unit.enemSkills,
     skills: skills.filter((skill) => skill.unitId === unit.id).map((skill) => ({ code: skill.code, description: skill.description, targetMasteryPercent: skill.targetMasteryPercent })),
   }))
 }
 
 /** Grava o conteúdo completo de uma versão (substitui unidades e habilidades). */
 async function writeContent(tx: Tx, versionId: number, units: PlanUnitInput[]) {
-  const { units: normalized, errors } = normalizePlanUnits(units)
+  const version = await tx.query.curriculumPlanVersions.findFirst({ where: eq(curriculumPlanVersions.id, versionId) })
+  const plan = version ? await tx.query.curriculumPlans.findFirst({ where: eq(curriculumPlans.id, version.planId) }) : undefined
+  const { units: normalized, errors } = normalizePlanUnits(units, plan?.subject)
   if (errors.length) throw new PlanningError('Corrija o planejamento antes de salvar.', 422, errors)
   const missing = normalized.flatMap((unit) => unit.skills.filter((skill) => !skill.description))
   const enriched = missing.length ? new Map((await enrichBnccDescriptions(missing)).map((skill) => [skill.code, skill.description])) : new Map()
   await tx.delete(curriculumPlanUnits).where(eq(curriculumPlanUnits.versionId, versionId))
   for (const [position, unit] of normalized.entries()) {
-    const [saved] = await tx.insert(curriculumPlanUnits).values({ versionId, position, title: unit.title, content: unit.content, objectives: unit.objectives }).returning()
+    const [saved] = await tx.insert(curriculumPlanUnits).values({ versionId, position, title: unit.title, content: unit.content, objectives: unit.objectives, enemSkills: unit.enemSkills }).returning()
     if (unit.skills.length) await tx.insert(curriculumPlanSkills).values(unit.skills.map((skill, skillPosition) => ({ unitId: saved.id, code: skill.code, description: skill.description ?? enriched.get(skill.code) ?? null, position: skillPosition, targetMasteryPercent: skill.targetMasteryPercent })))
   }
   await tx.update(curriculumPlanVersions).set({ updatedAt: new Date() }).where(eq(curriculumPlanVersions.id, versionId))
@@ -299,12 +301,12 @@ function csvCell(value: string | number | null | undefined) {
 export async function exportPlanCsv(viewer: Viewer, planId: number, versionId?: number) {
   const detail = await getPlanDetail(viewer, planId, versionId)
   const version = detail.versions.find((item) => item.id === detail.selectedVersionId)
-  const header = ['Ano letivo', 'Segmento', 'Série', 'Disciplina', 'Bimestre', 'Versão', 'Situação', 'Unidade', 'Título', 'Conteúdos', 'Objetivos', 'Código BNCC', 'Habilidade', 'Meta de domínio (%)']
+  const header = ['Ano letivo', 'Segmento', 'Série', 'Disciplina', 'Bimestre', 'Versão', 'Situação', 'Unidade', 'Título', 'Conteúdos', 'Objetivos', 'Habilidades ENEM', 'Código BNCC', 'Habilidade', 'Meta de domínio (%)']
   const lines = [header.join(';')]
   const base = [detail.plan.academicYear, detail.plan.segment, `${detail.plan.gradeYear}º ano`, detail.plan.subject, `${detail.plan.bimester}º`, version?.versionNumber ?? '', version?.status ?? '']
   detail.units.forEach((unit, index) => {
     const rows = unit.skills.length ? unit.skills : [{ code: '', description: '', targetMasteryPercent: null as number | null }]
-    for (const skill of rows) lines.push([...base, index + 1, unit.title, unit.content, unit.objectives, skill.code, skill.description, skill.targetMasteryPercent].map(csvCell).join(';'))
+    for (const skill of rows) lines.push([...base, index + 1, unit.title, unit.content, unit.objectives, unit.enemSkills, skill.code, skill.description, skill.targetMasteryPercent].map(csvCell).join(';'))
   })
   const filename = `planejamento-${detail.plan.academicYear}-${detail.plan.subject}-${detail.plan.gradeYear}ano-${detail.plan.bimester}bim-v${version?.versionNumber ?? 0}`
     .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9-]+/g, '-').toLowerCase()

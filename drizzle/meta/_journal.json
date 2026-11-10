@@ -8,6 +8,20 @@
       "when": 1783966740823,
       "tag": "0000_chunky_peter_quill",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791326984100,
+      "tag": "0052_one_active_question_addition_per_exam",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792411200000,
+      "tag": "0053_application_settings",
+      "breakpoints": true
     }
   ]
 }

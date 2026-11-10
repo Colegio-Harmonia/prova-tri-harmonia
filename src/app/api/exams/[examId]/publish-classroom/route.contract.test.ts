@@ -14,7 +14,8 @@ vi.mock('@/lib/exams/authorizeExamAccess', () => ({ authorizeExamAccess: mocks.a
 vi.mock('@/db/client', () => ({
   db: { query: { users: { findFirst: mocks.findResponsibleTeacher } } },
 }))
-vi.mock('@/lib/forms/activityForm', () => ({
+vi.mock('@/lib/forms/activityForm', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/forms/activityForm')>(),
   activityFormEditUrl: (formId: string) => `https://docs.google.com/forms/d/${formId}/edit`,
   createActivityForm: mocks.createActivityForm,
   deleteActivityForm: vi.fn(),
@@ -31,6 +32,8 @@ vi.mock('@/lib/classroom/classroomClient', () => ({
 }))
 
 import { POST } from './route'
+import { ActivityFormCreationError } from '@/lib/forms/activityForm'
+import { isInsufficientScopeError, summarizeClassroomApiError } from '@/lib/classroom/classroomClient'
 
 const activity = {
   id: 75,
@@ -66,4 +69,18 @@ describe('publicação de atividade com Form', () => {
     expect(mocks.createActivityForm).not.toHaveBeenCalled()
     expect(mocks.listMyCourses).not.toHaveBeenCalled()
   })
+  it('preserva a causa do Google e informa a etapa real que falhou', async () => {
+    mocks.auth.mockResolvedValue({ user: { email: 'coordenacao@colegioharmonia.com.br' }, googleAccessToken: 'token', googleScopes: 'https://www.googleapis.com/auth/drive.file' })
+    mocks.listMyCourses.mockResolvedValue([{ id: 'course-1' }])
+    const cause = { response: { status: 400 } }
+    mocks.createActivityForm.mockRejectedValue(new ActivityFormCreationError('add_form_questions', cause))
+    vi.mocked(isInsufficientScopeError).mockReturnValue(false)
+    vi.mocked(summarizeClassroomApiError).mockReturnValue({ httpStatus: 400, googleStatus: 'INVALID_ARGUMENT', reason: null })
+    const response = await POST(request(), { params: Promise.resolve({ examId: '75' }) })
+    if (!response) throw new Error('Rota não devolveu resposta.')
+    expect(response.status).toBe(502)
+    await expect(response.json()).resolves.toMatchObject({ stage: 'add_form_questions', provider: { httpStatus: 400 } })
+    expect(summarizeClassroomApiError).toHaveBeenCalledWith(cause)
+  })
+
 })

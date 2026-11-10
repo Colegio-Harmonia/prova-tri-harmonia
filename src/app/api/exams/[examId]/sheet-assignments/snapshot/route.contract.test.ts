@@ -113,6 +113,7 @@ describe('contrato do congelamento de roster para cartão-resposta', () => {
       classroomStudentId: 'student-1',
       studentNameSnapshot: 'Ana',
       pageCount: 1,
+      layoutVersion: 'PTR3',
     })
     expect(assignmentInsert.publicId).toMatch(/^[A-Za-z0-9_-]{24}$/)
     expect(assignmentInsert.publicId).not.toContain('Ana')

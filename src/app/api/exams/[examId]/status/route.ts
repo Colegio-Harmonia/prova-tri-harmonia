@@ -6,21 +6,14 @@ import { generatedExams, users, EXAM_STATUSES } from '@/db/schema'
 import { auth } from '@/auth/auth'
 import { generateExamDocs } from '@/lib/docs/generateExamDocs'
 import { sendChatAssignmentNotification, sendChatReviewReadyNotification } from '@/lib/notifications/googleChat'
-import type { ExamGenerationResult, ExamQuestion } from '@/lib/gemini/examSchema'
+import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { isStaffSuperuser } from '@/lib/auth/roles'
-import { findDiscursiveWithoutReferenceAnswer, referenceAnswerMissingMessage } from '@/lib/exams/referenceAnswer'
 import { isSelfManagedActivity } from '@/lib/exams/activityWorkflow'
 import { SheetAssignmentsSnapshotError, snapshotSheetAssignments } from '@/lib/scan-sheets/sheetAssignments'
 import { enqueuePontuarProvaJob } from '@/lib/queue/enqueue'
-import { qualityApprovalBlocks, runQuestionQualityTest } from '@/lib/exams/questionQualityTest'
-import { latestQualityReport, normalizeStoredQualityReport, qualityReportNeedsNormalization, qualityReportNeedsRecompute, recomputeQualityReport } from '@/lib/exams/qualityReport'
-import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
-import { planIdFromExamPayload } from '@/lib/curriculum/planCurriculum'
-import { generateQuestionWithUnifiedFlow } from '@/lib/exams/unifiedQuestionGeneration'
-import { AiBudgetExceededError } from '@/lib/ai/operationBudget'
 
 const bodySchema = z.object({
-  action: z.enum(['atribuir', 'iniciar_revisao', 'aprovar_prova', 'concluir_revisao', 'aprovar', 'marcar_impresso', 'marcar_aplicado', 'marcar_corrigido', 'finalizar_atividade', 'marcar_atividade_aplicada']),
+  action: z.enum(['atribuir', 'confirmar_prova_parcial', 'iniciar_revisao', 'aprovar_prova', 'concluir_revisao', 'aprovar', 'marcar_impresso', 'marcar_aplicado', 'marcar_corrigido', 'finalizar_atividade', 'finalizar_atividade_parcial', 'marcar_atividade_aplicada']),
   assignedTo: z.number().int().optional(),
 })
 
@@ -35,6 +28,7 @@ type Action = z.infer<typeof bodySchema>['action']
 // corrigir are the assigned reviewer's own workflow steps).
 const TRANSITIONS: Record<Action, { from: ExamStatus; to: ExamStatus; assigneeAllowed: boolean; ownerAllowed?: boolean }> = {
   atribuir: { from: 'rascunho', to: 'atribuido', assigneeAllowed: false },
+  confirmar_prova_parcial: { from: 'rascunho', to: 'atribuido', assigneeAllowed: false },
   iniciar_revisao: { from: 'atribuido', to: 'em_revisao', assigneeAllowed: true },
   aprovar_prova: { from: 'em_revisao', to: 'aprovado', assigneeAllowed: true },
   concluir_revisao: { from: 'em_andamento', to: 'revisao_concluida', assigneeAllowed: true }, // histórico legado
@@ -46,77 +40,12 @@ const TRANSITIONS: Record<Action, { from: ExamStatus; to: ExamStatus; assigneeAl
   // sem `assigned_to`.
   marcar_corrigido: { from: 'aplicado', to: 'corrigido', assigneeAllowed: true, ownerAllowed: true },
   finalizar_atividade: { from: 'rascunho', to: 'aprovado', assigneeAllowed: false, ownerAllowed: true },
+  finalizar_atividade_parcial: { from: 'rascunho', to: 'aprovado', assigneeAllowed: false, ownerAllowed: true },
   marcar_atividade_aplicada: { from: 'aprovado', to: 'aplicado', assigneeAllowed: false, ownerAllowed: true },
 }
 
-const ACTIVITY_ONLY_ACTIONS = new Set<Action>(['finalizar_atividade', 'marcar_atividade_aplicada'])
-const FORMAL_REVIEW_ACTIONS = new Set<Action>(['atribuir', 'iniciar_revisao', 'aprovar_prova', 'concluir_revisao', 'aprovar', 'marcar_impresso', 'marcar_aplicado'])
-
-/**
- * Recupera provas legadas que foram salvas com itens recusados. Esta é uma
- * ponte de migração: a geração nova já faz isso antes de persistir, mas o
- * clique único em Aprovar também não pode obrigar o usuário a trocar itens.
- */
-async function replaceRejectedQuestionsAutomatically(exam: typeof generatedExams.$inferSelect, payload: ExamGenerationResult) {
-  const rejected = latestQualityReport(payload)?.results.filter((result) => !result.approved).map((result) => result.questionNumber) ?? []
-  if (!rejected.length) return payload
-
-  const curriculum = await getCurriculumForExam({
-    segment: exam.segment,
-    gradeYear: exam.gradeYear,
-    subject: exam.subject,
-    bimester: exam.bimester ?? undefined,
-    curriculumPlanId: planIdFromExamPayload(exam.generationPayload),
-  })
-  let questions = [...payload.questions]
-  for (const questionNumber of rejected) {
-    const index = questions.findIndex((question) => question.number === questionNumber)
-    const original = questions[index]
-    if (!original || original.source === 'enem_bank') throw new Error(`A questão ${questionNumber} não pode ser substituída automaticamente.`)
-    let replacement: ExamQuestion | null = null
-    // Mesmo pipeline da troca manual ("Trocar só essa questão") e da geração
-    // principal. O caminho antigo (prompt avulso + schema de 1 questão) caía no
-    // teto padrão de tokens do contexto e voltava sempre `empty_response`: em
-    // produção nunca produziu uma substituta (0 sucessos, 83 falhas desde
-    // 30/09/2026), deixando a prova impossível de aprovar.
-    // Cada candidata passa pela mesma auditoria da questão; se ainda houver
-    // problema bloqueante ou a IA errar o contrato, iniciamos outra candidata.
-    for (let candidateNumber = 1; candidateNumber <= 3 && !replacement; candidateNumber++) {
-      try {
-        const generated = await generateQuestionWithUnifiedFlow({
-          curriculum,
-          questionNumber,
-          type: original.type,
-          targetSkillCodes: original.bnccStatus === 'mapeado' ? original.bnccCodes : undefined,
-          instruction: [
-            `substituir a questão ${questionNumber}; tipo ${original.type}`,
-            `substituição automática ${candidateNumber}/3: crie uma questão nova com cálculo, alternativas e gabarito verificáveis`,
-            `não repita nem reutilize o enunciado anterior: ${original.statement.slice(0, 300)}`,
-          ].join('; '),
-        })
-        const quality = await runQuestionQualityTest(curriculum, [generated.question])
-        if (quality.issues.some((issue) => issue.severity === 'bloqueante')) continue
-        replacement = generated.question
-      } catch (error) {
-        // Falha de contrato/validação/IA numa candidata não derruba a
-        // aprovação: tenta outra. Só o teto de orçamento de IA interrompe.
-        if (error instanceof AiBudgetExceededError) throw error
-        console.warn(`[exams/status] substituta automática ${candidateNumber}/3 da questão ${questionNumber} falhou:`, error instanceof Error ? error.message.slice(0, 300) : error)
-      }
-    }
-    if (!replacement) throw new Error(`Não foi possível criar uma substituta aprovada para a questão ${questionNumber}; a prova permanece sem aprovação para preservar a integridade do conteúdo.`)
-    // A substituição automática preserva a revisão já concluída da prova;
-    // o novo item foi validado pelo mesmo gate antes de entrar no payload.
-    questions[index] = { ...replacement, number: questionNumber, review: original.review }
-  }
-  const repaired = await recomputeQualityReport({
-    payload: { ...payload, questions },
-    curriculum,
-    phase: 'Substituições automáticas durante a aprovação',
-    repairedQuestionNumbers: rejected,
-  })
-  return repaired.payload
-}
+const ACTIVITY_ONLY_ACTIONS = new Set<Action>(['finalizar_atividade', 'finalizar_atividade_parcial', 'marcar_atividade_aplicada'])
+const FORMAL_REVIEW_ACTIONS = new Set<Action>(['atribuir', 'confirmar_prova_parcial', 'iniciar_revisao', 'aprovar_prova', 'concluir_revisao', 'aprovar', 'marcar_impresso', 'marcar_aplicado'])
 
 export async function POST(req: NextRequest, props: { params: Promise<{ examId: string }> }) {
   const params = await props.params;
@@ -143,7 +72,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
   const isActivity = isSelfManagedActivity(exam)
   // A prova formal continua exigindo revisão/aprovação da coordenação, mas
   // seu criador pode definir quem fará a revisão inicial.
-  const canAssignOwnFormalExam = action === 'atribuir' && exam.examKind === 'prova' && isOwner
+  const canAssignOwnFormalExam = (action === 'atribuir' || action === 'confirmar_prova_parcial') && exam.examKind === 'prova' && isOwner
 
   // O cliente já apresenta ações próprias de atividade, mas a separação
   // precisa ser aplicada também aqui: uma chamada direta não pode recolocar
@@ -160,24 +89,38 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     return NextResponse.json({ error: `Transição inválida: prova está em "${exam.status}", esperado "${transition.from}".` }, { status: 409 })
   }
 
-  // Descritiva sem resposta esperada não pode seguir pra revisão concluída/
-  // aprovação: a correção ficaria sem base. Vale também pra provas antigas.
-  if (action === 'concluir_revisao' || action === 'aprovar' || action === 'finalizar_atividade') {
-    const payload = exam.generationPayload as ExamGenerationResult
-    const missing = findDiscursiveWithoutReferenceAnswer(payload.questions ?? [])
-    if (missing.length) {
-      return NextResponse.json({ error: 'missing_reference_answer', message: referenceAnswerMissingMessage(missing), questions: missing }, { status: 422 })
-    }
+  let storedPayload = exam.generationPayload as ExamGenerationResult
+  let generationProgress = storedPayload.metadata.generationProgress
+  if (storedPayload.questions.length === 0 && [
+    'atribuir', 'confirmar_prova_parcial', 'iniciar_revisao', 'aprovar_prova',
+    'concluir_revisao', 'aprovar', 'marcar_impresso', 'marcar_aplicado',
+    'marcar_corrigido', 'finalizar_atividade', 'finalizar_atividade_parcial',
+    'marcar_atividade_aplicada',
+  ].includes(action)) {
+    return NextResponse.json({ error: 'Não é possível avançar uma avaliação sem questões. Adicione pelo menos uma questão aprovada antes de continuar.' }, { status: 409 })
+  }
+  if ((action === 'atribuir' || action === 'finalizar_atividade') && generationProgress?.complete === false && !generationProgress.acceptedReducedQuestionCount) {
+    return NextResponse.json({ error: 'Esta avaliação está incompleta. Use a confirmação explícita para aceitar a quantidade reduzida de questões.' }, { status: 409 })
+  }
+  if ((action === 'confirmar_prova_parcial' || action === 'finalizar_atividade_parcial') && generationProgress?.complete !== false) {
+    return NextResponse.json({ error: 'Esta avaliação não está marcada como parcial.' }, { status: 409 })
+  }
+  if (action === 'finalizar_atividade_parcial') {
+    storedPayload = { ...storedPayload, metadata: { ...storedPayload.metadata, generationProgress: { ...generationProgress!, acceptedReducedQuestionCount: true } } }
+    await db.update(generatedExams).set({ generationPayload: storedPayload }).where(eq(generatedExams.id, examId))
   }
 
-  if (action === 'atribuir') {
+  if (action === 'atribuir' || action === 'confirmar_prova_parcial') {
     if (!assignedTo) return NextResponse.json({ error: 'assignedTo é obrigatório para atribuir.' }, { status: 400 })
     const reviewer = await db.query.users.findFirst({ where: eq(users.id, assignedTo) })
     if (!reviewer || !reviewer.active) return NextResponse.json({ error: 'Usuário atribuído não encontrado ou inativo.' }, { status: 400 })
 
+    const acceptedPayload = action === 'confirmar_prova_parcial'
+      ? { ...storedPayload, metadata: { ...storedPayload.metadata, generationProgress: { ...generationProgress!, acceptedReducedQuestionCount: true } } }
+      : storedPayload
     await db
       .update(generatedExams)
-      .set({ status: 'atribuido', assignedTo, assignedBy: currentUser.id, assignedAt: new Date() })
+      .set({ status: 'atribuido', assignedTo, assignedBy: currentUser.id, assignedAt: new Date(), generationPayload: acceptedPayload })
       .where(eq(generatedExams.id, examId))
 
     const examLabel = `${exam.subject} — ${exam.gradeYear}º ano${exam.bimester ? ` — ${exam.bimester}º bimestre` : ''}`
@@ -189,16 +132,6 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
   }
 
   if (action === 'aprovar_prova' || action === 'concluir_revisao') {
-    const payload = exam.generationPayload as ExamGenerationResult
-    const pendingReview = payload.questions.flatMap((question) => {
-      const pending: string[] = []
-      if (question.review?.adequacy !== 'adequada') pending.push(`Questão ${question.number}`)
-      if (question.image && !question.image.approved) pending.push(`Imagem da questão ${question.number}`)
-      return pending
-    })
-    if (pendingReview.length) {
-      return NextResponse.json({ error: `Revise todos os itens antes de concluir. Pendentes: ${pendingReview.join(', ')}.` }, { status: 409 })
-    }
     if (action === 'concluir_revisao') await db
       .update(generatedExams)
       .set({ status: 'revisao_concluida', reviewReadyNotifiedAt: new Date() })
@@ -217,60 +150,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     }
   }
 
-  if (action === 'aprovar_prova' || action === 'aprovar' || action === 'finalizar_atividade') {
+  if (action === 'aprovar_prova' || action === 'aprovar' || action === 'finalizar_atividade' || action === 'finalizar_atividade_parcial') {
     try {
-      let payload = exam.generationPayload as ExamGenerationResult
-      let qualityBlocks = qualityApprovalBlocks(payload)
-
-      // Auto-cura: a auditoria já acontece na geração, mas provas antigas,
-      // regeneradas ou com relatório inconsistente (ex.: critério "não
-      // aplicável" marcado como reprovado por versões anteriores) são
-      // reauditadas aqui, sem exigir ação extra do revisor e sem alterar as
-      // questões. Persistimos o relatório canônico antes de reavaliar.
-      if (qualityReportNeedsRecompute(payload)) {
-        try {
-          const curriculum = await getCurriculumForExam({
-            segment: exam.segment,
-            gradeYear: exam.gradeYear,
-            subject: exam.subject,
-            bimester: exam.bimester ?? undefined,
-            curriculumPlanId: planIdFromExamPayload(exam.generationPayload),
-          })
-          const recomputed = await recomputeQualityReport({
-            payload,
-            curriculum,
-            phase: 'Auditoria automática durante a aprovação',
-          })
-          payload = recomputed.payload
-          await db.update(generatedExams).set({ generationPayload: payload }).where(eq(generatedExams.id, examId))
-          qualityBlocks = qualityApprovalBlocks(payload)
-        } catch (recomputeError) {
-          // A auto-cura é um reforço, não pode virar um novo bloqueio. Se a
-          // reauditoria falhar (Sheets/IA indisponíveis), seguimos com o
-          // relatório já normalizado em mãos.
-          console.error('[exams/status] falha ao recompor auditoria de qualidade:', recomputeError)
-        }
-      } else if (qualityReportNeedsNormalization(payload)) {
-        // Sem IA: limpa critérios "não aplicáveis" mal classificados e
-        // recalcula o veredito de relatórios de versões anteriores.
-        payload = normalizeStoredQualityReport(payload)
-        await db.update(generatedExams).set({ generationPayload: payload }).where(eq(generatedExams.id, examId))
-        qualityBlocks = qualityApprovalBlocks(payload)
-      }
-      // Registros criados antes do gate definitivo podem conter itens que a
-      // auditoria já recusou. No mesmo clique de aprovação, substituímos esses
-      // itens, refazemos a auditoria integral e só seguimos se tudo aprovar.
-      if (qualityBlocks.length && latestQualityReport(payload)?.results.some((result) => !result.approved)) {
-        payload = await replaceRejectedQuestionsAutomatically(exam, payload)
-        await db.update(generatedExams).set({ generationPayload: payload }).where(eq(generatedExams.id, examId))
-        qualityBlocks = qualityApprovalBlocks(payload)
-      }
-      if (qualityBlocks.length) {
-        return NextResponse.json({
-          error: `Aprovação bloqueada pelo controle de qualidade. ${qualityBlocks.join(' ')}`,
-          qualityBlocks,
-        }, { status: 409 })
-      }
+      // A aprovação é uma decisão humana. Auditorias são informativas e
+      // não disparam reavaliações, reparos ou vetos ao finalizar a prova.
+      const payload = storedPayload
       const result = await generateExamDocs(payload, {
         segment: exam.segment,
         gradeYear: exam.gradeYear,
@@ -288,7 +172,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
           // Atividades antigas podem não ter responsável. Ao finalizá-las,
           // preservamos o criador como responsável pela aplicação/correção,
           // sem nunca depender de uma atribuição da coordenação.
-          ...(action === 'finalizar_atividade' && exam.assignedTo == null
+          ...((action === 'finalizar_atividade' || action === 'finalizar_atividade_parcial') && exam.assignedTo == null
             ? { assignedTo: exam.createdBy, assignedBy: currentUser.id, assignedAt: new Date() }
             : {}),
           driveFolderId: result.driveFolderId,

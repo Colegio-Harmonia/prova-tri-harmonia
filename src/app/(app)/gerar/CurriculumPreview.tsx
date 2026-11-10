@@ -1,12 +1,18 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { recommendCreationMode } from '@/lib/exams/creationMode'
 import Link from 'next/link'
+import { ClipboardPenLine, Sparkles, BadgeCheck } from 'lucide-react'
+import { MathText } from '@/components/ui/MathText'
 import { SEGMENT_LABELS, SEGMENT_GRADES, SEGMENT_SUBJECTS } from '@/config/subjects'
 import { getEnemAreaForSubject } from '@/config/enemAreaMap'
 import { currentBimester } from '@/lib/exams/currentBimester'
 import { evenQuestionCounts } from '@/lib/exams/chapterDistribution'
+import { composeWithEnem } from '@/lib/exams/enemComposition'
 import type { Segment, CurriculumPlanItem, CurriculumSelection } from '@/types/exam'
+import QuestionCompositionControls from './QuestionCompositionControls'
 import { GenerationStepper } from '@/features/assessments/components/GenerationStepper'
 
 // Subtarefa 1b (24/07/2026): a geração deixou de ser síncrona — o botão
@@ -18,6 +24,7 @@ import { GenerationStepper } from '@/features/assessments/components/GenerationS
 
 type SubjectPreview = {
   subject: string
+  curriculumPlanId?: number
   data?: CurriculumSelection
   error?: string
   availableTabs?: string[]
@@ -26,6 +33,7 @@ type SubjectPreview = {
 type BankQuestion = {
   id: number
   year: number
+  questionIndex: number
   preview: string
   skillCode: string | null
   skillDescription: string | null
@@ -78,9 +86,19 @@ function UnitList({ units, bnccFilter }: { units: CurriculumSelection['units']; 
                   {s.code}
                 </span>
               ))
-            ) : (
+            ) : unit.enemSkills?.skills.length ? null : (
+              // Capítulo mapeado pela Matriz do ENEM não é lacuna de planejamento.
               <span className="rounded bg-neutral-100 px-2 py-0.5 text-xs text-neutral-500">BNCC não mapeada</span>
             )}
+            {unit.enemSkills?.skills.map((s) => (
+              <span
+                key={`enem-${s.code}`}
+                title={s.description ?? undefined}
+                className="rounded border border-harmonia-green/40 px-2 py-0.5 text-xs text-harmonia-green"
+              >
+                ENEM {s.code}{s.count > 1 ? ` ×${s.count}` : ''}
+              </span>
+            ))}
           </div>
         </div>
       ))}
@@ -103,6 +121,10 @@ function questionsFromPointer(element: HTMLElement, clientX: number, total: numb
 type CurrentUser = { id: number; name: string; email: string; role: string }
 
 export default function CurriculumPreview({ coordinator, teachers, currentUser }: { coordinator: boolean; teachers: TeacherOption[]; currentUser: CurrentUser | null }) {
+  const router = useRouter()
+  const [choosingMode, setChoosingMode] = useState(false)
+  const [manualSubject, setManualSubject] = useState('')
+  const [creatingManual, setCreatingManual] = useState(false)
   // A tela abre zerada: cada campo é escolha explícita de quem gera.
   // Exceções deliberadas: o responsável já vem como o próprio professor
   // (a prova nasce atribuída a ele) e o bimestre já vem no período atual.
@@ -118,6 +140,7 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
   const [previews, setPreviews] = useState<SubjectPreview[]>([])
   const [error, setError] = useState<string | null>(null)
   const [questionCount, setQuestionCount] = useState(12)
+  const [questionSource, setQuestionSource] = useState<'acervo' | 'ia'>('acervo')
   // 100% fica à esquerda (alternativas) e 0% à direita (dissertativas),
   // acompanhando a metáfora visual escolhida para este controle.
   const [objectivePercentage, setObjectivePercentage] = useState(70)
@@ -130,7 +153,13 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
   const [bankQuestions, setBankQuestions] = useState<BankQuestion[]>([])
   const [bankSelected, setBankSelected] = useState<Set<number>>(new Set())
   const [bankLoading, setBankLoading] = useState(false)
+  const [bankCountPending, setBankCountPending] = useState(false)
+  const [bankYear, setBankYear] = useState('')
+  const [bankQuestionIndex, setBankQuestionIndex] = useState('')
+  const [bankQuery, setBankQuery] = useState('')
+  const [bankSearched, setBankSearched] = useState(false)
   const [bankError, setBankError] = useState<string | null>(null)
+  const [bankPlanningNote, setBankPlanningNote] = useState<string | null>(null)
   const [bankSkillOptions, setBankSkillOptions] = useState<SkillOption[]>([])
   const [bloomFilter, setBloomFilter] = useState('')
   const [skillFilter, setSkillFilter] = useState('')
@@ -140,17 +169,23 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
   const [contentPlan, setContentPlan] = useState<CurriculumPlanItem[]>([])
   const [chapterCounts, setChapterCounts] = useState<Record<number, number>>({})
   const draggingRowRef = useRef<number | null>(null)
+  const bankSelectionRequestRef = useRef(0)
+  const bankLoadingRequestRef = useRef(0)
+  const previewRequestRef = useRef(0)
 
   const singleSubject = selectedSubjects.length === 1 ? selectedSubjects[0] : null
   // Banco ENEM só em disciplina única (a API rejeita batch multi + banco).
   const enemArea = singleSubject && segment === 'ensino-medio' ? getEnemAreaForSubject(singleSubject) : null
   const totalCount = questionCount + bankSelected.size
+  useEffect(() => {
+    bankSelectionRequestRef.current++
+  }, [enemArea, bankYear, bankQuestionIndex, bankQuery, bloomFilter, skillFilter, axisFilter, totalCount, contentPlan, classLabel, academicYear, objectivePercentage])
   const totalValid = totalCount >= 10 && totalCount <= 30
   const objectiveTarget = Math.round(totalCount * objectivePercentage / 100)
   const aiObjectiveCount = Math.max(0, Math.min(questionCount, objectiveTarget - bankSelected.size))
   const effectiveObjectiveCount = bankSelected.size + aiObjectiveCount
   const contentPlanTotal = contentPlan.reduce((sum, item) => sum + item.questionCount, 0)
-  const contentPlanValid = !singleSubject || contentPlan.length === 0 || contentPlanTotal === questionCount
+  const contentPlanValid = !singleSubject || contentPlan.length === 0 || contentPlanTotal === totalCount
   // Sem permitir avançar com campo em branco: segmento, responsável (só a
   // coordenação escolhe, o professor já vem atribuído a si), ano e disciplinas.
   const canContinue = segment !== '' && gradeYear !== '' && selectedSubjects.length > 0 && (!coordinator || assignedTo !== '')
@@ -162,11 +197,39 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
     })
   }
 
+  function changeQuestionCount(value: number, plannedTotal = value + bankSelected.size) {
+    const next = Math.max(0, Math.min(30, value))
+    setQuestionCount(next)
+    const units = previews[0]?.data?.units ?? []
+    // Changing the total scales the current chapter proportions. Editing a
+    // chapter still changes only that chapter, and Equilibrar remains explicit.
+    const total = units.reduce((sum, unit) => sum + (chapterCounts[unit.rowIndex] ?? 0), 0)
+    const counts = total > 0 ? Object.fromEntries(units.map((unit) => [unit.rowIndex, Math.floor(plannedTotal * (chapterCounts[unit.rowIndex] ?? 0) / total)])) : evenQuestionCounts(units.map((unit) => unit.rowIndex), plannedTotal)
+    if (total > 0) {
+      const order = [...units].sort((a, b) => (plannedTotal * (chapterCounts[b.rowIndex] ?? 0) / total) % 1 - (plannedTotal * (chapterCounts[a.rowIndex] ?? 0) / total) % 1)
+      let remaining = plannedTotal - Object.values(counts).reduce((sum, count) => sum + count, 0)
+      for (const unit of order) { if (remaining-- <= 0) break; counts[unit.rowIndex] = (counts[unit.rowIndex] ?? 0) + 1 }
+    }
+    setChapterCounts(counts)
+    setContentPlan(contentPlanFromCounts(units, counts))
+  }
+
+  function applyBankSelection(ids: Iterable<number>, total = totalCount) {
+    const composition = composeWithEnem(total, ids)
+    setBankSelected(new Set(composition.bankIds))
+    changeQuestionCount(composition.questionCount, total)
+  }
+
+  function changeTotalCount(value: number) {
+    bankSelectionRequestRef.current++
+    applyBankSelection(bankSelected, Math.max(10, Math.min(30, value)))
+  }
+
   function changeChapterCount(rowIndex: number, value: number) {
     const units = previews[0]?.data?.units ?? []
     if (!units.length) return
     // Escolha livre: altera só o capítulo ajustado, sem rebalancear os outros.
-    const next = { ...chapterCounts, [rowIndex]: Math.max(0, Math.min(questionCount, Math.round(value))) }
+    const next = { ...chapterCounts, [rowIndex]: Math.max(0, Math.min(totalCount, Math.round(value))) }
     setChapterCounts(next)
     setContentPlan(contentPlanFromCounts(units, next))
   }
@@ -175,12 +238,17 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
   function balanceChapterCounts() {
     const units = previews[0]?.data?.units ?? []
     if (!units.length) return
-    const counts = evenQuestionCounts(units.map((unit) => unit.rowIndex), questionCount)
+    const counts = evenQuestionCounts(units.map((unit) => unit.rowIndex), totalCount)
     setChapterCounts(counts)
     setContentPlan(contentPlanFromCounts(units, counts))
   }
 
   function resetSelectionDependentState() {
+    previewRequestRef.current++
+    setLoading(false)
+    setChoosingMode(false)
+    bankSelectionRequestRef.current++
+    setQuestionCount(totalCount)
     setPreviews([])
     setError(null)
     setBankQuestions([])
@@ -218,6 +286,10 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
     setSkillFilter('')
     setAxisFilter('')
     setBankQuestions([])
+    setBankYear('')
+    setBankQuestionIndex('')
+    setBankQuery('')
+    setBankSearched(false)
     if (!enemArea) {
       setBankSkillOptions([])
       return
@@ -229,31 +301,47 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enemArea])
 
-  // Extraída de handleBankSearch pra poder ser reaproveitada pelo campo
-  // numérico "Questões do banco ENEM" — que precisa buscar antes de
-  // selecionar automaticamente se a busca ainda não rodou.
-  async function fetchBankQuestions(): Promise<BankQuestion[]> {
-    if (!enemArea) return []
+  async function requestBankRecommendations(count: number, preferredIds: number[] = []) {
+    const reference = previews[0]?.data?.planReference
+    if (!reference || !singleSubject || gradeYear === '' || bimester === '' || !contentPlanValid) {
+      throw new Error('Carregue o planejamento aprovado e confira a distribuição por capítulos antes de buscar questões ENEM.')
+    }
+    const response = await fetch('/api/enem-bank/recommend', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        curriculumPlanId: reference.planId, curriculumPlanVersionId: reference.versionId,
+        subject: singleSubject, gradeYear, academicYear, bimester, classLabel: classLabel.trim() || undefined,
+        count, total: totalCount, objectivePercentage, contentPlan, preferredIds,
+        filters: {
+          year: bankYear ? Number(bankYear) : undefined,
+          questionIndex: bankQuestionIndex ? Number(bankQuestionIndex) : undefined,
+          q: bankQuery.trim() || undefined, bloomLevel: bloomFilter || undefined,
+          skillCode: skillFilter || undefined, cognitiveAxis: axisFilter || undefined,
+        },
+      }),
+    })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.error ?? 'Não foi possível conferir o banco ENEM.')
+    return result
+  }
+
+  async function fetchBankQuestions(): Promise<void> {
+    if (!enemArea) return
+    const request = ++bankSelectionRequestRef.current
+    bankLoadingRequestRef.current = request
     setBankLoading(true)
     setBankError(null)
+    setBankPlanningNote(null)
     try {
-      const params = new URLSearchParams({ area: enemArea, limit: '40' })
-      if (bloomFilter) params.set('bloomLevel', bloomFilter)
-      if (skillFilter) params.set('skillCode', skillFilter)
-      if (axisFilter) params.set('cognitiveAxis', axisFilter)
-      const res = await fetch(`/api/enem-bank/search?${params.toString()}`)
-      const data = await res.json()
-      if (!res.ok) {
-        setBankError(data.error ?? 'Erro ao buscar banco ENEM.')
-        return []
-      }
-      setBankQuestions(data.questions)
-      return data.questions
-    } catch {
-      setBankError('Falha de rede ao buscar banco ENEM.')
-      return []
+      const result = await requestBankRecommendations(Math.max(1, effectiveObjectiveCount))
+      if (request !== bankSelectionRequestRef.current) return
+      setBankQuestions(result.questions ?? [])
+      setBankSearched(true)
+      setBankPlanningNote((result.warnings ?? []).join(' ') || 'Questões conferidas com o conteúdo e as habilidades do planejamento.')
+    } catch (failure) {
+      if (request === bankSelectionRequestRef.current) setBankError(failure instanceof Error ? failure.message : 'Falha ao consultar o banco ENEM.')
     } finally {
-      setBankLoading(false)
+      if (request === bankLoadingRequestRef.current) setBankLoading(false)
     }
   }
 
@@ -262,40 +350,55 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
   }
 
   function toggleBankQuestion(id: number) {
-    setBankSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+    bankSelectionRequestRef.current++
+    const next = new Set(bankSelected)
+    if (next.has(id)) next.delete(id)
+    else if (next.size < totalCount) next.add(id)
+    else { setBankError('O total da prova já foi preenchido. Desmarque uma questão antes de escolher outra.'); return }
+    setBankError(null)
+    applyBankSelection(next)
   }
 
-  // Campo numérico "Questões do banco ENEM" — em vez de marcar questão por
-  // questão, o usuário digita quantas quer e o sistema seleciona
-  // automaticamente as N primeiras que batem com os filtros atuais
-  // (buscando primeiro, se ainda não tiver buscado). Preserva o que já
-  // estava marcado manualmente sempre que possível, só completa/corta a
-  // diferença — assim ajustar o número não descarta escolhas manuais à toa.
+  // A quantidade e a busca manual compartilham a mesma conferência do planejamento.
   async function handleBankCountChange(rawCount: number) {
-    const desired = Math.max(0, rawCount)
-    let questions = bankQuestions
-    if (questions.length === 0 && desired > 0) {
-      questions = await fetchBankQuestions()
+    if (!Number.isFinite(rawCount)) return
+    const desired = Math.min(totalCount, Math.max(0, Math.floor(rawCount)))
+    const request = ++bankSelectionRequestRef.current
+    setBankError(null)
+    if (desired <= bankSelected.size) {
+      applyBankSelection([...bankSelected].slice(0, desired))
+      return
     }
-    const ids = questions.map((q) => q.id)
-    const clamped = Math.min(desired, ids.length)
-    setBankSelected((prev) => {
-      const keep = ids.filter((id) => prev.has(id))
-      if (clamped <= keep.length) return new Set(keep.slice(0, clamped))
-      const additional = ids.filter((id) => !prev.has(id)).slice(0, clamped - keep.length)
-      return new Set([...keep, ...additional])
-    })
+    const preview = previews[0]
+    const reference = preview?.data?.planReference
+    if (!reference || !singleSubject || gradeYear === '' || bimester === '' || !contentPlanValid) {
+      setBankError('Carregue o planejamento aprovado e confira a distribuição por capítulos antes de buscar questões ENEM.')
+      return
+    }
+    bankLoadingRequestRef.current = request
+    setBankLoading(true)
+    setBankPlanningNote(null)
+    try {
+      const result = await requestBankRecommendations(desired, [...bankSelected])
+      if (request !== bankSelectionRequestRef.current) return
+      setBankPlanningNote((result.warnings ?? []).join(' ') || 'Questões conferidas com o conteúdo, as habilidades e o contexto da turma.')
+      if (!result.complete) {
+        setBankError(`Encontradas ${result.assignments.length} de ${desired} questões compatíveis. A seleção anterior foi mantida. Revise a quantidade ou escolha os itens manualmente.`)
+        return
+      }
+      setBankQuestions(result.questions ?? [])
+      setBankSearched(true)
+      applyBankSelection(result.assignments.map((assignment: { questionId: number }) => assignment.questionId))
+    } catch (failure) {
+      if (request === bankSelectionRequestRef.current) setBankError(failure instanceof Error ? failure.message : 'Falha ao consultar o banco ENEM.')
+    } finally { if (request === bankLoadingRequestRef.current) setBankLoading(false) }
+
   }
 
-  // Preview de todas as disciplinas marcadas em paralelo — cada uma pode
-  // falhar sozinha (aba não encontrada, planilha não configurada) sem
-  // derrubar as outras; o erro fica visível na Conferência pra desmarcar.
+  // Usa o planejamento aprovado na aba Planejamentos; não consulta a planilha
+  // durante a geração. Cada disciplina é resolvida e pré-visualizada em paralelo.
   async function handlePreview() {
+    const request = ++previewRequestRef.current
     setLoading(true)
     setError(null)
     setPreviews([])
@@ -304,35 +407,66 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
       const settled = await Promise.all(
         selectedSubjects.map(async (subject): Promise<SubjectPreview> => {
           try {
+            const query = new URLSearchParams({ academicYear: String(academicYear), segment, gradeYear: String(gradeYear), subject })
+            if (bimester !== '') query.set('bimester', String(bimester))
+            const plansRes = await fetch(`/api/curriculum/plans?${query}`)
+            const plansData = await plansRes.json()
+            if (!plansRes.ok) return { subject, error: plansData.error ?? 'Não foi possível consultar Planejamentos.' }
+            const matching = (plansData.plans ?? []).filter((plan: { official?: { status?: string } }) => plan.official?.status === 'aprovado')
+            if (matching.length !== 1) {
+              return { subject, error: matching.length
+                ? 'Há mais de um planejamento aprovado para este recorte. Revise a aba Planejamentos.'
+                : 'Não há planejamento aprovado para esta disciplina, série e bimestre. Aprove-o na aba Planejamentos antes de gerar.' }
+            }
+            const curriculumPlanId = matching[0].id as number
             const res = await fetch('/api/curriculum/preview', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 segment,
                 gradeYear,
+                academicYear,
                 subject,
                 ...(bimester !== '' ? { bimester } : {}),
+                curriculumPlanId,
               }),
             })
             const data = await res.json()
             if (!res.ok) {
-              return { subject, error: data.error ?? 'Erro ao consultar currículo.', availableTabs: data.availableTabs }
+              return { subject, error: data.error ?? 'Erro ao consultar o planejamento.' }
             }
-            return { subject, data }
+            return { subject, data, curriculumPlanId }
           } catch {
-            return { subject, error: 'Falha de rede ao consultar currículo.' }
+            return { subject, error: 'Falha de rede ao consultar Planejamentos.' }
           }
         }),
       )
+      if (request !== previewRequestRef.current) return
       setPreviews(settled)
       const available = settled.length === 1 ? settled[0].data?.units ?? [] : []
       const counts = evenQuestionCounts(available.map((unit) => unit.rowIndex), questionCount)
       setChapterCounts(counts)
       setContentPlan(contentPlanFromCounts(available, counts, []))
-      setStep(2)
+      setManualSubject(settled.find((preview) => !preview.data?.units.some((unit) => unit.habilidades.status === 'mapeado' && unit.habilidades.skills.length > 0))?.subject ?? selectedSubjects[0] ?? '')
+      setChoosingMode(true)
     } finally {
-      setLoading(false)
+      if (request === previewRequestRef.current) setLoading(false)
     }
+  }
+
+  async function startManual() {
+    setCreatingManual(true)
+    setError(null)
+    try {
+      const response = await fetch('/api/exams/manual', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        segment, gradeYear, academicYear, subject: manualSubject, classLabel: classLabel.trim() || undefined,
+        ...(bimester !== '' ? { bimester } : {}), ...(assignedTo !== '' ? { assignedTo } : {}),
+      }) })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error ?? 'Não foi possível iniciar a prova.')
+      router.push(`/gerar/manual/${result.examId}`)
+    } catch (failure) { setError(failure instanceof Error ? failure.message : 'Falha ao iniciar a prova.') }
+    finally { setCreatingManual(false) }
   }
 
   // Disciplina bloqueada pra enfileirar: precisa de conteúdo curricular
@@ -346,7 +480,7 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
   }
 
   const blockedSubjects = previews.filter((p) => subjectBlockReason(p) !== null)
-  const canEnqueue = totalValid && contentPlanValid && previews.length > 0 && blockedSubjects.length === 0
+  const canEnqueue = !bankLoading && !bankCountPending && totalValid && contentPlanValid && previews.length > 0 && blockedSubjects.length === 0
 
   function formatEnqueueValidationError(data: { error?: string; issues?: Array<{ path?: Array<string | number>; message?: string }> }) {
     const issue = data.issues?.[0]
@@ -373,11 +507,14 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
           ...(classLabel.trim() ? { classLabel: classLabel.trim() } : {}),
           config: {
             questionCount,
+            questionSource,
             objectivePercentage,
             enemBankQuestionIds: Array.from(bankSelected),
             assessmentKind,
             ...(bimester !== '' ? { bimester } : {}),
-            ...(singleSubject && contentPlan.length ? { contentPlan } : {}),
+            ...(singleSubject && contentPlan.length ? { contentPlan, contentPlanIncludesEnem: true } : {}),
+            curriculumPlanVersionIds: Object.fromEntries(previews.filter((preview) => preview.data?.planReference).map((preview) => [preview.subject, preview.data!.planReference!.versionId])),
+            ...(previews.length ? { curriculumPlanIds: Object.fromEntries(previews.filter((preview) => preview.curriculumPlanId).map((preview) => [preview.subject, preview.curriculumPlanId!])) } : {}),
             ...(coordinator && assignedTo !== '' ? { assignedTo } : {}),
           },
         }),
@@ -433,7 +570,7 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
     <div className="space-y-6">
       <GenerationStepper currentStep={step} />
 
-      {step === 1 && <>
+      {step === 1 && !choosingMode && <>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div>
           <label className="text-sm font-medium" htmlFor="gerar-segmento">Segmento</label>
@@ -563,7 +700,7 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
           disabled={loading || !canContinue}
           className="min-h-10 rounded bg-action-primary px-4 py-2 text-sm font-medium text-action-primary-foreground disabled:opacity-60"
         >
-          {loading ? 'Consultando currículo…' : 'Continuar para composição'}
+          {loading ? 'Consultando currículo…' : 'Escolher como criar a prova'}
         </button>
         {!canContinue && (
           <p className="text-xs text-content-muted">Preencha segmento, professor responsável, ano e ao menos uma disciplina para continuar.</p>
@@ -571,13 +708,37 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
       </div>
       </>}
 
+      {choosingMode && <section className="space-y-4" aria-label="Modo de criação da prova">
+        <div><h2 className="text-lg font-semibold">Como deseja criar a prova?</h2><p className="mt-1 text-sm text-content-secondary">{selectedSubjects.join(', ')} · {gradeYear}º ano</p><p className="mt-2 text-sm text-content-secondary">{recommendCreationMode(previews) === 'automatic' ? 'O planejamento tem habilidades BNCC ou ENEM mapeadas. Recomendamos a geração automática.' : 'Recomendamos a criação manual para selecionar as questões diretamente no banco.'}</p></div>
+        <div className="grid gap-4 md:grid-cols-2">{(recommendCreationMode(previews) === 'automatic' ? ['automatic', 'manual'] : ['manual', 'automatic']).map((mode) => {
+          const recommended = mode === recommendCreationMode(previews)
+          const automatic = mode === 'automatic'
+          const ModeIcon = automatic ? Sparkles : ClipboardPenLine
+          return <div key={mode} className={`flex flex-col gap-4 rounded-xl border p-5 ${automatic ? 'border-status-success-border bg-status-success-surface' : 'border-status-info-border bg-status-info-surface'} ${recommended ? automatic ? 'ring-2 ring-status-success/40' : 'ring-2 ring-status-info/40' : ''}`}>
+            <div className="flex items-start gap-3">
+              <span className={`flex size-12 shrink-0 items-center justify-center rounded-xl ${automatic ? 'bg-status-success/15 text-status-success-content' : 'bg-status-info/15 text-status-info-content'}`}><ModeIcon aria-hidden="true" className="size-6" /></span>
+              <div className="space-y-2">
+                <h3 className={`font-semibold ${automatic ? 'text-status-success-content' : 'text-status-info-content'}`}>{automatic ? 'Geração Automática' : 'Criação Manual'}</h3>
+                {recommended && <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${automatic ? 'bg-status-success/15 text-status-success-content' : 'bg-status-info/15 text-status-info-content'}`}><BadgeCheck aria-hidden="true" className="size-4" />Recomendado para esta prova</span>}
+              </div>
+            </div>
+            <p className="text-sm text-content-secondary">{mode === 'automatic' ? 'Monte a prova a partir do planejamento e das habilidades BNCC, usando o acervo e a IA conforme a composição escolhida.' : 'Escolha questões no banco externo, organize a ordem e acompanhe a classificação de Bloom e INEP a cada importação. Disponível mesmo sem BNCC mapeada.'}</p>
+            {mode === 'manual' && selectedSubjects.length > 1 && <label className="block text-sm">Disciplina desta prova<select value={manualSubject} onChange={(event) => setManualSubject(event.target.value)} className="mt-1 w-full rounded border border-border bg-surface p-2">{selectedSubjects.map((subject) => <option key={subject}>{subject}</option>)}</select><span className="mt-1 block text-xs text-content-muted">Crie uma prova manual por disciplina.</span></label>}
+            <button disabled={creatingManual} onClick={() => { if (mode === 'manual') void startManual(); else { setChoosingMode(false); setStep(2) } }} className={`mt-auto inline-flex min-h-11 items-center justify-center gap-2 self-start rounded-lg border px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-50 ${automatic ? 'border-status-success-border bg-surface/70 text-status-success-content hover:bg-status-success/15' : 'border-status-info-border bg-surface/70 text-status-info-content hover:bg-status-info/15'}`}><ModeIcon aria-hidden="true" className="size-4 shrink-0" />{creatingManual && mode === 'manual' ? 'Criando rascunho…' : mode === 'manual' ? 'Iniciar criação manual' : 'Continuar com geração automática'}</button>
+          </div>
+        })}</div>
+        <div className="space-y-2">{previews.map((preview) => <p key={preview.subject} className="text-xs text-content-secondary">{preview.subject}: {preview.error ? `não foi possível confirmar o mapeamento — ${preview.error}` : preview.data?.units.some((unit) => unit.habilidades.skills.length > 0) ? 'habilidades BNCC mapeadas no planejamento.' : 'sem habilidades BNCC mapeadas no planejamento.'}</p>)}</div>
+        <button disabled={creatingManual} onClick={() => setChoosingMode(false)} className="min-h-10 rounded border border-border px-4 text-sm">Voltar aos dados da prova</button>
+      </section>}
+
+      {step === 2 && !enemArea && <p className="rounded border border-border p-4 text-sm text-content-secondary">Para importar questões das provas do ENEM, selecione Ensino Médio e uma única disciplina.</p>}
       {step === 2 && enemArea && (
         <div className="rounded border border-neutral-200 bg-white p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-medium text-neutral-700">Banco de questões reais do ENEM</p>
               <p className="text-xs text-neutral-400">
-                Área correspondente: {enemArea} — escolha manualmente quais entram na prova, ao lado das geradas por IA. Não precisa de &quot;Ver conteúdo&quot; pra buscar aqui.
+                Questões selecionadas pelo conteúdo, pelas habilidades e pelo idioma do planejamento. Defina a quantidade ou busque para escolher os itens.
               </p>
             </div>
             <button
@@ -585,11 +746,20 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
               disabled={bankLoading}
               className="min-h-10 rounded border border-neutral-300 px-3 py-1.5 text-xs font-medium disabled:opacity-60"
             >
-              {bankLoading ? 'Buscando…' : bankQuestions.length ? 'Buscar de novo' : 'Buscar questões do banco'}
+              {bankLoading ? 'Buscando…' : bankQuestions.length ? 'Buscar de novo pelo planejamento' : 'Buscar pelo planejamento'}
             </button>
           </div>
 
           <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <label className="text-xs font-medium text-neutral-500">Ano da prova ENEM
+              <input type="number" min={1998} max={2100} placeholder="Todos os anos" value={bankYear} onChange={(e) => setBankYear(e.target.value)} className="mt-0.5 w-full rounded border border-neutral-300 px-2 py-1 text-xs" />
+            </label>
+            <label className="text-xs font-medium text-neutral-500">Número da questão
+              <input type="number" min={1} max={180} placeholder="Todas as questões" value={bankQuestionIndex} onChange={(e) => setBankQuestionIndex(e.target.value)} className="mt-0.5 w-full rounded border border-neutral-300 px-2 py-1 text-xs" />
+            </label>
+            <label className="text-xs font-medium text-neutral-500">Buscar no enunciado
+              <input type="search" placeholder="Ex.: glicose" value={bankQuery} onChange={(e) => setBankQuery(e.target.value)} className="mt-0.5 w-full rounded border border-neutral-300 px-2 py-1 text-xs" />
+            </label>
             <div>
               <label className="text-xs font-medium text-neutral-500">Bloom</label>
               <select
@@ -631,7 +801,8 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
             </div>
           </div>
 
-          {bankError && <p className="mt-2 text-xs text-red-600">{bankError}</p>}
+          {bankPlanningNote && <p role="status" className="mt-2 text-sm text-content-secondary">{bankPlanningNote}</p>}
+            {bankError && <p className="mt-2 text-xs text-red-600">{bankError}</p>}
 
           {bankQuestions.length > 0 && (
             <div className="mt-3 max-h-80 space-y-2 overflow-y-auto pr-1">
@@ -643,12 +814,13 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
                   <input
                     type="checkbox"
                     checked={bankSelected.has(q.id)}
+                    disabled={bankLoading || (!bankSelected.has(q.id) && bankSelected.size >= totalCount)}
                     onChange={() => toggleBankQuestion(q.id)}
                     className="mt-0.5"
                   />
                   <div className="flex-1">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600">ENEM {q.year}</span>
+                      <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600">ENEM {q.year} · Questão {q.questionIndex}</span>
                       {q.skillCode ? (
                         <span
                           className={`rounded px-1.5 py-0.5 font-medium ${q.classificationSource === 'oficial' ? 'bg-harmonia-green/10 text-harmonia-green' : 'bg-amber-50 text-amber-700'}`}
@@ -662,18 +834,22 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
                       {q.bloomLevel && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-violet-700">{q.bloomLevel}</span>}
                       {q.cognitiveAxis && <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-700">{q.cognitiveAxis}</span>}
                     </div>
-                    <p className="mt-1 text-neutral-600">{q.preview}…</p>
+                    <p className="mt-1 text-neutral-600"><MathText text={q.preview} />…</p>
                   </div>
                 </label>
               ))}
             </div>
           )}
 
+          {bankSearched && !bankLoading && bankQuestions.length === 0 && <p className="mt-2 text-xs text-content-secondary">Nenhuma questão ENEM compatível com o planejamento e os filtros informados.</p>}
+
           {bankSelected.size > 0 && (
             <p className="mt-2 text-xs font-medium text-harmonia-green">{bankSelected.size} questão(ões) do banco selecionada(s)</p>
           )}
         </div>
       )}
+
+      {step === 2 && <QuestionCompositionControls source={questionSource} onSourceChange={setQuestionSource} count={totalCount} onCountChange={changeTotalCount} bankCount={bankSelected.size} bankEnabled={Boolean(enemArea)} bankLoading={bankLoading} onBankCountChange={handleBankCountChange} onBankDraftChange={setBankCountPending} academicYear={academicYear} onYearChange={setAcademicYear} />}
 
       {step === 2 && singleSubject && previews[0]?.data && (
         <fieldset className="rounded border border-border bg-surface p-4">
@@ -704,7 +880,7 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
               <span>100% dissertativas →</span>
             </div>
             <p className="mt-3 text-xs text-content-secondary">
-              Nesta prova: <span className="font-semibold text-harmonia-green">{effectiveObjectiveCount} alternativa(s)</span> e <span className="font-semibold text-content-primary">{totalCount - effectiveObjectiveCount} dissertativa(s)</span> no total. A IA gerará {aiObjectiveCount} alternativa(s) e {questionCount - aiObjectiveCount} dissertativa(s){bankSelected.size ? `, considerando as ${bankSelected.size} objetiva(s) do banco ENEM` : ''}.{effectiveObjectiveCount !== objectiveTarget && ' A proporção foi limitada porque as questões do banco são sempre objetivas.'}
+              Nesta prova: <span className="font-semibold text-harmonia-green">{effectiveObjectiveCount} alternativa(s)</span> e <span className="font-semibold text-content-primary">{totalCount - effectiveObjectiveCount} dissertativa(s)</span> no total. {questionSource === 'acervo' ? 'Buscaremos no acervo' : 'A IA gerará'} {aiObjectiveCount} alternativa(s) e {questionCount - aiObjectiveCount} dissertativa(s){bankSelected.size ? `, considerando as ${bankSelected.size} objetiva(s) do banco ENEM` : ''}.{effectiveObjectiveCount !== objectiveTarget && ' A proporção foi limitada porque as questões do banco são sempre objetivas.'}
             </p>
           </section>
           <section aria-labelledby="grafico-planejamento-title" className="rounded border border-border bg-surface-subtle/50 p-3">
@@ -742,17 +918,17 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
                       tabIndex={0}
                       aria-label={`Número de questões de ${label}`}
                       aria-valuemin={0}
-                      aria-valuemax={questionCount}
+                      aria-valuemax={totalCount}
                       aria-valuenow={count}
                       aria-valuetext={`${count} questão(ões)`}
                       onPointerDown={(event) => {
                         draggingRowRef.current = unit.rowIndex
                         event.currentTarget.setPointerCapture(event.pointerId)
-                        changeChapterCount(unit.rowIndex, questionsFromPointer(event.currentTarget, event.clientX, questionCount))
+                        changeChapterCount(unit.rowIndex, questionsFromPointer(event.currentTarget, event.clientX, totalCount))
                       }}
                       onPointerMove={(event) => {
                         if (draggingRowRef.current !== unit.rowIndex) return
-                        changeChapterCount(unit.rowIndex, questionsFromPointer(event.currentTarget, event.clientX, questionCount))
+                        changeChapterCount(unit.rowIndex, questionsFromPointer(event.currentTarget, event.clientX, totalCount))
                       }}
                       onPointerUp={(event) => {
                         if (draggingRowRef.current !== unit.rowIndex) return
@@ -764,12 +940,12 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
                         if (event.key === 'ArrowRight' || event.key === 'ArrowUp') { event.preventDefault(); changeChapterCount(unit.rowIndex, count + 1) }
                         else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') { event.preventDefault(); changeChapterCount(unit.rowIndex, count - 1) }
                         else if (event.key === 'Home') { event.preventDefault(); changeChapterCount(unit.rowIndex, 0) }
-                        else if (event.key === 'End') { event.preventDefault(); changeChapterCount(unit.rowIndex, questionCount) }
+                        else if (event.key === 'End') { event.preventDefault(); changeChapterCount(unit.rowIndex, totalCount) }
                       }}
                       style={{ touchAction: 'none' }}
                       className="relative flex h-7 cursor-ew-resize items-center rounded bg-surface ring-1 ring-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
                     >
-                      <div className="relative h-full" style={{ width: `${questionCount > 0 ? (count / questionCount) * 100 : 0}%`, minWidth: count > 0 ? '1.75rem' : 0 }}>
+                      <div className="relative h-full" style={{ width: `${totalCount > 0 ? (count / totalCount) * 100 : 0}%`, minWidth: count > 0 ? '1.75rem' : 0 }}>
                         <div className="flex h-full items-center justify-end rounded-l pr-2.5" style={{ backgroundColor: 'rgb(var(--color-action-primary))' }}>
                           {count > 0 && <span className="text-[11px] font-semibold leading-none text-action-primary-foreground">{count}</span>}
                         </div>
@@ -783,21 +959,18 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
             </ul>
           </section>
           <p className={`mt-3 text-xs ${contentPlanValid ? 'text-harmonia-green' : 'font-medium text-status-danger-content'}`}>
-            Distribuição: {contentPlanTotal} de {questionCount} questões de IA calculadas.{!contentPlanValid && ' Ajuste a importância dos capítulos antes de continuar.'}
+            Distribuição: {contentPlanTotal} de {totalCount} questões distribuídas, incluindo o ENEM.{!contentPlanValid && ' Ajuste a importância dos capítulos antes de continuar.'}
           </p>
         </fieldset>
       )}
 
       {step === 2 && (
-        <div className="flex flex-col gap-4 rounded border border-border bg-surface p-4 sm:flex-row sm:items-end">
-          {enemArea && <div><label className="text-sm font-medium">Questões do banco ENEM</label><input type="number" min={0} max={30} value={bankSelected.size} onChange={(e) => handleBankCountChange(Number(e.target.value))} disabled={bankLoading} className="mt-1 w-24 rounded border border-border bg-surface px-2 py-1.5 text-sm disabled:opacity-60" /><p className="mt-0.5 text-[11px] text-content-muted">{bankLoading ? 'buscando…' : bankQuestions.length ? `de ${bankQuestions.length} encontradas` : 'usa os filtros acima'}</p></div>}
-          <div><label className="text-sm font-medium">Questões geradas por IA</label><input type="number" min={0} max={30} value={questionCount} onChange={(e) => { const next = Math.max(0, Math.min(30, Number(e.target.value))); setQuestionCount(next); const units = previews[0]?.data?.units ?? []; const counts: Record<number, number> = {}; for (const unit of units) counts[unit.rowIndex] = Math.min(chapterCounts[unit.rowIndex] ?? 0, next); setChapterCounts(counts); setContentPlan(contentPlanFromCounts(units, counts)) }} className="mt-1 w-24 rounded border border-border bg-surface px-2 py-1.5 text-sm" /></div>
-          <div><label className="text-sm font-medium">Ano letivo</label><input type="number" min={2020} max={2100} value={academicYear} onChange={(e) => setAcademicYear(Number(e.target.value))} className="mt-1 w-24 rounded border border-border bg-surface px-2 py-1.5 text-sm" /></div>
-          <p className="text-xs text-content-secondary">
-            Total por prova: <span className={totalValid ? 'font-semibold text-content-primary' : 'font-semibold text-status-danger'}>{totalCount}</span> ({questionCount} IA + {bankSelected.size} banco), entre 10 e 30.
-            {selectedSubjects.length > 1 && ` A mesma composição vale pras ${selectedSubjects.length} disciplinas.`}
-          </p>
-          <div className="flex gap-2"><button onClick={() => setStep(1)} className="min-h-10 rounded border border-border px-4 text-sm font-medium">Voltar</button><button onClick={() => setStep(3)} disabled={!totalValid || !contentPlanValid} className="min-h-10 rounded bg-harmonia-green px-4 text-sm font-medium text-white disabled:opacity-60">Conferir</button></div>
+        <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-content-primary">{totalCount} questões por prova <span className="font-normal text-content-secondary">· {questionSource === 'acervo' ? 'Acervo com complemento por IA' : 'Geração com IA'}</span></p>
+            <p className={`mt-1 text-xs ${totalValid ? 'text-content-muted' : 'text-status-danger'}`}>{bankSelected.size > 0 ? `${questionCount} da seleção + ${bankSelected.size} do banco ENEM. ` : ''}Escolha entre 10 e 30 questões.{selectedSubjects.length > 1 && ` A composição vale para as ${selectedSubjects.length} disciplinas.`}</p>
+          </div>
+          <div className="flex gap-3"><button onClick={() => setStep(1)} className="min-h-11 rounded-lg border border-border px-5 text-sm font-medium">Voltar</button><button onClick={() => setStep(3)} disabled={bankLoading || bankCountPending || !totalValid || !contentPlanValid} className="min-h-11 rounded-lg bg-harmonia-green px-6 text-sm font-semibold text-white disabled:opacity-40">Conferir prova →</button></div>
         </div>
       )}
 
@@ -876,8 +1049,8 @@ export default function CurriculumPreview({ coordinator, teachers, currentUser }
           <div className="flex flex-col gap-4 rounded border border-border bg-surface p-4 sm:flex-row sm:items-end">
             <p className="text-sm text-content-secondary">
               {selectedSubjects.length === 1
-                ? `Conferência: ${questionCount} questão(ões) por IA e ${bankSelected.size} do banco ENEM.`
-                : `Conferência: ${selectedSubjects.length} provas (${selectedSubjects.join(', ')}), cada uma com ${questionCount} questão(ões) por IA.`}{' '}
+                ? `Conferência: ${questionCount} questão(ões) ${questionSource === 'acervo' ? 'do acervo, com complemento por IA se necessário' : 'geradas por IA'} e ${bankSelected.size} do banco ENEM.`
+                : `Conferência: ${selectedSubjects.length} provas (${selectedSubjects.join(', ')}), cada uma com ${questionCount} questão(ões) ${questionSource === 'acervo' ? 'do acervo, com complemento por IA se necessário' : 'geradas por IA'}.`}{' '}
               A geração roda em segundo plano — acompanhe na aba Histórico e Fila e revise cada prova antes de aprovar.
             </p>
             <button onClick={() => setStep(2)} disabled={enqueueing} className="min-h-10 rounded border border-border px-4 py-2 text-sm font-medium">Voltar</button>

@@ -29,7 +29,7 @@ const pedagogicalClassificationSchema = z.object({
 // `@/lib/generation/domains`). `other` permanece aceito apenas para leitura
 // de questões antigas já persistidas — o Gate 0 do pipeline fragmentado
 // proíbe escolhê-lo em gerações novas.
-export const solutionBlueprintSchema = z.object({
+const solutionBlueprintObjectSchema = z.object({
   domain: z.enum(['linear_system', 'rectangular_prism_volume', 'average_speed', 'percentage', 'ratio_proportion', 'simple_interest', 'compound_interest', 'arithmetic_progression', 'geometric_progression', 'linear_recurrence', 'linear_recurrence_order2', 'linear_function', 'quadratic_function', 'point_distance', 'circle_relative_position', 'sphere_point_position', 'kinematics_uniform', 'kinematics_accelerated', 'newton_second_law', 'weight_force', 'kinetic_energy', 'ohms_law', 'electric_power', 'density', 'mole_calculation', 'molar_concentration', 'solution_dilution', 'other']),
   // A ficha é interna. O modelo ocasionalmente devolve um rótulo mais
   // descritivo aqui; isso não pode invalidar toda uma prova por limite de
@@ -41,9 +41,33 @@ export const solutionBlueprintSchema = z.object({
   calculationSteps: z.array(z.string().min(1)).min(1),
   derivedAnswer: z.string().min(1),
   visualSpec: z.enum(['none', 'blank_coordinate_plane', 'coordinate_plane', 'chart']).default('none'),
-}).nullable().optional()
+}).nullable()
+
+/**
+ * Alguns provedores retornam objetos JSON serializados como string. O
+ * blueprint é contrato interno e não deve transformar esse erro de
+ * apresentação em falha de toda a geração quando a string contém JSON válido.
+ * Texto livre continua inválido e seguirá para a tentativa de correção do
+ * contrato estruturado.
+ */
+export const solutionBlueprintSchema = z.preprocess((value) => {
+  if (typeof value !== 'string') return value
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return value
+  }
+}, solutionBlueprintObjectSchema).optional()
+
+const acervoContentPartSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('text'), text: z.string() }),
+  z.object({ type: z.literal('image'), mediaId: z.number().int().positive().safe(), alt: z.string(), width: z.number().positive().optional() }),
+])
 
 export const examQuestionSchema = z.object({
+  // Identificador estável do slot no blueprint de prova completa. Ausente em
+  // questões legadas e em itens importados do banco.
+  slotId: z.string().min(1).optional(),
   number: z.number().int(),
   // Vínculo opcional com a linha do planejamento escolar. Provas antigas
   // continuam válidas; novas provas com matriz preenchem este campo.
@@ -51,7 +75,15 @@ export const examQuestionSchema = z.object({
   // 'ia' = gerada pelo Gemini (padrão). 'enem_bank' = questão real de uma
   // prova passada do ENEM, escolhida manualmente pela coordenação na tela
   // de geração — nunca regenerada, nunca editada pela IA.
-  source: z.enum(['ia', 'enem_bank']).default('ia'),
+  source: z.enum(['ia', 'enem_bank', 'acervo']).default('ia'),
+  acervoRef: z.object({
+    questionId: z.number().int(), origin: z.string(), externalId: z.string().nullable(),
+    portalUrl: z.string().nullable(), importedAt: z.string(),
+    original: z.record(z.unknown()),
+  }).nullable().optional(),
+  acervoFallbackReason: z.string().optional(),
+  // Derived for presentation from the saved original, without executing HTML.
+  acervoInlineContent: z.object({ statement: z.array(acervoContentPartSchema).optional(), alternatives: z.record(z.array(acervoContentPartSchema)).optional() }).optional(),
   enemBankRef: z.object({ questionId: z.number().int(), year: z.number().int() }).nullable().optional(),
   type: z.enum(['objetiva', 'descritiva']),
   // Valor máximo em pontos. Pode ser ajustado pelo professor na revisão
@@ -59,9 +91,29 @@ export const examQuestionSchema = z.object({
   // histórico caso a prova seja editada depois.
   weight: z.number().positive().max(100).optional(),
   bloomLevel: z.enum(BLOOM_LEVELS),
+  bloomAssessment: z.object({ status: z.enum(['classified', 'unavailable']), source: z.enum(['provider', 'cache', 'fallback']), model: z.string(), confidence: z.number().min(0).max(1).nullable(), scores: z.record(z.number()).optional(), classifiedAt: z.string() }).optional(),
+  inepAssessment: z.object({
+    version: z.string(),
+    status: z.enum(['classified', 'no_match', 'unavailable', 'not_applicable']),
+    matrix: z.enum(['enem', 'novo_saeb', 'classica']).nullable(),
+    source: z.enum(['provider', 'cache', 'fallback']), model: z.string(),
+    confidence: z.number().min(0).max(1).nullable(), classifiedAt: z.string(),
+    area: z.object({ code: z.string(), description: z.string() }).nullable(),
+    competency: z.object({ code: z.string(), description: z.string() }).nullable(),
+    skill: z.object({ code: z.string(), description: z.string() }).nullable(),
+    approximate: z.boolean(), referenceGrade: z.number().int().nullable(),
+    errorCode: z.string().optional(),
+  }).optional(),
   statement: z.string(),
   supportText: z.string().nullable().optional(),
-  alternatives: z.array(z.object({ letter: z.string(), text: z.string() })).nullable().optional(),
+  alternatives: z.array(z.object({
+    letter: z.string(),
+    text: z.string(),
+    // Só questões do banco ENEM: alternativa que é figura (gráfico, estrutura
+    // química) chega com `text` nulo e a figura original em `image`, já
+    // importada pro Drive — nunca preenchido pela IA.
+    image: z.object({ driveFileId: z.string(), previewUrl: z.string(), sourceUrl: z.string().nullable().optional() }).nullable().optional(),
+  })).nullable().optional(),
   correctLetter: z.string().nullable().optional(),
   expectedAnswer: z.string().nullable().optional(),
   gradingCriteria: z.string().nullable().optional(),
@@ -72,9 +124,54 @@ export const examQuestionSchema = z.object({
   // Comentado" da atividade.
   commentedResolution: z.string().nullable().optional(),
   bnccCodes: z.array(z.string()),
+  bnccAssessment: z.object({
+    version: z.string(), status: z.enum(['classified', 'no_match', 'unavailable']), source: z.enum(['provider', 'cache', 'fallback']),
+    model: z.string(), thresholdPercent: z.number().min(0).max(100), assessedAt: z.string(),
+    scores: z.array(z.object({ code: z.string(), scorePercent: z.number().min(0).max(100) })), candidateCount: z.number().int(), errorCode: z.string().optional(),
+  }).optional(),
   bnccStatus: z.enum(['mapeado', 'nao_mapeado']),
   bnccSummary: z.string().nullable().optional(),
+  // Snapshot da fonte oficial e do planejamento usado na geração. Mantido no
+  // JSONB da prova para que a revisão continue explicável após o currículo mudar.
+  bnccDetails: z.array(z.object({
+    code: z.string(),
+    description: z.string(),
+    context: z.array(z.string()),
+    source: z.string(),
+    dataVersion: z.string(),
+    record: z.record(z.string(), z.unknown()).optional(),
+  })).optional(),
+  curriculumSnapshot: z.object({
+    unitTitle: z.string(),
+    content: z.string().nullable(),
+    enrichedContent: z.string().nullable(),
+    objectives: z.array(z.string()),
+  }).nullable().optional(),
+  difficultyAssessment: z.object({
+    source: z.enum(['provider', 'cache', 'fallback']),
+    model: z.string(),
+    confidence: z.number().min(0).max(1).nullable(),
+    classifiedAt: z.string(),
+  }).optional(),
+  generationContext: z.object({
+    educationContext: z.string(),
+    subject: z.string(),
+    bimester: z.number().int().nullable(),
+    alternativesCount: z.number().int().nonnegative(),
+    visualAid: z.enum(['auto', 'obrigatorio', 'sem_imagem']),
+    targetDifficulty: z.enum(['facil', 'media', 'dificil']).nullable(),
+  }).optional(),
   pedagogicalClassification: pedagogicalClassificationSchema,
+  // Habilidade ENEM definida pelo planejamento (C:H), escolhida por código na
+  // geração. Fica separada de inepAssessment/saeb, que o Jev reclassifica pelo
+  // que a questão de fato exige; a divergência aparece para o revisor.
+  plannedEnemSkill: z.object({ code: z.string(), description: z.string().nullable() }).nullable().optional(),
+  planningAlignment: z.object({
+    status: z.enum(['aligned', 'partial', 'misaligned', 'unavailable']),
+    evidence: z.string(),
+    model: z.string(),
+    checkedAt: z.string(),
+  }).optional(),
   saeb: z.object({
     applicable: z.boolean(),
     // .optional() além de .nullable(): o DeepSeek (sem responseSchema
@@ -87,6 +184,10 @@ export const examQuestionSchema = z.object({
   }).default({ applicable: false, source: null, value: null, approximate: false }),
   needsImage: z.boolean().optional().default(false),
   imageQuery: z.string().nullable().optional(),
+  // Contrato emitido pela geração de prova inteira. `needsImage` e
+  // `imageQuery` permanecem como aliases compatíveis com os fluxos existentes.
+  hasImage: z.boolean().optional(),
+  imageDescription: z.string().nullable().optional(),
   whatIfImage: z.string().nullable().optional(),
   // Plano visual produzido pelo estágio automático. Mantém o motivo, o
   // renderer e os parâmetros para que a imagem possa ser refeita sem nova IA.
@@ -107,7 +208,10 @@ export const examQuestionSchema = z.object({
       source: z.enum(['busca', 'gerada', 'grafico', 'diagrama', 'quimica', 'importado', 'enem']),
       driveFileId: z.string(),
       previewUrl: z.string(),
+      width: z.number().positive().optional(),
+      height: z.number().positive().optional(),
       approved: z.boolean(),
+      originalBankMedia: z.boolean().optional(),
       // Só preenchido pra source:'importado' — link original colado pelo
       // professor, mantido pra referência/crédito da fonte.
       sourceUrl: z.string().nullable().optional(),
@@ -123,11 +227,17 @@ export const examQuestionSchema = z.object({
     .optional(),
   imageHistory: z.array(z.object({
     source: z.enum(['busca', 'gerada', 'grafico', 'diagrama', 'quimica', 'importado', 'enem']),
+    originalBankMedia: z.boolean().optional(),
+    width: z.number().positive().optional(), height: z.number().positive().optional(),
     driveFileId: z.string(), previewUrl: z.string(), approved: z.boolean(), sourceUrl: z.string().nullable().optional(),
     provenance: z.object({ mode: z.enum(['deterministic', 'ai']), generator: z.string(), generatorVersion: z.string() }).optional(),
     replacedAt: z.string(),
     changedBy: z.string().email().optional(),
   })).optional(),
+  visualReview: z.object({
+    status: z.enum(['complete', 'pending']),
+    reason: z.string().optional(),
+  }).optional(),
   imageAuditLog: z.array(z.object({
     action: z.enum(['generated', 'replaced', 'approved', 'unapproved', 'removed', 'restored']),
     at: z.string(), actor: z.string().email(), driveFileId: z.string().nullable(),
@@ -148,9 +258,15 @@ export const examQuestionSchema = z.object({
 
 export const examGenerationResultSchema = z.object({
   metadata: z.object({
+    generationEngine: z.enum(['whole-exam-v1']).optional(),
+    creationMode: z.enum(['automatic', 'manual']).optional(),
+    questionSource: z.enum(['acervo', 'ia']).optional(),
+    acervoHistory: z.array(z.object({ key: z.string(), statement: z.string(), questionId: z.number().int().positive().safe().optional() })).optional(),
     segment: z.enum(['anos-iniciais', 'anos-finais', 'ensino-medio']),
     gradeYear: z.number().int(),
+    academicYear: z.number().int().optional(),
     subject: z.string(),
+    classLabel: z.string().optional(),
     bimester: z.number().int().nullable().optional(),
     questionCount: z.number().int(),
     objectiveCount: z.number().int(),
@@ -158,9 +274,41 @@ export const examGenerationResultSchema = z.object({
     alternativesCount: z.number().int(),
     // Planejamento interno usado como currículo (ausente = planilha).
     curriculumPlanId: z.number().int().positive().optional(),
+    curriculumPlanVersionId: z.number().int().positive().optional(),
+    // Geração parcial mantém o que foi aprovado, com as posições pendentes
+    // explicitadas. Uma prova formal só segue ao fluxo quando o responsável
+    // completa as posições ou confirma que aceita menos questões.
+    generationProgress: z.object({
+      complete: z.boolean(),
+      requestedQuestionCount: z.number().int().nonnegative(),
+      pendingQuestionNumbers: z.array(z.number().int().positive()),
+      pendingReasons: z.record(z.string(), z.string()).optional(),
+      acceptedReducedQuestionCount: z.boolean().optional().default(false),
+    }).optional(),
     qualityTest: z.object({
       version: z.string(), checkedAt: z.string(), repairedQuestionNumbers: z.array(z.number().int()), warnings: z.array(z.string()),
-      reports: z.array(z.object({ phase: z.string(), results: z.array(z.object({ questionNumber: z.number().int(), approved: z.boolean(), verdictReason: z.string().optional(), checks: z.array(z.object({ criterion: z.string(), status: z.enum(['aprovado', 'reprovado', 'não_aplicável']), evidence: z.string() })).optional(), answerKeyAudit: z.object({ declaredLetter: z.string().nullable(), independentlyDerivedLetter: z.string().nullable(), matchesDeclared: z.boolean(), evidence: z.string() }).nullable().optional(), issues: z.array(z.object({ severity: z.enum(['bloqueante', 'alerta']), reason: z.string() })), diagnostics: z.array(qualityDiagnosticSchema).optional() })) })).optional(),
+      reports: z.array(z.object({ phase: z.string(), results: z.array(z.object({ questionNumber: z.number().int(), questionFingerprint: z.string().optional(), approved: z.boolean(), auditStatus: z.enum(['jev_audited', 'jev_unavailable', 'corrected_without_reaudit', 'correction_unavailable', 'official_bank_verified', 'official_bank_invalid']).optional(), verdictReason: z.string().optional(), checks: z.array(z.object({ criterion: z.string(), status: z.enum(['aprovado', 'reprovado', 'não_aplicável']), evidence: z.string() })).optional(), answerKeyAudit: z.object({ declaredLetter: z.string().nullable(), independentlyDerivedLetter: z.string().nullable(), matchesDeclared: z.boolean(), evidence: z.string() }).nullable().optional(), issues: z.array(z.object({ severity: z.enum(['bloqueante', 'alerta']), reason: z.string() })), diagnostics: z.array(qualityDiagnosticSchema).optional() })) })).optional(),
+    }).optional(),
+    difficultyClassification: z.object({
+      version: z.string(),
+      source: z.enum(['provider', 'cache', 'fallback']),
+      model: z.string(),
+      classifiedAt: z.string(),
+      distribution: z.object({
+        facil: z.number().int().nonnegative(),
+        media: z.number().int().nonnegative(),
+        dificil: z.number().int().nonnegative(),
+        facilPercent: z.number().min(0).max(100),
+        mediaPercent: z.number().min(0).max(100),
+        dificilPercent: z.number().min(0).max(100),
+      }),
+      weightBasis: z.enum(['difficulty_normalized_to_100']),
+    }).optional(),
+    imageGeneration: z.object({
+      status: z.enum(['pending', 'complete', 'partial']),
+      jobId: z.number().int().positive().nullable(),
+      pendingQuestionNumbers: z.array(z.number().int().positive()),
+      updatedAt: z.string(),
     }).optional(),
   }),
   questions: z.array(examQuestionSchema),
@@ -187,6 +335,7 @@ export const GEMINI_RESPONSE_SCHEMA = {
         segment: { type: 'string', enum: ['anos-iniciais', 'anos-finais', 'ensino-medio'] },
         gradeYear: { type: 'integer' },
         subject: { type: 'string' },
+        classLabel: { type: 'string' },
         bimester: { type: 'integer', nullable: true },
         questionCount: { type: 'integer' },
         objectiveCount: { type: 'integer' },

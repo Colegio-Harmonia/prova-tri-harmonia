@@ -34,7 +34,7 @@ describe('buildSkillBlock', () => {
   it('entrega código, descrição, nível de Bloom do verbo e objetivos ao gerador', () => {
     const block = buildSkillBlock({ ...ctx, targetSkills: [{ code: 'EF07CI05', description: 'Discutir o uso de combustíveis para avaliar avanços.' }], objectives: ['Avaliar impactos socioambientais.'] })
     expect(block).toContain('EF07CI05')
-    expect(block).toContain('Discutir o uso de combustíveis')
+    expect(block).toContain('Discutir o uso de diferentes tipos de combustível')
     expect(block).toContain('Objetivos de aprendizagem do capítulo: Avaliar impactos')
     expect(block).toMatch(/Bloom esperado/)
   })

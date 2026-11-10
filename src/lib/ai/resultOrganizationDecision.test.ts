@@ -47,7 +47,7 @@ describe('resultOrganizationDecision', () => {
   it('falls back safely when provider is unavailable', async () => {
     const evaluate = vi.fn(async (options) => ({
       model: 'test', answers: options.fallback.answers, source: 'fallback' as const,
-      routing: options.fallback.routing, stateHash: 'state', cacheKey: 'cache',
+      routing: options.fallback.routing, stateHash: 'state', cacheKey: 'cache', failure: null,
     }))
     const result = await decideResultOrganization(input, { evaluate })
     expect(result.source).toBe('fallback')

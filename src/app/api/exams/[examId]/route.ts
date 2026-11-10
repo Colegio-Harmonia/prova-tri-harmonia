@@ -1,3 +1,5 @@
+import { presentAcervoExam } from '@/lib/exams/acervoPresentation'
+import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { NextRequest, NextResponse } from 'next/server'
 import { eq } from 'drizzle-orm'
 import { db } from '@/db/client'
@@ -28,6 +30,7 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ examId: 
   return NextResponse.json({
     exam: {
       ...exam,
+      generationPayload: presentAcervoExam(exam.generationPayload as ExamGenerationResult),
       assigneeName: assignee?.name ?? null,
       assigneeEmail: assignee?.email ?? null,
       formEditUrl: sync?.formId ? activityFormEditUrl(sync.formId) : null,

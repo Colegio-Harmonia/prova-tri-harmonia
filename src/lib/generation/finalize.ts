@@ -65,6 +65,8 @@ export function assembleExamQuestion(ctx: PipelineContext, assembled: AssembledQ
     bnccStatus: metadata.bnccStatus,
     bnccSummary: metadata.bnccSummary,
     pedagogicalClassification: metadata.pedagogicalClassification,
+    // O alvo planejado não comprova a classificação do conteúdo produzido.
+    plannedEnemSkill: ctx.targetEnemSkill ?? null,
     saeb: { applicable: false, source: null, value: null, approximate: false },
     needsImage: visualPlan.required,
     imageQuery: visualPlan.required ? visualPlan.rationale : null,

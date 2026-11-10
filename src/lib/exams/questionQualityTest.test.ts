@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ExamGenerationResult, ExamQuestion } from '@/lib/gemini/examSchema'
-import { deterministicQuestionQualityIssues, isNotApplicableEvidence, normalizeQualityChecks, qualityApprovalBlocks } from './questionQualityTest'
+import { deterministicQuestionQualityIssues, isNotApplicableEvidence, normalizeQualityChecks, qualityApprovalBlocks, reportAfterCorrectionWithoutReaudit, solutionBlueprintEvidence } from './questionQualityTest'
 
 function question(alternatives: Array<{ letter: string; text: string }>): ExamQuestion {
   return {
@@ -34,10 +34,61 @@ function payloadWithReport(item: ExamQuestion, result: Record<string, unknown>):
 }
 
 describe('teste de qualidade determinístico', () => {
+  it.each([null, 'A era do selfie', 'Uma frase curta.'])('permite aprovação com referência ao material didático e apoio %s', (supportText) => {
+    const item = question([{ letter: 'A', text: 'Resposta correta' }, { letter: 'B', text: 'Distrator plausível' }])
+    item.statement = 'De acordo com o capítulo do material didático, qual é a ideia principal?'
+    item.supportText = supportText
+    const payload = payloadWithReport(item, {})
+    payload.metadata.generationEngine = 'whole-exam-v1'
+    expect(deterministicQuestionQualityIssues([item])).toEqual([])
+    expect(qualityApprovalBlocks(payload)).toEqual([])
+  })
+  it('impede aprovação da prova completa com referência a figura dispensada', () => {
+    const item = question([{ letter: 'A', text: 'Figura A' }, { letter: 'B', text: 'Figura B' }])
+    item.statement = 'Na malha quadriculada, qual figura representa o triângulo espelhado?'
+    const payload = payloadWithReport(item, {})
+    payload.metadata.generationEngine = 'whole-exam-v1'
+    expect(qualityApprovalBlocks(payload)).toContain('Questão 1: o enunciado faz referência a uma figura ausente.')
+    item.hasImage = true
+    item.needsImage = true
+    expect(qualityApprovalBlocks(payload)).toContain('Questão 1: imagem obrigatória ainda não foi produzida.')
+  })
+  it('exige decisão humana quando a revisão visual falha, preservando uma questão autossuficiente', () => {
+    const item = question([{ letter: 'A', text: '3' }, { letter: 'B', text: '4' }])
+    item.statement = 'Quantos lados tem um triângulo?'
+    item.visualReview = { status: 'pending' }
+    const payload = payloadWithReport(item, {})
+    payload.metadata.generationEngine = 'whole-exam-v1'
+    expect(qualityApprovalBlocks(payload)).toContain('Questão 1: revisão visual automática pendente; confira a questão e registre sua decisão.')
+    item.review = { adequacy: 'adequada' }
+    expect(qualityApprovalBlocks(payload)).toEqual([])
+  })
   it('bloqueia alternativas duplicadas mesmo com diferenças de acento e espaço', () => {
     const issues = deterministicQuestionQualityIssues([question([{ letter: 'A', text: 'São Paulo' }, { letter: 'B', text: ' sao paulo ' }])])
     expect(issues).toHaveLength(1)
     expect(issues[0].severity).toBe('bloqueante')
+  })
+
+  it('mantém indícios de alternativas na auditoria sem bloquear a aprovação docente', () => {
+    const item = question([{ letter: 'A', text: '10 metros de comprimento total' }, { letter: 'B', text: '10 metros de comprimento total' }])
+    const payload = payloadWithReport(item, {})
+    payload.metadata.generationEngine = 'whole-exam-v1'
+    expect(deterministicQuestionQualityIssues([item]).some((issue) => issue.severity === 'bloqueante')).toBe(true)
+    expect(qualityApprovalBlocks(payload)).toEqual([])
+    item.correctLetter = 'Z'
+    expect(qualityApprovalBlocks(payload)).toContain('Questão 1: gabarito ou alternativas inválidos.')
+  })
+
+  it('não exige ficha técnica recalculável na aprovação de uma prova já gerada', () => {
+    const item = question([{ letter: 'A', text: '3' }, { letter: 'B', text: '4' }])
+    item.solutionBlueprint = {
+      domain: 'ratio_proportion', variables: [], equations: [], values: {},
+      calculationSteps: [], derivedAnswer: '3', visualSpec: 'none',
+    }
+    const payload = payloadWithReport(item, {})
+    payload.metadata.generationEngine = 'whole-exam-v1'
+    expect(deterministicQuestionQualityIssues([item]).some((issue) => issue.reason.includes('Conferência determinística'))).toBe(true)
+    expect(qualityApprovalBlocks(payload)).toEqual([])
   })
 
   it('bloqueia juros compostos quando nenhuma alternativa contém o saldo calculado', () => {
@@ -46,6 +97,48 @@ describe('teste de qualidade determinístico', () => {
     item.correctLetter = 'E'
     const issues = deterministicQuestionQualityIssues([item])
     expect(issues.some((issue) => issue.reason.includes('Juros compostos/P.G.'))).toBe(true)
+  })
+
+  it('transforma divergência matemática recalculável em evidência explícita para o Jev', () => {
+    const item = question([{ letter: 'A', text: 'R$ 30,00' }, { letter: 'B', text: 'R$ 20,00' }])
+    item.correctLetter = 'B'
+    item.solutionBlueprint = {
+      domain: 'percentage', variables: [], equations: [], values: { base: 200, percent: 15 },
+      calculationSteps: ['200 × 15 ÷ 100 = 30'], derivedAnswer: '30', visualSpec: 'none',
+    }
+    const evidence = solutionBlueprintEvidence(item)
+    expect(evidence).toHaveLength(1)
+    expect(evidence[0]).toContain('a alternativa marcada no gabarito não corresponde')
+    expect(evidence[0]).toContain('(30)')
+    expect(evidence[0]).toContain('evidência preliminar; a decisão de qualidade cabe ao Jev')
+  })
+
+  it('marca correção sem reauditoria sem afirmar que o Jev aprovou a nova versão', () => {
+    const original = question([{ letter: 'A', text: 'Resposta correta' }, { letter: 'B', text: 'Distrator plausível' }])
+    const initial = {
+      questionNumber: 1, questionFingerprint: 'old', approved: false, verdictReason: 'Reprovada pelo Jev',
+      answerKeyAudit: null, checks: [{ criterion: 'resposta_induzida', status: 'reprovado' as const, evidence: 'A conclusão aparece no apoio.' }],
+      issues: [{ severity: 'bloqueante' as const, reason: 'Teste de qualidade — resposta_induzida: conclusão exposta.' }],
+      diagnostics: [{ code: 'ANSWER_CUE_EXPOSED' as const, severity: 'bloqueante' as const, repairAction: 'reparo_local' as const, fields: ['statement'], protectedFields: [], message: 'Remova a pista.', blocksApproval: true }],
+    }
+    const updated = reportAfterCorrectionWithoutReaudit(initial, { ...original, statement: 'Enunciado alterado.' }, true)
+    expect(updated).toMatchObject({ approved: true, auditStatus: 'corrected_without_reaudit', answerKeyAudit: null })
+    expect(updated.verdictReason).toContain('sem nova avaliação do Jev')
+    expect(updated.diagnostics?.[0]).toMatchObject({ severity: 'alerta', repairAction: 'nenhuma', blocksApproval: false })
+    expect(updated.issues[0]?.severity).toBe('alerta')
+  })
+
+  it('permite incluir questão corrigida sem reauditoria e ainda confere se o JSON objetivo é estruturalmente válido', () => {
+    const item = question([{ letter: 'A', text: 'Resultado A' }, { letter: 'B', text: 'Resultado B' }])
+    const result = {
+      questionNumber: 1, approved: true, auditStatus: 'corrected_without_reaudit' as const,
+      verdictReason: 'Correção sem reauditoria.', answerKeyAudit: null,
+      issues: [{ severity: 'alerta' as const, reason: 'Diagnóstico da versão inicial.' }],
+      checks: [{ criterion: 'gabarito', status: 'reprovado' as const, evidence: 'Versão anterior.' }],
+    }
+    expect(qualityApprovalBlocks(payloadWithReport(item, result))).toEqual([])
+    item.correctLetter = 'Z'
+    expect(qualityApprovalBlocks(payloadWithReport(item, result))).toContain('Questão 1: correção sem reauditoria deixou gabarito ou alternativas inválidos.')
   })
 
   it('bloqueia aprovação quando o parecer descreve gabarito divergente, mesmo que o cartão venha como aprovado', () => {

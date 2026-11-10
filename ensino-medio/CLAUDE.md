@@ -38,6 +38,48 @@ na sigla BNCC e precisa de julgamento pedagógico sobre qual competência
 ENEM aquele conteúdo mais se aproxima — sinalizar como aproximação no mapa
 da prova, mesma regra de honestidade usada no cruzamento SAEB.
 
+### Planejamento pela Matriz do ENEM — coluna "Habilidades ENEM" (09/11/2026)
+Disciplinas do EM podem ser planejadas direto pela Matriz do ENEM
+(Competência:Habilidade), como vem no material do Inglês do 1º ano
+(`C2:H5 (Unesp-2022)`, uma linha por questão do material). Como funciona:
+- **Planejamento interno** (`/planejamento`, caminho usado hoje pelo Inglês
+  do EM — a geração por planilha dessas séries falha por aba ambígua): campo
+  "Habilidades ENEM" por unidade, coluna `curriculum_plan_units.enem_skills`
+  (migration 0054), mesmo formato e mesmo parser da planilha.
+- **Planilha**: coluna opcional `Habilidades ENEM` (sinônimos em
+  `headerResolver.ts`: `Matriz ENEM`, `ENEM`, `Habilidades INEP`…). Se a
+  aba não tiver essa coluna, códigos `C<n>:H<n>` colados dentro de
+  `Habilidades` também são lidos. BNCC e ENEM convivem, um não substitui
+  o outro.
+- **Leitura** (`src/lib/sheets/enemSkillsParser.ts`): aceita `C2:H5`,
+  `C2-H5`, `C2 H5`; o texto entre parênteses vira `sources` (origem da
+  questão do material); repetição vira `count` = peso do capítulo. O par
+  C:H é validado contra a fronteira oficial da área
+  (`src/config/enemMatrix.ts`); par inexistente (ex: `C2:H14`) vai pra
+  `invalid` e vira aviso pra corrigir a planilha, nunca é corrigido por
+  palpite.
+- **Geração (pipeline unificado, 1 chamada por questão)**: a habilidade
+  ENEM de cada questão é escolhida **por código**, não pela IA —
+  `pickTargetEnemSkill()` (`src/lib/exams/targetSkills.ts`) faz rodízio
+  ponderado suave pelo peso do planejamento (H5×8, H7×1… → H5, H5, H7,
+  H5…), mesmo padrão do `pickTargetSkills` da BNCC. Ela entra no prompt
+  como "HABILIDADE ENEM-ALVO" (`buildSkillBlock`, `unifiedRunner.ts`) e
+  `finalize.ts` grava `saeb = { source:'enem', value:'C2:H5 — <descrição>',
+  approximate:false }`. Sem planejamento ENEM, `saeb` continua
+  `applicable:false` como antes. Substituição de questão mantém a
+  habilidade ENEM da original (`targetEnemCode`); reparo de BNCC pelo Jev
+  preserva o `saeb` da questão.
+- **Validação** (`examValidator.ts`, `checkEnemSkill`): código planejado e
+  válido vira `"C2:H5 — <descrição>"` com `approximate:false`; fora do
+  planejamento ou inexistente na matriz fica `approximate:true` com aviso
+  pro revisor.
+- Capítulo sem BNCC mas com habilidades ENEM **não** gera o aviso "BNCC
+  não mapeada" — o capítulo está mapeado, só por outra matriz.
+- Ainda não feito: painel de desempenho por habilidade ENEM em
+  `/desempenho` (hoje só eixo cognitivo de questão do banco) e pré-seleção
+  automática do filtro de habilidade do banco ENEM (o filtro é de seleção
+  única).
+
 ### ⚠️ Disciplina sem coluna "Habilidades" — caso real confirmado
 Confirmado que pelo menos uma disciplina (Sociologia, 1º ano) **não tem a
 coluna Habilidades na aba**, nem vazia — ela não existe na estrutura. Nesse

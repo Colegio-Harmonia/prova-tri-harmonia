@@ -9,6 +9,7 @@ import { getEnemStyleExemplars } from './enemExemplars'
 import { replacementStrategyInstruction, type ReplacementRequest } from './replacementPolicy'
 import { canonicalDomainsForSubject } from '@/lib/generation/domains'
 import { buildMathNotationInstruction } from '@/lib/math/notationInstruction'
+import { fundamentalOneQuestionGuidance, shouldPreferFundamentalOneVisual } from '@/lib/pedagogical/gradeInstructions'
 
 export type ExamGenerationParams = {
   questionCount: number
@@ -33,7 +34,8 @@ export function computeQuestionSplit(questionCount: number, objectivePercentage 
 }
 
 export function alternativesCountForSegment(segment: Segment): number {
-  return segment === 'anos-iniciais' ? 4 : 5
+  void segment
+  return 5
 }
 
 export function bloomGuidance(segment: Segment, gradeYear: number): string {
@@ -68,6 +70,13 @@ function unitToPromptBlock(unit: CurriculumSelection['units'][number]): string {
         .join(' | ')
     : '(sem objetivos cognitivos explícitos)'
 
+  const enemSkills = unit.enemSkills?.skills ?? []
+  const enemText = enemSkills.length
+    ? enemSkills
+        .map((s) => `${s.code}${s.count > 1 ? ` (peso ${s.count})` : ''}${s.description ? `: ${s.description}` : ''}`)
+        .join('; ')
+    : null
+
   const enrichmentBlock = unit.enrichedContent
     ? `  CONTEÚDO DETALHADO (do planejamento pedagógico): ${unit.enrichedContent}`
     : null
@@ -77,10 +86,26 @@ function unitToPromptBlock(unit: CurriculumSelection['units'][number]): string {
     unit.conteudo ? `  Conteúdo: ${unit.conteudo}` : null,
     enrichmentBlock,
     `  Habilidades BNCC: ${skillsText}`,
+    enemText
+      ? `  Habilidades ENEM planejadas: ${enemText}`
+      : unit.enemSkills?.invalid.length
+        ? `  Habilidades ENEM planejadas: PLANEJAMENTO INVÁLIDO (${unit.enemSkills.invalid.join(', ')} não existem na matriz) — para questões deste capítulo, saeb.applicable:false; NÃO infira outro código`
+        : null,
     `  Objetivos: ${objetivosText}`,
   ]
     .filter(Boolean)
     .join('\n')
+}
+
+/** Habilidades ENEM planejadas em todas as unidades da seleção, somando os pesos. */
+export function collectPlannedEnemSkills(curriculum: Pick<CurriculumSelection, 'units'>): { code: string; count: number }[] {
+  const totals = new Map<string, number>()
+  for (const unit of curriculum.units) {
+    for (const skill of unit.enemSkills?.skills ?? []) {
+      totals.set(skill.code, (totals.get(skill.code) ?? 0) + skill.count)
+    }
+  }
+  return [...totals.entries()].map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count)
 }
 
 export function buildSaebInstruction(curriculum: CurriculumSelection): string {
@@ -92,6 +117,16 @@ export function buildSaebInstruction(curriculum: CurriculumSelection): string {
     return `Esta disciplina (${subject}) NÃO possui matriz SAEB/ENEM oficial para o ${gradeYear}º ano do segmento ${segment}. Para TODA questão, retorne saeb.applicable:false, saeb.source:null, saeb.value:null — nunca preencha esses campos mesmo que pareça óbvio.`
   }
   if (saeb.matrixType === 'enem') {
+    const planned = collectPlannedEnemSkills(curriculum)
+    const hasInvalidPlanning = curriculum.units.some((unit) => unit.enemSkills?.invalid.length && !unit.enemSkills.skills.length)
+    if (planned.length || hasInvalidPlanning) {
+      // A regra estrita vale por capítulo: só o capítulo com planejamento ENEM
+      // impõe seus códigos; capítulo sem planejamento segue a regra antiga.
+      return `Esta disciplina usa a Matriz de Referência do ENEM e o planejamento define habilidades ENEM POR CAPÍTULO (linha "Habilidades ENEM planejadas" de cada capítulo). Regras, conforme o capítulo da questão:
+  (a) Capítulo com habilidades planejadas: saeb.applicable:true, saeb.source:"enem", saeb.value com EXATAMENTE um dos códigos DAQUELE capítulo no formato "C<n>:H<n>", saeb.approximate:false. Nunca use código de outro capítulo nem fora da lista. Distribua as questões do capítulo pelo peso indicado (as mais frequentes recebem mais questões). A questão precisa de fato exigir a habilidade escolhida, conforme a descrição oficial dela.
+  (b) Capítulo marcado "PLANEJAMENTO INVÁLIDO": saeb.applicable:false, saeb.source:null, saeb.value:null — não infira código.
+  (c) Capítulo sem linha "Habilidades ENEM planejadas": saeb.source:"enem" e saeb.value com "Competência + Habilidade ENEM" aproximada (ex: "C2:H7"), saeb.approximate:true.`
+    }
     return `Esta disciplina usa a Matriz de Referência do ENEM. Preencha saeb.source:"enem" e saeb.value com "Competência + Habilidade ENEM" aproximada (ex: "C2-H7"), marcando saeb.approximate:true a menos que a correspondência seja claramente exata.`
   }
   return `Esta disciplina tem matriz SAEB oficial (transcrita direto do INEP)${saeb.adapted ? ` — ADAPTADA: o SAEB avalia formalmente só o ano de referência dessa matriz (2º/5º/9º, conforme a disciplina), então marque approximate:true pra esse ${gradeYear}º ano` : ''}. Descritores oficiais disponíveis — escolha o código mais específico que a questão testa de verdade, nunca um genérico: ${
@@ -107,7 +142,7 @@ export function buildImageInstruction(subject: string): string {
   if (!isImageEligibleSubject(subject)) {
     return `Esta disciplina não está habilitada para imagens nesta versão — sempre retorne needsImage:false e imageQuery:null.`
   }
-  const base = `Para questões onde uma imagem de apoio (diagrama, mapa, ilustração, foto) tornaria a questão mais clara ou pedagogicamente melhor: needsImage:true e imageQuery com uma consulta de busca curta e específica em português (ex: "célula animal diagrama partes", "mapa político da Europa 1945", "ciclo da água ilustração"). O imageQuery precisa descrever um recurso visual CONCRETO e desenhável (com coordenadas, valores ou forma exata quando aplicável para que o gráfico seja determinístico), nunca apenas o nome do capítulo ou do tópico curricular. Se você não conseguir especificar o visual de forma concreta, prefira needsImage:false e escreva a questão SEM depender de figura — nunca diga "observe o gráfico/diagrama ao lado" sem ter certeza de que a figura será gerada. Nem toda questão precisa de imagem — use com critério. Não descreva a imagem no statement, só no imageQuery.`
+  const base = `Solicite imagem somente quando ela representar informação que o aluno precisa observar para responder (por exemplo, mapa, gráfico, diagrama ou objeto). Não use imagem útil apenas para deixar o item mais claro, nem imagem decorativa. O imageQuery deve descrever um recurso visual concreto e desenhável, com coordenadas/valores quando necessários. Se a questão puder ser resolvida sem imagem, use needsImage:false e não faça referência a figura ausente.`
   const chemistry = ` Em QUÍMICA ORGÂNICA (cadeias carbônicas e funções orgânicas — hidrocarbonetos, álcool, éter, aldeído, cetona, ácido carboxílico, éster, amina, amida, haleto, aromáticos): quando a estrutura da molécula for relevante, retorne needsImage:true e escreva no imageQuery o nome do composto seguido do SMILES canônico entre parênteses, no formato "(SMILES: ...)" — ex.: "estrutura da cadeia carbônica do etanol (SMILES: CCO)", "grupo funcional do ácido acético (SMILES: CC(=O)O)", "anel aromático do benzeno (SMILES: c1ccccc1)". Um renderizador valida e desenha o SMILES; só inclua quando tiver certeza da estrutura do composto citado — se não tiver, descreva a estrutura em palavras, sem SMILES.`
   return isChemistrySubject(subject) ? `${base}${chemistry}` : base
 }
@@ -126,7 +161,7 @@ export function buildUnitsBlock(curriculum: CurriculumSelection): string {
  */
 function buildInterpretationInstruction(subject: string, segment: Segment): string | null {
   if (!isInterpretiveSubject(subject)) return null
-  return `Esta disciplina (${subject}) exige leitura e interpretação, não só recordação de fato isolado. Para toda questão em nível Analisar, Avaliar ou Criar: o supportText é OBRIGATÓRIO e precisa ser substancial (um trecho de texto/trecho literário, um estudo de caso, uma situação-problema, a descrição de um mapa/gráfico/charge/tabela) — a alternativa correta NUNCA pode ser encontrada só relendo uma definição do capítulo, precisa exigir relacionar/comparar/inferir a partir do texto de apoio. Ruim (evite): "O que foi a Revolução Industrial?" — Bom: um trecho descrevendo consequências sociais de uma mudança tecnológica específica, seguido de "Com base no texto, a transformação social descrita decorre principalmente de...". Nos níveis Lembrar/Compreender pode ser mais direto, mas contextualize quando fizer sentido (${segment === 'ensino-medio' ? 'nível esperado no Ensino Médio' : 'adequado ao vocabulário e extensão de texto da série'}).`
+  return `Avalie a habilidade BNCC e escreva somente o material necessário para a atividade. Não gere supportText por padrão: se a questão puder ser respondida sem interpretar texto, tabela, gráfico ou conjunto de dados, deixe supportText vazio/null, inclusive em níveis Analisar, Avaliar ou Criar. Quando a habilidade exigir interpretação de material, o apoio deve conter evidências/dados necessários, sem explicar o conceito avaliado, antecipar a conclusão nem entregar a resposta. Antes de concluir, verifique se basta localizar/copiar uma frase para responder; se sim, reformule o apoio. Use linguagem adequada à turma (${segment === 'ensino-medio' ? 'nível esperado no Ensino Médio' : 'vocabulário e extensão de texto da série'}).`
 }
 
 /**
@@ -139,7 +174,10 @@ function buildInterpretationInstruction(subject: string, segment: Segment): stri
  * nua ("o que é X"). Ver CLAUDE.md (seção "Estrutura da prova") pros
  * mesmos exemplos documentados.
  */
-function buildContextualizationInstruction(): string {
+function buildContextualizationInstruction(segment: Segment, gradeYear: number): string {
+  if (segment === 'anos-iniciais' && gradeYear >= 1 && gradeYear <= 5) {
+    return `Para o Fundamental I, não transforme toda questão em uma história longa. Use um comando direto ou uma situação curta e familiar apenas quando ajudar a habilidade. A criança deve entender rapidamente o que fazer. Evite duas ou mais etapas de raciocínio na mesma questão, abstrações desnecessárias e dados que não serão usados.`
+  }
   return `NUNCA gere uma questão de definição nua ("o que é X", "qual a definição de Y", "cite as características de Z"), nem em nível Lembrar (Bloom) ou testando o eixo "Dominar Linguagens"/vocabulário técnico. Toda questão — mesmo as que só exigem recordar uma classificação, fórmula ou regra — precisa embutir isso numa situação real e específica que o aluno aplica o conceito pra resolver. Exemplos de referência (mesmo padrão, adapte pra outras disciplinas):
 
 Ruim: "O que é um triângulo obtusângulo?"
@@ -199,6 +237,7 @@ export async function buildExamPrompt(curriculum: CurriculumSelection, params: E
   const unitsBlock = buildUnitsBlock(curriculum)
   const imageInstruction = buildImageInstruction(subject)
   const interpretationInstruction = buildInterpretationInstruction(subject, segment)
+  const fundamentalGuidance = fundamentalOneQuestionGuidance(segment, gradeYear)
   const styleExemplarsBlock = await buildStyleExemplarsBlock(subject, segment)
 
   const activity = params.mode === 'atividade'
@@ -212,7 +251,7 @@ export async function buildExamPrompt(curriculum: CurriculumSelection, params: E
         .map((item) => {
           const unit = curriculum.units.find((candidate) => candidate.rowIndex === item.unitRowIndex)
           if (!unit) return null
-          const visual = item.visualAid === 'obrigatorio' || (item.visualAid === 'auto' && shouldRequireVisualAid(unit))
+          const visual = item.visualAid === 'obrigatorio' || (item.visualAid === 'auto' && (shouldRequireVisualAid(unit) || shouldPreferFundamentalOneVisual(segment, gradeYear, unit.tituloCapitulo, `${unit.conteudo ?? ''} ${unit.enrichedContent ?? ''}`)))
           return `- Capítulo [${unit.rowIndex}] ${unit.tituloCapitulo}: exatamente ${item.questionCount} questão(ões); prioridade ${item.priority}; recurso visual ${visual ? 'OBRIGATÓRIO (needsImage:true e imageQuery preenchido)' : item.visualAid === 'sem_imagem' ? 'NÃO usar (needsImage:false)' : 'avaliar necessidade'}.`
         })
         .filter(Boolean)
@@ -226,6 +265,8 @@ REGRAS FIXAS (não negociáveis):
 - Questões descritivas NUNCA têm "alternatives" ou "correctLetter" preenchidos.
 - ${buildReferenceAnswerInstruction()}
 - Questões objetivas SEMPRE têm exatamente ${alternativesCount} alternativas e um "correctLetter" válido, com distratores plausíveis (não óbvios).
+- Nas alternativas visíveis ao aluno, escreva somente as respostas. Não inclua rótulos ou comentários de correção ("correto", "incorreto", "confundiu", "a resposta certa é"), explicações de distratores nem correções de outras opções; justificativas ficam fora do texto da prova.
+- Enunciado e apoio podem trazer dados necessários, mas não podem antecipar a conclusão que a questão pede ao aluno.
 - ${bloomGuidance(segment, gradeYear)}
 ${selectedBnccInstruction ? `- ${selectedBnccInstruction}\n` : ''}${activity ? '- A atividade deve ser apropriada à faixa etária, contextualizada e pronta para revisão docente antes da publicação.\n' : ''}- Para capítulos marcados "NENHUMA" habilidade BNCC abaixo: gere a questão normalmente a partir do capítulo/conteúdo, mas retorne bnccCodes:[] e bnccStatus:"nao_mapeado" — NUNCA invente um código BNCC — e NUNCA use descritor SAEB/Prova Brasil (D1, D2, D26) em bnccCodes; código BNCC segue o formato EF08MA01, EM13MAT101 ou EI03ET01.
 - Para capítulos marcados "NENHUMA" habilidade BNCC abaixo: gere a questão normalmente a partir do capítulo/conteúdo, mas retorne bnccCodes:[] e bnccStatus:"nao_mapeado" — NUNCA invente um código BNCC — e NUNCA use descritor SAEB/Prova Brasil (D1, D2, D26) em bnccCodes; código BNCC segue o formato EF08MA01, EM13MAT101 ou EI03ET01.
@@ -236,7 +277,8 @@ ${selectedBnccInstruction ? `- ${selectedBnccInstruction}\n` : ''}${activity ? '
 - supportText é OPCIONAL e só pode trazer situação-problema, dados ou evidência indispensável para raciocinar. NUNCA use supportText para definir, parafrasear ou explicar o conceito que a questão avalia; o aluno não pode descobrir a alternativa correta apenas relendo esse texto. Se a questão mede conhecimento de um conceito e não depende de dados externos, retorne supportText:null. Nunca descreva uma imagem dentro de supportText, use o campo needsImage/imageQuery para isso. Quando houver tabela, use Markdown completo e válido: uma linha de cabeçalho com pipes, uma linha separadora com ao menos três hifens por coluna e uma ou mais linhas de dados. Não use tabela para organizar alternativas.
 - REGRA DE FONTE TEXTUAL: só cite texto, trecho, artigo, poema, capítulo ou “material didático” quando supportText trouxer toda a fonte necessária para a leitura. Um título, número de capítulo, lista de tópicos ou resumo inventado NÃO é texto de apoio. O currículo abaixo informa temas, não autoriza inventar um texto externo; sem fonte suficiente, escreva uma questão autocontida e não mencione leitura/capítulo/material externo.
 - IMPORTANTE sobre a ordem de exibição: supportText SEMPRE aparece ANTES do statement na tela/documento final (texto de apoio primeiro, pergunta depois). Se o statement referenciar o supportText, use "acima"/"no texto" — NUNCA "abaixo" (o texto nunca vem depois da pergunta). Prefira formas sem direção ("leia o texto e responda", "com base no texto") pra não depender de posição nenhuma.
-- ${buildContextualizationInstruction()}
+- ${buildContextualizationInstruction(segment, gradeYear)}
+- ${fundamentalGuidance}
 - ${buildMathNotationInstruction()}
 - ${buildSolutionBlueprintInstruction(subject)}
 - ${imageInstruction}${interpretationInstruction ? `\n- ${interpretationInstruction}` : ''}
@@ -278,6 +320,7 @@ export async function buildSingleQuestionPrompt(curriculum: CurriculumSelection,
   const unitsBlock = buildUnitsBlock(curriculum)
   const imageInstruction = buildImageInstruction(subject)
   const interpretationInstruction = buildInterpretationInstruction(subject, segment)
+  const fundamentalGuidance = fundamentalOneQuestionGuidance(segment, gradeYear)
   const styleExemplarsBlock = await buildStyleExemplarsBlock(subject, segment)
 
   const typeRule =
@@ -314,7 +357,8 @@ ${opts.type === 'descritiva' ? `- ${buildReferenceAnswerInstruction()}\n` : ''}-
 - supportText é só texto — nunca descreva uma imagem dentro dele, use needsImage/imageQuery. Quando houver tabela, use Markdown completo e válido: cabeçalho com pipes, divisor com ao menos três hifens por coluna e uma ou mais linhas de dados.
 - REGRA DE FONTE TEXTUAL: só cite texto, trecho, artigo, poema, capítulo ou “material didático” quando supportText trouxer toda a fonte necessária para a leitura. Título, número de capítulo, lista de tópicos ou resumo inventado não substituem o texto. Sem fonte suficiente, formule uma questão autocontida e não mencione leitura/capítulo/material externo.
 - IMPORTANTE sobre a ordem de exibição: supportText SEMPRE aparece ANTES do statement na tela/documento final. Se o statement referenciar o supportText, use "acima"/"no texto" — NUNCA "abaixo". Prefira formas sem direção ("leia o texto e responda", "com base no texto").
-- ${buildContextualizationInstruction()}
+- ${buildContextualizationInstruction(segment, gradeYear)}
+- ${fundamentalGuidance}
 - ${buildMathNotationInstruction()}
 - ${buildSolutionBlueprintInstruction(subject)}
 - ${imageInstruction}${interpretationInstruction ? `\n- ${interpretationInstruction}` : ''}${visualAidLine}

@@ -5,7 +5,7 @@ import StatusList from './StatusList'
 import QueueList from './QueueList'
 import type { ExamKind } from '@/db/schema'
 
-const PROOF_JOB_TYPES = ['gerar_prova', 'adaptar_prova']
+const PROOF_JOB_TYPES = ['gerar_prova', 'adicionar_questao', 'adaptar_prova']
 const REINFORCEMENT_JOB_TYPES = ['gerar_reforco_enem']
 const ACTIVITY_JOB_TYPES = ['gerar_atividade']
 
