@@ -25,6 +25,10 @@ const responseSchema = z.object({
 type ApiQuestion = z.infer<typeof responseSchema>['questao']
 export type AcervoHistory = Array<{ key: string; statement: string; questionId?: number }>
 export class AcervoUnavailableError extends Error {}
+/** The original exists but cannot be used as-is; the message says why (not a transient failure). */
+export class AcervoQuestionRejectedError extends AcervoUnavailableError {
+  constructor(message: string, readonly rejection: AcervoRejection) { super(message) }
+}
 
 export type AcervoSearchResult = { question: ExamQuestion | null; reason: string }
 export type AcervoSearchParams = {
@@ -121,28 +125,71 @@ function logAcervoFailure(fields: { stage: AcervoFailureStage; bnccCode?: string
 
 const GENERIC_ACERVO_FALLBACK = 'Nenhuma questão compatível foi importada do acervo; esta questão foi gerada por IA.'
 
-/** Maps only complete, supported originals. Never invents or rewrites an answer. */
-export function mapAcervoQuestion(raw: ApiQuestion, params: AcervoSearchParams): ExamQuestion | null {
+/** Why an original cannot be used as-is; `null` when it can. Single source of truth for `mapAcervoQuestion`. */
+export type AcervoRejection =
+  | { code: 'unsupported_type'; tipo: string } | { code: 'empty_statement' } | { code: 'pending_issues'; pendencias: string[] }
+  | { code: 'pending_media' } | { code: 'media_incomplete' } | { code: 'visual_aid_mismatch' }
+  | { code: 'alternatives_count'; count: number } | { code: 'answer_key_invalid' } | { code: 'alternative_empty' } | { code: 'missing_answer' }
+
+export function acervoRejection(raw: ApiQuestion, params: Pick<AcervoSearchParams, 'type' | 'manualSelection' | 'visualAid'>): AcervoRejection | null {
   const blockingPending = params.manualSelection
     ? raw.pendencias.filter((pending) => !['bncc_ausente', 'bncc_nao_mapeada', 'bloom_ausente', 'resolucao_ausente'].includes(String(pending)))
     : raw.pendencias
-  if (!raw.enunciado.texto.trim() || blockingPending.length || raw.midias_pendentes) return null
-  if (params.type === 'objetiva' ? raw.tipo !== 'multipla_escolha' : raw.tipo !== 'discursiva') return null
+  if (!raw.enunciado.texto.trim()) return { code: 'empty_statement' }
+  if (params.type === 'objetiva' ? raw.tipo !== 'multipla_escolha' : raw.tipo !== 'discursiva') return { code: 'unsupported_type', tipo: raw.tipo }
+  if (blockingPending.length) return { code: 'pending_issues', pendencias: blockingPending.map(String) }
+  if (raw.midias_pendentes) return { code: 'pending_media' }
   const media = raw.midias.filter((item) => ['enunciado', 'alternativa'].includes(item.local))
-  if (media.length > 12) return null
+  if (media.length > 12) return { code: 'media_incomplete' }
   // Unknown media locations or missing files must not silently disappear.
-  if (media.some((item) => !item.url) || (params.visualAid === 'sem_imagem' && media.length) || (params.visualAid === 'obrigatorio' && !media.length)) return null
-  if (/<(?:img|svg|math)\b/i.test(raw.enunciado.html) && !media.some((m) => m.local === 'enunciado')) return null
-  if (raw.alternativas.some((a) => /<(?:img|svg|math)\b/i.test(a.html) && !media.some((m) => m.local === 'alternativa' && m.alternativa_posicao === a.posicao))) return null
+  if (media.some((item) => !item.url)) return { code: 'media_incomplete' }
+  if ((params.visualAid === 'sem_imagem' && media.length) || (params.visualAid === 'obrigatorio' && !media.length)) return { code: 'visual_aid_mismatch' }
+  if (/<(?:img|svg|math)\b/i.test(raw.enunciado.html) && !media.some((m) => m.local === 'enunciado')) return { code: 'media_incomplete' }
+  if (raw.alternativas.some((a) => /<(?:img|svg|math)\b/i.test(a.html) && !media.some((m) => m.local === 'alternativa' && m.alternativa_posicao === a.posicao))) return { code: 'media_incomplete' }
+  if (params.type === 'objetiva') {
+    const alternatives = [...raw.alternativas].sort((a, b) => a.posicao - b.posicao)
+    const correct = raw.gabarito.alternativas_corretas
+    // Fora de 4-5 alternativas o cartão-resposta não pode ser emitido (sheetLayout).
+    if (alternatives.length < SHEET_MIN_ALTERNATIVES || alternatives.length > SHEET_MAX_ALTERNATIVES) return { code: 'alternatives_count', count: alternatives.length }
+    if (correct.length !== 1 || new Set(alternatives.map((a) => a.posicao)).size !== alternatives.length) return { code: 'answer_key_invalid' }
+    const correctIndex = alternatives.findIndex((a) => a.posicao === correct[0]?.posicao)
+    if (correctIndex < 0 || alternatives.some((a, i) => a.correta !== null && a.correta !== (i === correctIndex))) return { code: 'answer_key_invalid' }
+    if (alternatives.some((a) => !a.texto.trim() && !media.some((m) => m.local === 'alternativa' && m.alternativa_posicao === a.posicao))) return { code: 'alternative_empty' }
+  } else if (!discursiveAnswer(raw)) return { code: 'missing_answer' }
+  return null
+}
+
+function discursiveAnswer(raw: ApiQuestion): string {
+  return acervoSourceText({ texto: raw.gabarito.resposta_discursiva?.trim() || raw.resolucao.texto.trim(), html: raw.resolucao.html })
+}
+
+const TYPE_LABELS: Record<string, string> = { relacionar_colunas: 'ligar/relacionar colunas', ordenar: 'ordenar etapas', verdadeiro_falso: 'verdadeiro ou falso', lacunas: 'completar lacunas' }
+const PENDING_LABELS: Record<string, string> = { gabarito_estruturado_nao_disponivel_no_dom: 'o gabarito não está disponível na fonte' }
+
+/** Mensagem para o professor: diz o que impede a importação, em vez de sugerir tentar de novo. */
+export function acervoRejectionMessage(rejection: AcervoRejection): string {
+  const pick = 'Escolha outra questão ou peça à coordenação para adaptá-la.'
+  switch (rejection.code) {
+    case 'unsupported_type': return `Esta questão é do formato "${TYPE_LABELS[rejection.tipo] ?? rejection.tipo.replace(/_/g, ' ')}", que a prova ainda não aceita (só múltipla escolha ou discursiva). ${pick}`
+    case 'alternatives_count': return `Esta questão tem ${rejection.count} alternativa${rejection.count === 1 ? '' : 's'}; o cartão-resposta exige 4 ou 5. ${pick}`
+    case 'pending_issues': return `O acervo marca esta questão como incompleta: ${rejection.pendencias.map((p) => PENDING_LABELS[p] ?? p.replace(/_/g, ' ')).join('; ')}. ${pick}`
+    case 'pending_media': return 'As imagens desta questão ainda estão sendo processadas no acervo. Tente novamente mais tarde ou escolha outra questão.'
+    case 'media_incomplete': return `As imagens desta questão estão incompletas no acervo. ${pick}`
+    case 'visual_aid_mismatch': return 'Esta questão não atende à preferência de imagem da prova.'
+    case 'answer_key_invalid': return `O gabarito desta questão no acervo é inconsistente (não indica exatamente uma alternativa correta). ${pick}`
+    case 'alternative_empty': return `Uma das alternativas desta questão está vazia no acervo. ${pick}`
+    case 'missing_answer': return `Esta questão discursiva não tem resposta esperada nem resolução no acervo. ${pick}`
+    case 'empty_statement': return `Esta questão está sem enunciado no acervo. ${pick}`
+  }
+}
+
+/** Maps only complete, supported originals. Never invents or rewrites an answer. */
+export function mapAcervoQuestion(raw: ApiQuestion, params: AcervoSearchParams): ExamQuestion | null {
+  if (acervoRejection(raw, params)) return null
+  const media = raw.midias.filter((item) => ['enunciado', 'alternativa'].includes(item.local))
   const alternatives = [...raw.alternativas].sort((a, b) => a.posicao - b.posicao)
-  const correct = raw.gabarito.alternativas_corretas
-  // Fora de 4-5 alternativas o cartão-resposta não pode ser emitido (sheetLayout).
-  if (params.type === 'objetiva' && (alternatives.length < SHEET_MIN_ALTERNATIVES || alternatives.length > SHEET_MAX_ALTERNATIVES || correct.length !== 1 || new Set(alternatives.map((a) => a.posicao)).size !== alternatives.length)) return null
-  const correctIndex = alternatives.findIndex((a) => a.posicao === correct[0]?.posicao)
-  if (params.type === 'objetiva' && (correctIndex < 0 || alternatives.some((a, i) => a.correta !== null && a.correta !== (i === correctIndex)))) return null
-  if (params.type === 'objetiva' && alternatives.some((a) => !a.texto.trim() && !media.some((m) => m.local === 'alternativa' && m.alternativa_posicao === a.posicao))) return null
-  const answer = acervoSourceText({ texto: raw.gabarito.resposta_discursiva?.trim() || raw.resolucao.texto.trim(), html: raw.resolucao.html })
-  if (params.type === 'descritiva' && !answer) return null
+  const correctIndex = alternatives.findIndex((a) => a.posicao === raw.gabarito.alternativas_corretas[0]?.posicao)
+  const answer = discursiveAnswer(raw)
   const origin = (typeof raw.origem.acervo === 'string' && raw.origem.acervo.trim() ? raw.origem.acervo : raw.origem.plataforma).toUpperCase()
   return examQuestionSchema.parse({
     number: params.number, slotId: `q${String(params.number).padStart(2, '0')}`, source: 'acervo', type: params.type,
@@ -174,10 +221,16 @@ export async function importAcervoQuestionById(questionId: number, number: numbe
     const { questao: raw } = responseSchema.parse(await response.json())
     if (raw.id !== questionId) throw new Error('detail_id_mismatch')
     const type = raw.tipo === 'multipla_escolha' ? 'objetiva' : 'descritiva'
-    const question = mapAcervoQuestion(raw, { codes: raw.bncc, number, type, manualSelection: true })
-    if (!question) throw new Error('incomplete_original')
+    const mapParams = { codes: raw.bncc, number, type, manualSelection: true } as const
+    const rejection = acervoRejection(raw, mapParams)
+    if (rejection) {
+      console.warn('[acervo/manual] questão recusada', { questionId, category: rejection.code, ...('tipo' in rejection ? { tipo: rejection.tipo } : {}), ...('count' in rejection ? { count: rejection.count } : {}) })
+      throw new AcervoQuestionRejectedError(acervoRejectionMessage(rejection), rejection)
+    }
+    const question = mapAcervoQuestion(raw, mapParams)!
     return question.hasImage ? await attachOriginalMedia(question, raw, base) : question
   } catch (error) {
+    if (error instanceof AcervoQuestionRejectedError) throw error
     console.warn('[acervo/manual] falha na importação', { questionId, category: error instanceof Error ? error.message : 'import_failed' })
     throw new AcervoUnavailableError('Não foi possível importar esta questão completa. Escolha outra questão ou tente novamente.')
   }
