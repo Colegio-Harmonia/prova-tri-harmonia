@@ -78,6 +78,13 @@ describe('edição persistente da prova manual', () => {
     expect(await response.json()).toEqual({ error: 'Esta questão tem 3 alternativas; o cartão-resposta exige 4 ou 5.' })
     expect(mocks.set).not.toHaveBeenCalled()
   })
+  it('mantém 502 com sugestão de nova tentativa quando a falha do acervo é passageira', async () => {
+    const { AcervoUnavailableError } = await import('@/lib/exams/acervoQuestions')
+    mocks.importQuestion.mockRejectedValueOnce(new AcervoUnavailableError('Não foi possível importar esta questão completa. Escolha outra questão ou tente novamente.'))
+    const response = await request({ action: 'import', questionId: 7 })
+    expect(response.status).toBe(502)
+    expect((await response.json()).error).toContain('tente novamente')
+  })
   it('salva questão com classificação pendente e impede conclusão incompleta', async () => {
     const pending = { ...question(7), bloomAssessment: undefined }
     mocks.classify.mockResolvedValue(pending)

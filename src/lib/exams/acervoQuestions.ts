@@ -225,12 +225,14 @@ export async function importAcervoQuestionById(questionId: number, number: numbe
     const rejection = acervoRejection(raw, mapParams)
     if (rejection) {
       console.warn('[acervo/manual] questão recusada', { questionId, category: rejection.code, ...('tipo' in rejection ? { tipo: rejection.tipo } : {}), ...('count' in rejection ? { count: rejection.count } : {}) })
+      // Mídia ainda em processamento é passageira: não é recusa definitiva.
+      if (rejection.code === 'pending_media') throw new AcervoUnavailableError(acervoRejectionMessage(rejection))
       throw new AcervoQuestionRejectedError(acervoRejectionMessage(rejection), rejection)
     }
     const question = mapAcervoQuestion(raw, mapParams)!
     return question.hasImage ? await attachOriginalMedia(question, raw, base) : question
   } catch (error) {
-    if (error instanceof AcervoQuestionRejectedError) throw error
+    if (error instanceof AcervoUnavailableError) throw error
     console.warn('[acervo/manual] falha na importação', { questionId, category: error instanceof Error ? error.message : 'import_failed' })
     throw new AcervoUnavailableError('Não foi possível importar esta questão completa. Escolha outra questão ou tente novamente.')
   }

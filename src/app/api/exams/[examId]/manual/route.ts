@@ -5,7 +5,7 @@ import { auth } from '@/auth/auth'
 import { db } from '@/db/client'
 import { generatedExams } from '@/db/schema'
 import { authorizeExamAccess } from '@/lib/exams/authorizeExamAccess'
-import { AcervoUnavailableError, importAcervoQuestionById } from '@/lib/exams/acervoQuestions'
+import { AcervoQuestionRejectedError, AcervoUnavailableError, importAcervoQuestionById } from '@/lib/exams/acervoQuestions'
 import { assembleManualExam, classifyManualQuestion, manualClassificationComplete } from '@/lib/exams/manualExam'
 import { presentAcervoExam } from '@/lib/exams/acervoPresentation'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
@@ -70,9 +70,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ exa
     if ('error' in result) return NextResponse.json(result, { status: 409 })
     return NextResponse.json({ exam: presentAcervoExam(result.exam) })
   } catch (error) {
-    // Questão recusada/indisponível no acervo: a mensagem diz o motivo; tentar de novo não resolve.
-    if (error instanceof AcervoUnavailableError) return NextResponse.json({ error: error.message }, { status: 422 })
+    // Recusa definitiva do acervo: a mensagem diz o motivo; tentar de novo não resolve.
+    if (error instanceof AcervoQuestionRejectedError) return NextResponse.json({ error: error.message }, { status: 422 })
     console.error('[exams/manual] falha', { examId, action: action.action, questionId: 'questionId' in action ? action.questionId : undefined, category: error instanceof Error ? error.name : 'unknown' })
-    return NextResponse.json({ error: 'Não foi possível concluir esta operação. Sua prova foi preservada; tente novamente.' }, { status: 502 })
+    // Falha passageira do acervo (rede, mídia em processamento) mantém 502 e a sugestão de nova tentativa.
+    const message = error instanceof AcervoUnavailableError ? error.message : 'Não foi possível concluir esta operação. Sua prova foi preservada; tente novamente.'
+    return NextResponse.json({ error: message }, { status: 502 })
   }
 }

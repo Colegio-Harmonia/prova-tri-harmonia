@@ -83,6 +83,11 @@ describe('questões do acervo', () => {
     const pending = { ...discursive(7), pendencias: ['gabarito_estruturado_nao_disponivel_no_dom'] }
     mockApi([], () => pending)
     await expect(importAcervoQuestionById(7, 1)).rejects.toThrow('o gabarito não está disponível na fonte')
+    mockApi([], () => ({ ...original(7), midias_pendentes: 1 }))
+    const processing = await importAcervoQuestionById(7, 1).catch((error: unknown) => error)
+    expect(processing).toBeInstanceOf(Error)
+    expect(processing).not.toHaveProperty('rejection')
+    expect((processing as Error).message).toContain('ainda estão sendo processadas')
     for (const raw of [columns, three, pending]) {
       mockApi([], () => raw)
       await expect(importAcervoQuestionById(7, 1)).rejects.not.toThrow('tente novamente')
