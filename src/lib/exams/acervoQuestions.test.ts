@@ -69,9 +69,29 @@ describe('questões do acervo', () => {
   })
   it('não importa manualmente uma questão sem gabarito ou com ID divergente', async () => {
     mockApi([], () => ({ ...original(7), gabarito: { alternativas_corretas: [], resposta_discursiva: null } }))
-    await expect(importAcervoQuestionById(7, 1)).rejects.toThrow('Não foi possível importar')
+    await expect(importAcervoQuestionById(7, 1)).rejects.toThrow('gabarito desta questão no acervo é inconsistente')
     mockApi([], () => original(8))
     await expect(importAcervoQuestionById(7, 1)).rejects.toThrow('Não foi possível importar')
+  })
+  it('explica por que recusa formatos sem suporte, sem sugerir tentar de novo', async () => {
+    const columns = { ...original(7), tipo: 'relacionar_colunas', alternativas: [], gabarito: { alternativas_corretas: [], resposta_discursiva: null } }
+    mockApi([], () => columns)
+    await expect(importAcervoQuestionById(7, 1)).rejects.toMatchObject({ name: 'Error', rejection: { code: 'unsupported_type', tipo: 'relacionar_colunas' }, message: expect.stringContaining('ligar/relacionar colunas') })
+    const three = { ...original(7), alternativas: original(7).alternativas.slice(0, 3) }
+    mockApi([], () => three)
+    await expect(importAcervoQuestionById(7, 1)).rejects.toThrow('tem 3 alternativas; o cartão-resposta exige 4 ou 5')
+    const pending = { ...discursive(7), pendencias: ['gabarito_estruturado_nao_disponivel_no_dom'] }
+    mockApi([], () => pending)
+    await expect(importAcervoQuestionById(7, 1)).rejects.toThrow('o gabarito não está disponível na fonte')
+    mockApi([], () => ({ ...original(7), midias_pendentes: 1 }))
+    const processing = await importAcervoQuestionById(7, 1).catch((error: unknown) => error)
+    expect(processing).toBeInstanceOf(Error)
+    expect(processing).not.toHaveProperty('rejection')
+    expect((processing as Error).message).toContain('ainda estão sendo processadas')
+    for (const raw of [columns, three, pending]) {
+      mockApi([], () => raw)
+      await expect(importAcervoQuestionById(7, 1)).rejects.not.toThrow('tente novamente')
+    }
   })
   it('usa dissertativa somente após esgotar as objetivas e preserva o original', async () => {
     const fetch = mockApi([1], discursive)
