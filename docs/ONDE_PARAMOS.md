@@ -2,8 +2,34 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 10/11/2026 — recuperação do versionamento; detalhes em
+> Última atualização: 12/11/2026 — Assistente de Planejamento. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
 > [`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md).
+
+## Assistente de Planejamento (Matriz do ENEM) — 12/11/2026
+
+Nova aba **Assistente** em `/planejamento` (professor, coordenação e direção):
+lê o plano de curso do ano inteiro na planilha e recomenda ajustes. Só leitura —
+nunca escreve na planilha nem no planejamento interno.
+
+- Ensino Médio: capítulos sem habilidade ENEM, códigos C:H inexistentes,
+  cobertura das 30 habilidades no recorte da disciplina (Física/Química/Biologia
+  = C1–C5 + a competência própria; Linguagens pelo recorte de `enemAreaMap`) e
+  sugestões de habilidade por capítulo via IA.
+- Demais segmentos: BNCC × Bloom; SAEB só como nota (exato/aproximado/sem matriz).
+- A IA escolhe numa lista fechada; `sanitizeSuggestions` descarta o que não
+  existir na matriz e o texto exibido vem sempre de `enemMatrixOfficial.ts`.
+- `src/config/enemMatrixOfficial.ts`: texto oficial das 4 áreas, transcrito do
+  PDF do INEP. **O seed de `enem_skills` (`scripts/setup-enem-schema.ts`) diverge
+  do INEP em várias habilidades de Natureza e Humanas** — pendência separada,
+  não corrigida aqui (afeta rótulos do banco ENEM).
+- Código: `src/lib/planningAdvisor/`, rota `POST /api/curriculum/planning-advisor`,
+  `scripts/planning-advisor-csv.ts` (análise de um CSV de aba, sem banco/IA).
+
+Validação: 20 testes novos; suíte completa (970), TypeScript, lint e regressão
+passaram. Análise determinística rodada sobre a aba real de Sociologia do 1º EM
+(12 capítulos, 0/30 habilidades ENEM — nenhuma aba do 1º EM tem a coluna
+"Habilidades ENEM" hoje). **Sugestões por IA testadas só com dublê**: falta
+rodar com o provedor real em DEV. Sem migration, sem deploy.
 
 ## Recuperação do versionamento — 10/11/2026
 
