@@ -10,7 +10,9 @@ const questions = [
   { number: 3, type: 'descritiva' },
 ] as ExamQuestion[]
 
-describe('PDF individual com geometria versionada', () => {
+// Gerar o PDF passa de 5 s no runner do CI com cobertura ligada (falhou 2 de 3
+// execuções em 13/11/2026 por tempo, não por conteúdo).
+describe('PDF individual com geometria versionada', { timeout: 30_000 }, () => {
   afterEach(() => vi.restoreAllMocks())
 
   it.each(['PTR1', 'PTR2', 'PTR3'])('imprime o ID em todas as páginas e separa a orientação das bolhas em %s', async (layoutVersion) => {
