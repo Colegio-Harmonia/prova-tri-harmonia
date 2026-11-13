@@ -69,9 +69,9 @@ export function bloomFromLeadingVerb(sentence: string): BloomLevel | null {
   return match?.level ?? null
 }
 
-/** Capítulos sem nenhum objetivo cognitivo real (vazio, só atitudinal ou só estimado). */
+/** Capítulos sem objetivo aproveitável (vazio, só atitudinal, vago ou só estimado). Objetivo claro com verbo fora da tabela de Bloom não entra. */
 export function chaptersNeedingObjectives(analysis: PlanningAnalysis): PlanningAnalysis['chapters'] {
-  return analysis.chapters.filter((chapter) => chapter.bloomEstimated || chapter.bloomLevels.length === 0)
+  return analysis.chapters.filter((chapter) => chapter.needsObjectives)
 }
 
 function clip(text: string | null | undefined, max = MAX_FIELD_CHARS): string {

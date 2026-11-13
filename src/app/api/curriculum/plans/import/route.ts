@@ -11,6 +11,8 @@ import { resolveBnccDescriptions } from '@/lib/curriculum/bnccDescriptions'
 import { composePlanUnitTitle } from '@/lib/curriculum/planUnitTitle'
 import { BNCC_CODE_PATTERN, canReceiveNewDraft } from '@/lib/curriculum/planningPolicy'
 
+const IMPORT_FORMAT_VERSION = 'v2'
+
 const schema = z.object({
   academicYear: z.number().int().min(2020).max(2100),
   segment: z.enum(['anos-iniciais', 'anos-finais', 'ensino-medio']),
@@ -54,7 +56,10 @@ export async function POST(req: NextRequest) {
   const descriptions = await resolveBnccDescriptions(selection.units.flatMap((unit) => unit.habilidades.skills.filter((skill) => !skill.description).map((skill) => skill.code)))
 
   const snapshot = JSON.stringify(selection)
-  const sourceHash = createHash('sha256').update(snapshot).digest('hex')
+  // A versão do formato entra no hash: quando a regra do que é gravado muda
+  // (v2: objetivo estimado deixou de ser gravado), reimportar a mesma planilha
+  // gera versão nova em vez de responder "sem mudança" e manter o dado antigo.
+  const sourceHash = createHash('sha256').update(`${IMPORT_FORMAT_VERSION}|${snapshot}`).digest('hex')
   const result = await db.transaction(async (tx) => {
     const [plan] = await tx.insert(curriculumPlans).values({ ...input, createdBy: manager.id })
       .onConflictDoUpdate({ target: [curriculumPlans.academicYear, curriculumPlans.segment, curriculumPlans.gradeYear, curriculumPlans.subject, curriculumPlans.bimester], set: { updatedAt: new Date() } })

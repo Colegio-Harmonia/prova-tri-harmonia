@@ -189,4 +189,17 @@ describe('mensagens sobre objetivos', () => {
     expect(message('Quadrilha e festa junina na escola.')).toContain('não deixam claro o que o aluno deve ser capaz de fazer')
     expect(message('Explicar a origem da quadrilha.')).toBeUndefined()
   })
+
+  it('objetivo claro com verbo fora da tabela de Bloom não é chamado de vago nem recebe sugestão', () => {
+    const analysis = analyzePlanning(selectionFrom('anos-finais', 8, 'Matemática', header, [
+      ['1', 'Círculo', 'Área e perímetro', 'EF08MA19', 'Calcular a área do círculo. Resolver problemas com perímetro.'],
+      ['1', 'Festa junina', 'Quadrilha', '', 'Quadrilha e festa junina na escola.'],
+    ]))
+    const [circulo, festa] = analysis.chapters
+    expect(circulo.issues.map((issue) => issue.code)).toContain('bloom_nao_classificado')
+    expect(circulo.issues.map((issue) => issue.code)).not.toContain('sem_objetivo_cognitivo')
+    expect(circulo.issues.find((issue) => issue.code === 'bloom_nao_classificado')?.message).toContain('"Calcular…"')
+    expect(circulo.needsObjectives).toBe(false)
+    expect(festa.needsObjectives).toBe(true)
+  })
 })
