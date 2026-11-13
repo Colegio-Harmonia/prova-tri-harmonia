@@ -2,8 +2,35 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 13/11/2026 — Assistente de Planejamento publicado. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
+> Última atualização: 13/11/2026 — produção regularizada com o main e publicada pelo script oficial. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
 > [`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md).
+
+## Produção de volta ao fluxo oficial — 13/11/2026
+
+`/home/eduardo/prova-tri` está em `main` (c3a866e), árvore limpa e igual ao
+GitHub. Publicado com `npm run deploy:production`: web, worker, scan-worker e
+ocr-worker na imagem `prova-tri:c3a866e7b7fffa59275864fd655a597c77a83ca7`.
+PRs #51 (Assistente), #52 (regularização) e #53 (bimestres encerrados no
+fallback do Assistente + tempo limite do teste de PDF) mesclados.
+
+- Estado anterior da árvore: commit `47280fe` no branch local
+  `codex/jev-generation-completion`, tag `pre-regularizacao-20261113`, e
+  `/home/eduardo/backups/prova-tri-pre-regularizacao-20261113.tar.gz`.
+- Rollback de imagem: `prova-tri:web-before-regularizacao-20261113`,
+  `prova-tri:worker-before-regularizacao-20261113`,
+  `prova-tri:scan-ocr-before-regularizacao-20261113`.
+- O aviso abaixo ("a árvore NÃO tem os arquivos do Assistente") deixou de valer.
+- Esta publicação também levou a produção os ajustes do PR #48 que só existiam
+  no `main` (LazyMathText, cores semânticas, deploy script).
+- O #52 foi mesclado antes de o CI terminar (o repositório não exige checks e
+  `gh pr merge --auto` mescla na hora). O CI do `main` passou em seguida.
+  **Sugestão: exigir o check `Quality` na proteção do `main`.**
+
+Conferido: todos os serviços saudáveis, login 200 (local e público), correção
+do Jev presente na imagem, job de geração em andamento concluído, worker sem
+erro, Assistente rodado no container (Inglês 1º/2º, Sociologia e Física 1º EM).
+**Não conferido:** telas autenticadas no navegador (Assistente e as telas
+tocadas pelo #48).
 
 ## Regularização servidor × main — 13/11/2026
 
