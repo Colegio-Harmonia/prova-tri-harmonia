@@ -163,8 +163,26 @@ function bimesterNumberOf(period: string | null): number | null {
 }
 
 const firstWord = (text: string) => text.trim().split(/\s+/)[0] ?? ''
-/** Frase aberta por verbo no infinitivo (-ar, -er, -ir, -or), como se espera de um objetivo. */
-const startsWithInfinitive = (text: string) => /^[a-zà-ú]{2,}(ar|er|ir|or|ôr)$/i.test(firstWord(text).replace(/[,;:]$/, ''))
+// Substantivos e adjetivos comuns que terminam como infinitivo ("Valor cultural
+// da quadrilha" não é objetivo). Heurística: a língua não deixa distinguir só
+// pela terminação, então a lista cobre os casos frequentes em planos de curso.
+const NOT_INFINITIVES = new Set([
+  'lugar', 'lar', 'mar', 'par', 'ar', 'luar', 'pomar', 'olhar', 'jantar', 'andar', 'bem-estar', 'popular', 'escolar', 'familiar',
+  'militar', 'singular', 'particular', 'regular', 'celular', 'nuclear', 'solar', 'polar', 'linear', 'circular', 'molecular', 'muscular',
+  'poder', 'ser', 'dever', 'prazer', 'lazer', 'saber', 'mulher', 'carater', 'qualquer', 'lider', 'elixir', 'porvir',
+])
+const plain = (word: string) => word.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[,;:.]$/, '')
+
+/**
+ * Frase aberta por verbo no infinitivo, como se espera de um objetivo. "-or"
+ * só vale para os derivados de "pôr" (compor, propor…): o resto é substantivo
+ * (valor, fator, motor).
+ */
+const startsWithInfinitive = (text: string) => {
+  const word = plain(firstWord(text))
+  if (word.length < 4 || NOT_INFINITIVES.has(word)) return false
+  return /^[a-z-]+(ar|er|ir)$/.test(word) || /por$/.test(word)
+}
 
 const ACTION_VERB_HINT = 'como identificar, explicar, aplicar, comparar, avaliar ou criar'
 
@@ -191,8 +209,10 @@ function analyzeChapter(unit: CurricularUnit, scope: EnemScope | null, isEnsinoM
   const bloomLevels = [...new Set(cognitive.map((objective) => objective.bloomLevel as BloomLevel))]
     .sort((a, b) => BLOOM_ORDER.indexOf(a) - BLOOM_ORDER.indexOf(b))
   // Objetivo escrito pelo professor, aberto por verbo no infinitivo, que a tabela de Bloom não reconhece (ex.: "Calcular", "Resolver").
+  // Coluna/ campo ausente E nenhuma estimativa (unidade do planejamento interno em branco): é capítulo sem objetivo, não "Bloom estimado".
+  const blank = unit.objetivosColumnMissing && unit.objetivos.length === 0
   const unclassified = unit.objetivosColumnMissing ? [] : unit.objetivos.filter((objective) => objective.kind === 'cognitiva' && !objective.estimated && !objective.bloomLevel && startsWithInfinitive(objective.text))
-  const bloomEstimated = unit.objetivosColumnMissing || (cognitive.length > 0 && cognitive.every((objective) => objective.estimated))
+  const bloomEstimated = (unit.objetivosColumnMissing && !blank) || (cognitive.length > 0 && cognitive.every((objective) => objective.estimated))
 
   if (scope) {
     if (enemSkills.length === 0) {
@@ -218,7 +238,9 @@ function analyzeChapter(unit: CurricularUnit, scope: EnemScope | null, isEnsinoM
     })
   }
 
-  if (unit.objetivosColumnMissing) {
+  if (blank) {
+    issues.push({ code: 'sem_objetivo_cognitivo', severity: 'media', message: missingObjectiveMessage(unit) })
+  } else if (unit.objetivosColumnMissing) {
     issues.push({ code: 'bloom_estimado', severity: 'info', message: 'Capítulo sem objetivo de aprendizagem informado; o nível de Bloom mostrado é só uma estimativa a partir do título e dos conteúdos.' })
   } else if (cognitive.length === 0 && unclassified.length > 0) {
     // O objetivo existe e é claro; só o verbo não está na tabela de Bloom do sistema.
@@ -374,7 +396,7 @@ export function analyzePlanning(selection: CurriculumSelection): PlanningAnalysi
     findings.push({ severity: 'media', title: 'Plano sem objetivos de aprendizagem', detail: 'Nenhum capítulo diz o que o aluno deve ser capaz de fazer ao final. Sem isso não dá para saber se o plano vai além de lembrar e compreender. Use os objetivos sugeridos em cada capítulo como ponto de partida.' })
   }
 
-  const withoutObjectives = chapters.filter((chapter) => chapter.needsObjectives && !chapter.bloomEstimated).length
+  const withoutObjectives = chapters.filter((chapter) => chapter.needsObjectives).length
   if (withoutObjectives > 0 && withoutObjectives < chapters.length) {
     findings.push({ severity: 'media', title: `${plural(withoutObjectives, 'capítulo', 'capítulos')} sem objetivo de aprendizagem`, detail: 'Nesses capítulos ainda não está dito o que o aluno deve ser capaz de fazer ao final. Use os objetivos sugeridos em cada um como ponto de partida.' })
   }

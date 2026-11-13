@@ -203,6 +203,23 @@ describe('mensagens sobre objetivos', () => {
     expect(festa.needsObjectives).toBe(true)
   })
 
+  it('substantivo com terminação de infinitivo não passa por objetivo', () => {
+    expect(message('Valor cultural da quadrilha.')).toContain('não deixam claro')
+    expect(message('Lugar da festa junina na cultura popular.')).toContain('não deixam claro')
+    expect(message('Poder e sociedade.')).toContain('não deixam claro')
+  })
+
+  it('unidade do planejamento interno sem objetivo conta como capítulo sem objetivo', async () => {
+    const { buildCurriculumFromPlan } = await import('@/lib/curriculum/planCurriculum')
+    const analysis = analyzePlanning(buildCurriculumFromPlan({ segment: 'anos-finais', gradeYear: 6, subject: 'Educação Física', bimester: 4 }, 'Planejamento interno #1', [
+      { position: 0, title: 'Quadrilha', content: 'Ritmo', objectives: null, skills: [] },
+      { position: 1, title: 'Jogos', content: 'Regras', objectives: 'Explicar as regras do jogo.', skills: [] },
+    ]))
+    expect(analysis.chapters[0]).toMatchObject({ needsObjectives: true, bloomEstimated: false })
+    expect(analysis.chapters[0].issues.find((issue) => issue.code === 'sem_objetivo_cognitivo')?.message).toContain('ainda não tem objetivo de aprendizagem')
+    expect(analysis.findings.some((finding) => finding.title === '1 capítulo sem objetivo de aprendizagem')).toBe(true)
+  })
+
   it('com a tabela ampliada, "Calcular" e "Resolver" já têm nível de Bloom', () => {
     const analysis = analyzePlanning(selectionFrom('anos-finais', 8, 'Matemática', header, [['1', 'Círculo', 'Área', 'EF08MA19', 'Calcular a área do círculo. Resolver problemas com perímetro.']]))
     expect(analysis.chapters[0].bloomLevels).toEqual(['aplicar'])
