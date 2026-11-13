@@ -115,6 +115,19 @@ describe('recommendEnemSkills', () => {
     expect(result.remainingGaps).toHaveLength(23)
   })
 
+  it('descarta sugestão para capítulo de outro lote', async () => {
+    const rows = Array.from({ length: 16 }, (_, index) => ['1', `Capítulo ${index}`, 'Ondas e luz', '', 'Explicar fenômenos.'])
+    const units = parseCurriculumRows(rows, resolveColumnRoles(HEADER), 'ensino-medio', 'Física')
+    const selection: CurriculumSelection = { segment: 'ensino-medio', gradeYear: 2, subject: 'Física', tabName: 'Física', units, unmappedWarnings: [] }
+    // 1º lote = capítulos 0-14; 2º lote = capítulo 15. A IA responde sempre sobre o 15.
+    const generate = vi.fn(async () => ({ chapters: [{ id: 15, suggestions: [{ code: 'C1:H1', justification: 'Ondas.', confidence: 'alta' }] }] }))
+    const result = await recommendEnemSkills(analyzePlanning(selection), selection, generate)
+    expect(generate).toHaveBeenCalledTimes(2)
+    expect(result.chapters.map((chapter) => chapter.rowIndex)).toEqual([15])
+    expect(result.chapters[0].suggestions).toHaveLength(1)
+    expect(result.discardedCount).toBe(1)
+  })
+
   it('não chama a IA fora do Ensino Médio', async () => {
     const units = parseCurriculumRows([['1', 'Frações', 'EF07MA05']], resolveColumnRoles(['Bimestre', 'Capítulos', 'Habilidades']), 'anos-finais', 'Matemática')
     const selection: CurriculumSelection = { segment: 'anos-finais', gradeYear: 7, subject: 'Matemática', tabName: 'Mat', units, unmappedWarnings: [] }

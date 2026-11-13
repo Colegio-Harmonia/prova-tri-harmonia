@@ -212,12 +212,19 @@ export async function recommendEnemSkills(
   }
 
   const raw: RawSuggestions = { chapters: [] }
+  let outOfBatchCount = 0
   for (let start = 0; start < targets.length; start += CHAPTERS_PER_CALL) {
     const batch = targets.slice(start, start + CHAPTERS_PER_CALL)
     const parsed = suggestionsResultSchema.parse(await generate(buildSuggestionPrompt(analysis, selection, batch)))
-    raw.chapters.push(...parsed.chapters)
+    // Só vale resposta sobre capítulo que a IA recebeu NESTE lote: um id de
+    // outro lote colaria a sugestão em capítulo que ela nunca viu.
+    const batchIds = new Set(batch.map((chapter) => chapter.rowIndex))
+    for (const item of parsed.chapters) {
+      if (batchIds.has(item.id)) raw.chapters.push(item)
+      else outOfBatchCount += item.suggestions.length
+    }
   }
 
   const { chapters, discardedCount } = sanitizeSuggestions(raw, analysis)
-  return { status: 'ok', message: null, chapters, remainingGaps: remainingGapCodes(analysis, chapters), discardedCount }
+  return { status: 'ok', message: null, chapters, remainingGaps: remainingGapCodes(analysis, chapters), discardedCount: discardedCount + outOfBatchCount }
 }

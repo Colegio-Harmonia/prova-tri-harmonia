@@ -1,7 +1,9 @@
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
 import { llmAvailable } from '@/lib/gemini/llmClient'
 import { generateValidatedStructuredContent } from '@/lib/gemini/structuredRepair'
-import type { Segment } from '@/types/exam'
+import { TabResolutionError } from '@/lib/sheets/tabResolver'
+import type { CurriculumSelection, Segment } from '@/types/exam'
+import { getYearCurriculumFromInternalPlans } from './internalPlanSource'
 import { analyzePlanning, type PlanningAnalysis } from './analyzePlanning'
 import {
   recommendEnemSkills,
@@ -24,12 +26,29 @@ export type PlanningAdvisorParams = {
 }
 
 /**
+ * Planilha primeiro; se a aba não puder ser resolvida (ex.: Inglês do EM,
+ * planejado só no planejamento interno), usa os planejamentos internos
+ * aprovados do ano. Sem nenhum dos dois, devolve o erro original da planilha.
+ */
+async function loadYearCurriculum(params: PlanningAdvisorParams): Promise<CurriculumSelection> {
+  const scope = { segment: params.segment, gradeYear: params.gradeYear, subject: params.subject }
+  try {
+    return await getCurriculumForExam(scope)
+  } catch (error) {
+    if (!(error instanceof TabResolutionError)) throw error
+    const fromPlans = await getYearCurriculumFromInternalPlans(scope)
+    if (!fromPlans) throw error
+    return fromPlans
+  }
+}
+
+/**
  * Lê o planejamento do ANO INTEIRO (sem filtro de bimestre nem de Status
  * Cronograma), analisa e, se pedido, acrescenta sugestões da IA. Só leitura:
  * nada é gravado na planilha nem no banco de planejamento.
  */
 export async function runPlanningAdvisor(params: PlanningAdvisorParams): Promise<PlanningAdvisorReport> {
-  const selection = await getCurriculumForExam({ segment: params.segment, gradeYear: params.gradeYear, subject: params.subject })
+  const selection = await loadYearCurriculum(params)
   const analysis = analyzePlanning(selection)
   if (!params.withSuggestions || !analysis.enem) return { analysis, recommendations: null }
 
