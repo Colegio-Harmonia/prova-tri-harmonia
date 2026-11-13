@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { auth } from '@/auth/auth'
 import { isStaffSuperuser } from '@/lib/auth/roles'
+import PlanningAdvisor from './planning-advisor'
 import PlanningImport from './planning-import'
 import PlanningIndicators from './planning-indicators'
 import PlanningList from './planning-list'
@@ -13,7 +14,7 @@ export default async function PlanningPage(props: { searchParams: Promise<{ aba?
   if (!session?.user) redirect('/login')
   const isManager = isStaffSuperuser(session.user.role ?? '')
   const { aba } = await props.searchParams
-  const tab = isManager && aba === 'importar' ? 'importar' : aba === 'indicadores' ? 'indicadores' : 'lista'
+  const tab = isManager && aba === 'importar' ? 'importar' : aba === 'indicadores' ? 'indicadores' : aba === 'assistente' ? 'assistente' : 'lista'
   const tabClass = (active: boolean) => `min-h-10 border-b-2 px-4 py-2 text-sm font-medium ${active ? 'border-harmonia-green text-content-primary' : 'border-transparent text-content-secondary hover:text-content-primary'}`
   return <div className="space-y-5">
     <div>
@@ -23,8 +24,9 @@ export default async function PlanningPage(props: { searchParams: Promise<{ aba?
     <nav aria-label="Seções do planejamento" className="flex gap-1 overflow-x-auto border-b border-border">
       <Link href="/planejamento" aria-current={tab === 'lista' ? 'page' : undefined} className={tabClass(tab === 'lista')}>Planejamentos</Link>
       <Link href="/planejamento?aba=indicadores" aria-current={tab === 'indicadores' ? 'page' : undefined} className={tabClass(tab === 'indicadores')}>Indicadores</Link>
+      <Link href="/planejamento?aba=assistente" aria-current={tab === 'assistente' ? 'page' : undefined} className={tabClass(tab === 'assistente')}>Assistente</Link>
       {isManager && <Link href="/planejamento?aba=importar" aria-current={tab === 'importar' ? 'page' : undefined} className={tabClass(tab === 'importar')}>Importar planilha</Link>}
     </nav>
-    {tab === 'importar' ? <PlanningImport /> : tab === 'indicadores' ? <PlanningIndicators /> : <PlanningList isManager={isManager} />}
+    {tab === 'importar' ? <PlanningImport /> : tab === 'assistente' ? <PlanningAdvisor /> : tab === 'indicadores' ? <PlanningIndicators /> : <PlanningList isManager={isManager} />}
   </div>
 }

@@ -2,8 +2,78 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 10/11/2026 — recuperação do versionamento; detalhes em
+> Última atualização: 13/11/2026 — Assistente de Planejamento publicado. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
 > [`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md).
+
+## Regularização servidor × main — 13/11/2026
+
+Depois do snapshot `abd6093` (10/11), a árvore de produção recebeu correções
+que nunca chegaram ao `main`: lote 477 (retry e teto de concorrência do Jev,
+`JEV_MAX_CONCURRENCY`; `createPlanningAcceptance` descarta candidato em vez de
+abortar; worker adia job com Jev fora) e o filtro por disciplina/teto de
+conferências em `acervoQuestions.ts` (11/11), além de `manual/route.ts`.
+Eram 11 arquivos; todo o resto da diferença era ajuste feito só no `main`
+depois do snapshot (deploy script, baseline, LazyMathText, cores semânticas).
+
+Conciliação: estado do servidor commitado sobre `abd6093` e mesclado por
+3-way no `main` + Assistente, sem conflito. Suíte completa (987), TypeScript,
+lint e regressão passaram. Com isso o `main` volta a ser a fonte da produção e
+`npm run deploy:production` pode ser usado.
+
+## Assistente de Planejamento (Matriz do ENEM) — 12/11/2026
+
+Nova aba **Assistente** em `/planejamento` (professor, coordenação e direção):
+lê o plano de curso do ano inteiro na planilha e recomenda ajustes. Só leitura —
+nunca escreve na planilha nem no planejamento interno.
+
+- Ensino Médio: capítulos sem habilidade ENEM, códigos C:H inexistentes,
+  cobertura das 30 habilidades no recorte da disciplina (Física/Química/Biologia
+  = C1–C5 + a competência própria; Linguagens pelo recorte de `enemAreaMap`) e
+  sugestões de habilidade por capítulo via IA.
+- Demais segmentos: BNCC × Bloom; SAEB só como nota (exato/aproximado/sem matriz).
+- A IA escolhe numa lista fechada; `sanitizeSuggestions` descarta o que não
+  existir na matriz e o texto exibido vem sempre de `enemMatrixOfficial.ts`.
+- `src/config/enemMatrixOfficial.ts`: texto oficial das 4 áreas, transcrito do
+  PDF do INEP. **O seed de `enem_skills` (`scripts/setup-enem-schema.ts`) diverge
+  do INEP em várias habilidades de Natureza e Humanas** — pendência separada,
+  não corrigida aqui (afeta rótulos do banco ENEM).
+- Código: `src/lib/planningAdvisor/`, rota `POST /api/curriculum/planning-advisor`,
+  `scripts/planning-advisor-csv.ts` (análise de um CSV de aba, sem banco/IA).
+
+Validação: 20 testes novos; suíte completa (970), TypeScript, lint e regressão
+passaram. Análise determinística rodada sobre a aba real de Sociologia do 1º EM
+(12 capítulos, 0/30 habilidades ENEM — nenhuma aba do 1º EM tem a coluna
+"Habilidades ENEM" hoje). **Sugestões por IA testadas só com dublê**: falta
+rodar com o provedor real em DEV. Sem migration, sem deploy.
+
+**Publicação em produção — 13/11/2026 (fora do fluxo oficial, a pedido).**
+A árvore do servidor está em `codex/jev-generation-completion`, 10 commits atrás
+do `main` e com 243 arquivos sem commit; o `main` não tem a correção do lote 477
+(`JEV_MAX_CONCURRENCY`) nem ~26 arquivos que só existem lá, então
+`npm run deploy:production` recusa e um build do `main` regrediria a produção.
+Publicado assim: cópia da árvore do servidor em
+`/home/eduardo/releases/prova-tri-assistente-20261113` + os arquivos deste PR,
+imagem `prova-tri:assistente-20261113` (554decef6cec), também etiquetada
+`prova-tri:local`; só o `web` foi recriado. Rollback:
+`prova-tri:before-assistente-20261113` (0971a8a795eb). Workers intocados.
+
+⚠️ **A árvore `/home/eduardo/prova-tri` NÃO tem os arquivos do Assistente.**
+Um `docker compose up -d --build` a partir dela remove a aba de produção. Antes
+do próximo build ali, trazer este PR (ou os arquivos de `src/lib/planningAdvisor`,
+`src/config/enemMatrixOfficial.ts`, `planejamento/planning-advisor.tsx`,
+`planejamento/page.tsx` e `api/curriculum/planning-advisor`).
+
+**Atualização no mesmo dia:** nova imagem `prova-tri:assistente-20261113b`
+(61c3473af6a3) com as correções da 2ª rodada de revisão (lote de sugestões e
+fallback para o planejamento interno). Mesmo procedimento; a anterior
+(`prova-tri:assistente-20261113`) fica como rollback imediato. Conferido no
+container: Inglês 1º e 2º EM passam a ser analisados pelo planejamento interno
+aprovado (só o 4º bimestre tem versão aprovada hoje).
+
+Conferido após a troca: `web` saudável, login 200 (local e público) e o serviço
+rodado dentro do container sobre Sociologia 1º EM com o provedor real — sugestões
+por capítulo devolvidas e validadas contra a matriz. Tela autenticada ainda não
+conferida no navegador.
 
 ## Recuperação do versionamento — 10/11/2026
 

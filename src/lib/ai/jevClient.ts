@@ -250,6 +250,38 @@ function remember(cacheKey: string, entry: MemoryEntry) {
   while (memoryCache.size > MAX_MEMORY_CACHE_ENTRIES) memoryCache.delete(memoryCache.keys().next().value as string)
 }
 
+// Falhas transitórias de rede/provedor são repetidas dentro da mesma decisão
+// antes de cair no fallback. Uma prova de EM dispara ~1.000 conferências; com
+// ~1% de connection_error, sem repetição quase toda prova perdia ao menos uma
+// (lote 477, 10/11/2026). 429 fica de fora: o worker adia pelo Retry-After.
+const TRANSIENT_JEV_FAILURES = new Set(['connection_error', 'timeout', 'provider_unavailable'])
+const DEFAULT_RETRY_DELAYS_MS = [250, 1000]
+
+// Teto de chamadas simultâneas ao TypeSafe por processo. A geração busca o
+// acervo das 12 questões em paralelo e chegava a ~20 req/s, com rajadas de
+// connection_error. Configurável por JEV_MAX_CONCURRENCY.
+function jevConcurrencyLimit(raw = process.env.JEV_MAX_CONCURRENCY): number {
+  const parsed = raw ? Number(raw) : 6
+  return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 32) : 6
+}
+let activeJevRequests = 0
+const jevWaiters: Array<() => void> = []
+async function acquireJevSlot(): Promise<() => void> {
+  if (activeJevRequests >= jevConcurrencyLimit()) await new Promise<void>((resolve) => jevWaiters.push(resolve))
+  activeJevRequests++
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    activeJevRequests--
+    jevWaiters.shift()?.()
+  }
+}
+
+function sleepMs(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 async function safelyRecord(store: JevDecisionStore | null, decision: StoredJevDecision) {
   if (!store) return
   try { await store.record(decision) } catch { console.warn('[jev] falha ao registrar decisão') }
@@ -268,6 +300,8 @@ export async function evaluateWithJev(options: {
   model?: string
   endpoint?: string
   timeoutMs?: number
+  /** Esperas entre repetições de falha transitória; [] desativa a repetição. */
+  retryDelaysMs?: number[]
   fetchImpl?: FetchLike
   store?: JevDecisionStore | null
   telemetry?: ((operation: AiOperation) => Promise<void>) | null
@@ -320,14 +354,28 @@ export async function evaluateWithJev(options: {
   let reservation: { release: () => void } | undefined
   try {
     reservation = reserveOperation ? await reserveOperation(options.operation) : undefined
-    const response = await (options.fetchImpl ?? fetch)(options.endpoint ?? TYPESAFE_ENDPOINT, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, state: options.state, questions: options.questions }),
-      signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
-    })
-    if (!response.ok) throw new JevHttpError(response.status, await responseFailure(response))
-    const body = await response.json() as { model?: unknown; answers?: unknown; usage?: unknown }
+    const retryDelays = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS
+    let response: Response | undefined
+    for (let attempt = 0; ; attempt++) {
+      const releaseSlot = await acquireJevSlot()
+      try {
+        response = await (options.fetchImpl ?? fetch)(options.endpoint ?? TYPESAFE_ENDPOINT, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model, state: options.state, questions: options.questions }),
+          signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+        })
+        if (!response.ok) throw new JevHttpError(response.status, await responseFailure(response))
+        break
+      } catch (error) {
+        if (attempt >= retryDelays.length || !TRANSIENT_JEV_FAILURES.has(classifyJevFailure(error))) throw error
+        console.warn('[jev] falha transitória, repetindo', { operation: options.operation, attempt: attempt + 1, category: classifyJevFailure(error) })
+      } finally {
+        releaseSlot()
+      }
+      await sleepMs(retryDelays[attempt]! + Math.floor(Math.random() * 100))
+    }
+    const body = await response!.json() as { model?: unknown; answers?: unknown; usage?: unknown }
     const resolvedModel = typeof body.model === 'string' ? body.model : model
     const answers = parseJevAnswers(options.questions, body.answers)
     const routing = options.route(answers)

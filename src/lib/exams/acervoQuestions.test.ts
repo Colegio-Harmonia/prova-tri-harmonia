@@ -52,6 +52,38 @@ describe('questões do acervo', () => {
     expect(urls[0].searchParams.get('disciplina')).toBe('Língua Inglesa')
     expect(urls[0].searchParams.get('segmento')).toBe('Ensino Médio')
   })
+  it('no EM descarta antes do Jev itens de outra disciplina declarada pelo acervo', async () => {
+    const withDiscipline = (id: number, disciplina: string | null) => ({ ...original(id), bncc: ['EM13CNT301'], classificacoes: disciplina ? [{ kind: 'disciplina', label: 'Disciplina', value: disciplina }] : [] })
+    const disciplines: Record<number, string | null> = { 1: 'Física', 2: 'Química', 3: 'Biologia', 4: null }
+    mockApi([1, 2, 3, 4], (id) => withDiscipline(id, disciplines[id] ?? null))
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const seen: number[] = []
+    const acceptCandidate = vi.fn(async (question: { acervoRef?: { questionId: number } | null }) => { seen.push(question.acervoRef!.questionId); return false })
+    await findAcervoQuestion({ ...params, codes: ['EM13CNT301'], planningSearch: { subject: 'Biologia', title: 'Genética', content: 'Herança' }, acceptCandidate })
+    // Física e Química nunca chegam à conferência; sem disciplina declarada segue para o Jev.
+    expect(seen.filter((id) => id <= 4).sort()).toEqual([3, 4])
+  })
+  it('no EM limita as conferências de aderência por questão e segue para o fallback', async () => {
+    const ids = Array.from({ length: 200 }, (_, index) => index + 1)
+    mockApi(ids, (id) => ({ ...original(id, `Questão ${id}`), bncc: ['EM13CNT201'] }))
+    vi.stubGlobal('fetch', vi.fn(async (url: URL) => {
+      if (url.pathname === '/api/v1/questoes') return json({ bncc_solicitada: url.searchParams.get('bncc'), total_elegiveis: ids.length, questoes: ids.map((id) => ({ id })) })
+      if (url.pathname === '/api/painel/questions') return json({ items: [] })
+      return json({ questao: { ...original(Number(url.pathname.split('/').at(-1)), `Questão ${url.pathname}`), bncc: ['EM13CNT201'] } })
+    }))
+    const acceptCandidate = vi.fn().mockResolvedValue(false)
+    const result = await findAcervoQuestion({ ...params, codes: ['EM13CNT201'], planningSearch: { subject: 'Biologia', title: 'x', content: 'y' }, acceptCandidate })
+    expect(result.question).toBeNull()
+    // O teto vale para os dois tipos tentados na busca por BNCC juntos.
+    expect(acceptCandidate).toHaveBeenCalledTimes(24)
+    expect(console.info).toHaveBeenCalledWith('[acervo/search] teto de conferências por questão atingido', expect.objectContaining({ alignmentChecks: 24 }))
+  })
+  it('sem conferência de aderência (fundamental) a busca continua sem teto', async () => {
+    const ids = Array.from({ length: 60 }, (_, index) => index + 1)
+    mockApi(ids, (id) => id === 60 ? original(id) : discursive(id))
+    const found = await findAcervoQuestion(params)
+    expect(found.question).toMatchObject({ type: 'objetiva', acervoRef: { questionId: 60 } })
+  })
   it('candidato com BNCC correta mas incompatível não é consumido', async () => {
     mockApi([1, 2])
     const acceptCandidate = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
@@ -69,9 +101,29 @@ describe('questões do acervo', () => {
   })
   it('não importa manualmente uma questão sem gabarito ou com ID divergente', async () => {
     mockApi([], () => ({ ...original(7), gabarito: { alternativas_corretas: [], resposta_discursiva: null } }))
-    await expect(importAcervoQuestionById(7, 1)).rejects.toThrow('Não foi possível importar')
+    await expect(importAcervoQuestionById(7, 1)).rejects.toThrow('gabarito desta questão no acervo é inconsistente')
     mockApi([], () => original(8))
     await expect(importAcervoQuestionById(7, 1)).rejects.toThrow('Não foi possível importar')
+  })
+  it('explica por que recusa formatos sem suporte, sem sugerir tentar de novo', async () => {
+    const columns = { ...original(7), tipo: 'relacionar_colunas', alternativas: [], gabarito: { alternativas_corretas: [], resposta_discursiva: null } }
+    mockApi([], () => columns)
+    await expect(importAcervoQuestionById(7, 1)).rejects.toMatchObject({ name: 'Error', rejection: { code: 'unsupported_type', tipo: 'relacionar_colunas' }, message: expect.stringContaining('ligar/relacionar colunas') })
+    const three = { ...original(7), alternativas: original(7).alternativas.slice(0, 3) }
+    mockApi([], () => three)
+    await expect(importAcervoQuestionById(7, 1)).rejects.toThrow('tem 3 alternativas; o cartão-resposta exige 4 ou 5')
+    const pending = { ...discursive(7), pendencias: ['gabarito_estruturado_nao_disponivel_no_dom'] }
+    mockApi([], () => pending)
+    await expect(importAcervoQuestionById(7, 1)).rejects.toThrow('o gabarito não está disponível na fonte')
+    mockApi([], () => ({ ...original(7), midias_pendentes: 1 }))
+    const processing = await importAcervoQuestionById(7, 1).catch((error: unknown) => error)
+    expect(processing).toBeInstanceOf(Error)
+    expect(processing).not.toHaveProperty('rejection')
+    expect((processing as Error).message).toContain('ainda estão sendo processadas')
+    for (const raw of [columns, three, pending]) {
+      mockApi([], () => raw)
+      await expect(importAcervoQuestionById(7, 1)).rejects.not.toThrow('tente novamente')
+    }
   })
   it('usa dissertativa somente após esgotar as objetivas e preserva o original', async () => {
     const fetch = mockApi([1], discursive)

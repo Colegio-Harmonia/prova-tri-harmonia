@@ -4,7 +4,7 @@ import { examQuestionSchema, type ExamQuestion } from '@/lib/gemini/examSchema'
 const mocks = vi.hoisted(() => ({ auth: vi.fn(), authorize: vi.fn(), importQuestion: vi.fn(), classify: vi.fn(), set: vi.fn(), locked: null as unknown }))
 vi.mock('@/auth/auth', () => ({ auth: mocks.auth }))
 vi.mock('@/lib/exams/authorizeExamAccess', () => ({ authorizeExamAccess: mocks.authorize }))
-vi.mock('@/lib/exams/acervoQuestions', () => ({ importAcervoQuestionById: mocks.importQuestion }))
+vi.mock('@/lib/exams/acervoQuestions', async (original) => ({ ...await original<typeof import('@/lib/exams/acervoQuestions')>(), importAcervoQuestionById: mocks.importQuestion }))
 vi.mock('@/lib/exams/manualExam', async (original) => ({ ...await original<typeof import('@/lib/exams/manualExam')>(), classifyManualQuestion: mocks.classify }))
 vi.mock('@/lib/exams/acervoPresentation', () => ({ presentAcervoExam: (exam: unknown) => exam }))
 vi.mock('@/lib/exams/importedQuestionBloom', () => ({ classifyQuestionBloom: vi.fn() }))
@@ -69,6 +69,21 @@ describe('edição persistente da prova manual', () => {
     expect((await request({ action: 'import', questionId: 7 })).status).toBe(502)
     expect(mocks.classify).not.toHaveBeenCalled()
     expect(mocks.set).not.toHaveBeenCalled()
+  })
+  it('informa o motivo quando o acervo recusa a questão, sem sugerir nova tentativa', async () => {
+    const { AcervoQuestionRejectedError } = await import('@/lib/exams/acervoQuestions')
+    mocks.importQuestion.mockRejectedValueOnce(new AcervoQuestionRejectedError('Esta questão tem 3 alternativas; o cartão-resposta exige 4 ou 5.', { code: 'alternatives_count', count: 3 }))
+    const response = await request({ action: 'import', questionId: 7 })
+    expect(response.status).toBe(422)
+    expect(await response.json()).toEqual({ error: 'Esta questão tem 3 alternativas; o cartão-resposta exige 4 ou 5.' })
+    expect(mocks.set).not.toHaveBeenCalled()
+  })
+  it('mantém 502 com sugestão de nova tentativa quando a falha do acervo é passageira', async () => {
+    const { AcervoUnavailableError } = await import('@/lib/exams/acervoQuestions')
+    mocks.importQuestion.mockRejectedValueOnce(new AcervoUnavailableError('Não foi possível importar esta questão completa. Escolha outra questão ou tente novamente.'))
+    const response = await request({ action: 'import', questionId: 7 })
+    expect(response.status).toBe(502)
+    expect((await response.json()).error).toContain('tente novamente')
   })
   it('salva questão com classificação pendente e impede conclusão incompleta', async () => {
     const pending = { ...question(7), bloomAssessment: undefined }
