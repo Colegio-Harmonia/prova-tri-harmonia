@@ -15,6 +15,7 @@ import { getEnemAreaForSubject, getEnemCompetenciesForSubject } from '@/config/e
 import { isEnemAreaCode, type EnemAreaCode } from '@/config/enemMatrix'
 import { ENEM_AREA_LABELS, getOfficialEnemCompetencyText, getOfficialEnemSkillText, listOfficialEnemSkills, type OfficialEnemSkill } from '@/config/enemMatrixOfficial'
 import { getSaebApplicability } from '@/config/saebApplicability'
+import { composePlanUnitTitle } from '@/lib/curriculum/planUnitTitle'
 import type { CurriculumSelection, CurricularUnit } from '@/types/exam'
 
 export const BLOOM_ORDER: BloomLevel[] = ['lembrar', 'compreender', 'aplicar', 'analisar', 'avaliar', 'criar']
@@ -44,7 +45,11 @@ export type ChapterEnemSkill = { code: string; competency: number; skill: number
 export type ChapterAnalysis = {
   rowIndex: number
   title: string
+  /** Título da unidade correspondente no planejamento interno (mesma regra da importação). */
+  planTitle: string
   bimestre: string | null
+  /** Bimestre 1-4 quando o período da planilha é um bimestre reconhecível; senão null. */
+  bimesterNumber: number | null
   conteudo: string | null
   bnccCodes: string[]
   enemSkills: ChapterEnemSkill[]
@@ -145,7 +150,13 @@ export function resolveEnemScope(subject: string): EnemScope | null {
   }
 }
 
-function analyzeChapter(unit: CurricularUnit, scope: EnemScope | null, isEnsinoMedio: boolean): ChapterAnalysis {
+function bimesterNumberOf(period: string | null): number | null {
+  const digits = period?.match(/\d+/)
+  const value = digits ? Number(digits[0]) : NaN
+  return value >= 1 && value <= 4 ? value : null
+}
+
+function analyzeChapter(unit: CurricularUnit, scope: EnemScope | null, isEnsinoMedio: boolean, positionInBimester: number): ChapterAnalysis {
   const issues: ChapterIssue[] = []
   const enemSkills: ChapterEnemSkill[] = (unit.enemSkills?.skills ?? []).map((skill) => ({
     code: skill.code, competency: skill.competency, skill: skill.skill, count: skill.count,
@@ -193,7 +204,8 @@ function analyzeChapter(unit: CurricularUnit, scope: EnemScope | null, isEnsinoM
   }
 
   return {
-    rowIndex: unit.rowIndex, title: chapterTitle(unit), bimestre: unit.bimestre, conteudo: unit.conteudo,
+    rowIndex: unit.rowIndex, title: chapterTitle(unit), planTitle: composePlanUnitTitle(unit, `Unidade ${positionInBimester + 1}`), bimestre: unit.bimestre,
+    bimesterNumber: bimesterNumberOf(unit.bimestre), conteudo: unit.conteudo,
     bnccCodes, enemSkills, invalidEnemCodes, bloomLevels, bloomEstimated, issues,
   }
 }
@@ -266,7 +278,15 @@ function plural(count: number, singular: string, pluralForm: string) {
 export function analyzePlanning(selection: CurriculumSelection): PlanningAnalysis {
   const isEnsinoMedio = selection.segment === 'ensino-medio'
   const scope = isEnsinoMedio ? resolveEnemScope(selection.subject) : null
-  const chapters = selection.units.map((unit) => analyzeChapter(unit, scope, isEnsinoMedio))
+  // A importação do bimestre nomeia linha sem título como "Unidade N", N = posição
+  // dentro do bimestre; a análise precisa do mesmo nome para achar a unidade depois.
+  const seenPerPeriod = new Map<string, number>()
+  const chapters = selection.units.map((unit) => {
+    const period = String(bimesterNumberOf(unit.bimestre) ?? unit.bimestre ?? '')
+    const position = seenPerPeriod.get(period) ?? 0
+    seenPerPeriod.set(period, position + 1)
+    return analyzeChapter(unit, scope, isEnsinoMedio, position)
+  })
   const enem = scope ? buildEnemCoverage(chapters, scope) : null
   const bloom = buildBloomSummary(selection.units)
   const chaptersWithoutBncc = selection.units.filter((unit) => unit.habilidades.status === 'nao_mapeado').length

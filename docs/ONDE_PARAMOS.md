@@ -5,6 +5,28 @@
 > Última atualização: 13/11/2026 — produção regularizada com o main e publicada pelo script oficial. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
 > [`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md).
 
+## Assistente grava no Planejamento, não na planilha — 13/11/2026
+
+Pedido do usuário: a planilha é provisória; a fonte sólida é o Planejamento da
+Prova TRI. O Assistente deixou de mandar "copiar para a planilha": cada sugestão
+tem **Adicionar ao planejamento** (e "Adicionar todas" por capítulo).
+
+- `POST /api/curriculum/planning-advisor/apply` → `applySuggestions.ts`. Toda
+  escrita passa por `planningService` (mesmas permissões: responsável pelo
+  planejamento ou coordenação/direção). Grava **sempre em rascunho**: usa o
+  rascunho aberto ou abre nova versão a partir da oficial; versão em revisão
+  bloqueia; a oficial nunca é tocada.
+- Só acrescenta códigos válidos na área e que a unidade ainda não tem; pesos e
+  origens já escritos em "Habilidades ENEM" são preservados.
+- Capítulo é localizado por bimestre + título da unidade (mesma regra da
+  importação, `composePlanUnitTitle`). Sem planejamento no bimestre, a
+  coordenação pode importar a planilha dali mesmo e adicionar em seguida.
+- "Copiar códigos" continua como ação secundária.
+
+Validação: testes unitários e de integração (PGlite) do fluxo completo; suíte
+(999), TypeScript, lint e regressão passaram. **Não conferido no navegador.**
+Sem migration.
+
 ## Produção de volta ao fluxo oficial — 13/11/2026
 
 `/home/eduardo/prova-tri` está em `main` (c3a866e), árvore limpa e igual ao
