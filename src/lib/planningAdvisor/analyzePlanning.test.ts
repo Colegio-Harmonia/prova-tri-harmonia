@@ -50,6 +50,10 @@ describe('analyzePlanning — Ensino Médio', () => {
   ])
   const analysis = analyzePlanning(selection)
 
+  it('expõe bimestre e título da unidade para levar ao planejamento interno', () => {
+    expect(analysis.chapters.map((chapter) => [chapter.bimesterNumber, chapter.planTitle])).toEqual([[1, 'Termologia'], [1, 'Óptica geométrica'], [2, 'Ondas']])
+  })
+
   it('aponta capítulo sem habilidade ENEM', () => {
     const optica = analysis.chapters[1]
     expect(optica.issues.map((issue) => issue.code)).toContain('sem_habilidade_enem')
@@ -159,5 +163,17 @@ describe('analyzePlanning — apontamentos de revisão', () => {
     expect(analysis.bloom.higherOrderCount).toBe(2)
     expect(analysis.findings.some((finding) => finding.title.includes('concentrados'))).toBe(false)
     expect(analysis.findings.some((finding) => finding.title === 'Bloom parcialmente estimado')).toBe(true)
+  })
+})
+
+describe('título de unidade igual ao da importação', () => {
+  it('linha sem título vira "Unidade N" pela posição dentro do bimestre', () => {
+    const analysis = analyzePlanning(selectionFrom('ensino-medio', 1, 'História', ['Bimestre', 'Capítulo', 'Conteúdos'], [
+      ['1', 'Brasil Colônia', 'Açúcar'],
+      ['1', '', 'Mineração'],
+      ['2', '', 'Iluminismo'],
+      ['2', 'Revolução Francesa', 'Jacobinos'],
+    ]))
+    expect(analysis.chapters.map((chapter) => chapter.planTitle)).toEqual(['Brasil Colônia', 'Unidade 2', 'Unidade 1', 'Revolução Francesa'])
   })
 })

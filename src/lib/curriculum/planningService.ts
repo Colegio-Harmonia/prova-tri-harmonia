@@ -193,6 +193,44 @@ export async function saveDraft(viewer: Viewer, versionId: number, units: PlanUn
   })
 }
 
+/**
+ * Altera só o campo "Habilidades ENEM" de unidades de um rascunho, de forma
+ * atômica: trava a versão, relê as unidades dentro da transação e grava apenas
+ * as linhas alteradas. Diferente de `saveDraft`, não regrava o conteúdo
+ * inteiro — edição simultânea de outro responsável não é sobrescrita.
+ */
+export async function patchDraftEnemSkills<T>(
+  viewer: Viewer,
+  versionId: number,
+  compute: (units: Array<{ id: number; title: string; enemSkills: string | null }>) => { changes: Array<{ unitId: number; enemSkills: string | null }>; summary: string; result: T },
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    const [version] = await tx.select().from(curriculumPlanVersions).where(eq(curriculumPlanVersions.id, versionId)).for('update')
+    if (!version) throw new PlanningError('Versão não encontrada.', 404)
+    const context = await accessContext(viewer, version.planId, tx)
+    if (!canEditPlan(context, version.status)) {
+      throw new PlanningError(version.status === 'rascunho' ? 'Sem permissão para editar este planejamento.' : 'Esta versão não está mais em rascunho. Abra o planejamento e tente de novo.', version.status === 'rascunho' ? 403 : 409)
+    }
+    const plan = await tx.query.curriculumPlans.findFirst({ where: eq(curriculumPlans.id, version.planId) })
+    const units = await tx.select({ id: curriculumPlanUnits.id, title: curriculumPlanUnits.title, enemSkills: curriculumPlanUnits.enemSkills })
+      .from(curriculumPlanUnits).where(eq(curriculumPlanUnits.versionId, versionId)).orderBy(asc(curriculumPlanUnits.position)).for('update')
+    const { changes, summary, result } = compute(units)
+    const ids = new Set(units.map((unit) => unit.id))
+    for (const change of changes) {
+      if (!ids.has(change.unitId)) throw new PlanningError('Unidade fora desta versão.', 400)
+      // Mesma validação de quem edita pela tela: nenhum código ENEM inválido chega ao banco.
+      const { errors } = normalizePlanUnits([{ title: 'unidade', enemSkills: change.enemSkills, skills: [] }], plan?.subject)
+      if (errors.length) throw new PlanningError('Habilidades ENEM inválidas.', 422, errors)
+      await tx.update(curriculumPlanUnits).set({ enemSkills: change.enemSkills }).where(eq(curriculumPlanUnits.id, change.unitId))
+    }
+    if (changes.length) {
+      await tx.update(curriculumPlanVersions).set({ updatedAt: new Date() }).where(eq(curriculumPlanVersions.id, versionId))
+      await recordDecision(tx, { entityType: 'versao', entityId: versionId, planId: version.planId, action: 'conteudo_salvo', summary: `Versão ${version.versionNumber}: ${summary}`, details: { enemSkillsChanged: changes.length }, actorId: viewer.id })
+    }
+    return result
+  })
+}
+
 export async function transitionVersion(viewer: Viewer, versionId: number, to: PlanningStatus, note?: string | null) {
   return db.transaction(async (tx) => {
     const [version] = await tx.select().from(curriculumPlanVersions).where(eq(curriculumPlanVersions.id, versionId))
