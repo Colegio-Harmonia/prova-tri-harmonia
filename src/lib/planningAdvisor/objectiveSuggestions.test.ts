@@ -63,6 +63,14 @@ describe('sanitizeObjectives', () => {
     expect(result.discardedCount).toBe(6)
   })
 
+  it('descarta objetivo com mais de 25 palavras, mesmo curto em caracteres', () => {
+    const long = `Explicar ${Array.from({ length: 25 }, () => 'ab').join(' ')}` // 26 palavras, 83 caracteres
+    const ok = `Explicar ${Array.from({ length: 24 }, () => 'ab').join(' ')}` // 25 palavras
+    const result = sanitizeObjectives({ chapters: [{ id: 0, objectives: [long, ok] }] }, targets)
+    expect(result.chapters[0].objectives).toHaveLength(1)
+    expect(result.discardedCount).toBe(1)
+  })
+
   it('limita a 4 objetivos por capítulo', () => {
     const result = sanitizeObjectives({ chapters: [{ id: 1, objectives: ['Identificar a', 'Explicar b', 'Aplicar c', 'Comparar d', 'Criar e'] }] }, targets)
     expect(result.chapters[0].objectives).toHaveLength(4)

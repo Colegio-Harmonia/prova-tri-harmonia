@@ -282,7 +282,9 @@ export default function PlanningAdvisor({ isManager }: { isManager: boolean }) {
 
       {objectives && (objectives.status !== 'ok'
         ? objectives.message && <p role="status" className="rounded border border-status-warning-border bg-status-warning-surface p-3 text-sm text-status-warning-content">{objectives.message}</p>
-        : objectives.chapters.length > 0 && <p role="status" className="rounded border border-border bg-surface p-3 text-sm text-content-secondary">A IA sugeriu objetivos para {objectives.chapters.length} {objectives.chapters.length === 1 ? 'capítulo que estava' : 'capítulos que estavam'} sem objetivo. O nível de Bloom de cada um vem do verbo que abre a frase. Marque os que quiser e adicione ao rascunho do planejamento.</p>)}
+        : objectives.chapters.length === 0
+          ? <p role="status" className="rounded border border-status-warning-border bg-status-warning-surface p-3 text-sm text-status-warning-content">A IA não devolveu objetivos aproveitáveis para os capítulos sem objetivo{objectives.discardedCount > 0 ? ` (${objectives.discardedCount} ${objectives.discardedCount === 1 ? 'frase foi descartada' : 'frases foram descartadas'} na validação)` : ''}. Analise de novo para tentar outra vez.</p>
+          : <p role="status" className="rounded border border-border bg-surface p-3 text-sm text-content-secondary">A IA sugeriu objetivos para {objectives.chapters.length} {objectives.chapters.length === 1 ? 'capítulo que estava' : 'capítulos que estavam'} sem objetivo. O nível de Bloom de cada um vem do verbo que abre a frase. Marque os que quiser e adicione ao rascunho do planejamento.</p>)}
 
       {analysis.enem && <EnemCoverageSection enem={analysis.enem} remainingGaps={recommendations?.status === 'ok' ? recommendations.remainingGaps : null} />}
 

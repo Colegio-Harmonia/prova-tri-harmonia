@@ -19,6 +19,8 @@ const CHAPTERS_PER_CALL = 8
 const MAX_FIELD_CHARS = 700
 const MAX_SKILLS_IN_PROMPT = 10
 const MAX_OBJECTIVE_CHARS = 240
+/** Mesmo limite pedido à IA no prompt; frase maior é descartada, não cortada. */
+export const MAX_OBJECTIVE_WORDS = 25
 
 export type SuggestedObjective = { text: string; bloomLevel: BloomLevel }
 export type ChapterObjectiveSuggestions = { rowIndex: number; title: string; objectives: SuggestedObjective[] }
@@ -118,7 +120,7 @@ REGRAS OBRIGATÓRIAS:
 - Baseie-se SOMENTE no título, nos conteúdos e nas habilidades informadas do capítulo. Não acrescente conteúdo que o capítulo não traz e não cite códigos de habilidade no texto.
 - Objetivos cognitivos e verificáveis numa avaliação (o aluno demonstra que aprendeu). Não escreva objetivos atitudinais (valorizar, respeitar, apreciar, conviver, cuidar).
 - Varie os níveis: no máximo um objetivo em "lembrar" e pelo menos um em "analisar", "avaliar" ou "criar" quando o conteúdo permitir.
-- Linguagem adequada à série, sem ponto final, sem numeração, até 25 palavras por objetivo.
+- Linguagem adequada à série, sem ponto final, sem numeração, até ${MAX_OBJECTIVE_WORDS} palavras por objetivo.
 - Devolva um item para CADA capítulo recebido, usando o mesmo "id".`
 }
 
@@ -136,7 +138,7 @@ export function sanitizeObjectives(raw: RawObjectives, chapters: PlanningAnalysi
       const text = squash(rawText).replace(/^[-•\d.)\s]+/, '').replace(/[.;]+$/, '')
       const bloomLevel = bloomFromLeadingVerb(text)
       const duplicate = accepted.some((existing) => stripAccents(existing.text.toLowerCase()) === stripAccents(text.toLowerCase()))
-      if (!text || text.length > MAX_OBJECTIVE_CHARS || !bloomLevel || isAttitudinal(text) || duplicate || accepted.length >= MAX_OBJECTIVES_PER_CHAPTER) { discardedCount++; continue }
+      if (!text || text.length > MAX_OBJECTIVE_CHARS || text.split(' ').length > MAX_OBJECTIVE_WORDS || !bloomLevel || isAttitudinal(text) || duplicate || accepted.length >= MAX_OBJECTIVES_PER_CHAPTER) { discardedCount++; continue }
       accepted.push({ text: text.charAt(0).toUpperCase() + text.slice(1), bloomLevel })
     }
     merged.set(chapter.rowIndex, accepted)
