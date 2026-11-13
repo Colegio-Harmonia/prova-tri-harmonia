@@ -183,6 +183,37 @@ describe('evaluateWithJev', () => {
     expect(new JevUnavailableError(result.failure!, 'falha').retryable).toBe(true)
   })
 
+  it('repete connection_error transitório antes de cair no fallback', async () => {
+    const store = fakeStore()
+    const fetchImpl = vi.fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ answers: { aligned: { type: 'noul', noul: 0.9 } } })))
+    const result = await evaluateWithJev({
+      operation: 'jev/retry', questionVersion: 'v1', state: {}, questions, route, fallback,
+      apiKey: 'key', store, telemetry: null, reserveOperation: null, fetchImpl, retryDelaysMs: [0, 0],
+    })
+    expect(result.source).toBe('provider')
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(store.rows.at(-1)).toMatchObject({ status: 'succeeded' })
+  })
+
+  it('desiste após esgotar as repetições e não repete erro não transitório', async () => {
+    const failing = vi.fn(async () => { throw new TypeError('fetch failed') })
+    const exhausted = await evaluateWithJev({
+      operation: 'jev/retry-exhausted', questionVersion: 'v1', state: {}, questions, route, fallback,
+      apiKey: 'key', store: null, telemetry: null, reserveOperation: null, fetchImpl: failing, retryDelaysMs: [0, 0],
+    })
+    expect(exhausted).toMatchObject({ source: 'fallback', failure: { category: 'connection_error' } })
+    expect(failing).toHaveBeenCalledTimes(3)
+
+    const http422 = vi.fn(async () => new Response('{}', { status: 422 }))
+    await evaluateWithJev({
+      operation: 'jev/no-retry-422', questionVersion: 'v1', state: {}, questions, route, fallback,
+      apiKey: 'key', store: null, telemetry: null, reserveOperation: null, fetchImpl: http422, retryDelaysMs: [0, 0],
+    })
+    expect(http422).toHaveBeenCalledTimes(1)
+  })
+
   it('respeita o orçamento antes de chamar o provedor', async () => {
     const store = fakeStore()
     const fetchImpl = vi.fn()

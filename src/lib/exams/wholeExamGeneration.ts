@@ -1,4 +1,4 @@
-import { assessPlanningAlignment, PlanningAlignmentUnavailableError } from './planningAlignment'
+import { assessPlanningAlignment, createPlanningAcceptance } from './planningAlignment'
 import type { TargetEnemSkill } from './targetSkills'
 import { classifyMissingQuestionBncc } from './questionBnccClassification'
 import { classifyImportedQuestionBloom } from './importedQuestionBloom'
@@ -231,6 +231,7 @@ export async function generateWholeExam(input: WholeExamGenerationInput): Promis
   const reasons = new Map<number, string>()
   const selectionStartedAt = Date.now()
   const acervoSession = createAcervoSearchSession()
+  const acceptAlignment = createPlanningAcceptance()
   await Promise.all(input.slots.map(async (slot) => {
     if (input.questionSource === 'ia') { remaining.push(slot); return }
     await input.onStage?.(slot.number, 'buscando_acervo')
@@ -244,8 +245,7 @@ export async function generateWholeExam(input: WholeExamGenerationInput): Promis
         const alignment = await assessPlanningAlignment(question, { subject: input.subject, gradeYear: input.gradeYear, classLabel: input.classLabel, ...slot, targetBnccCodes: slot.targetSkills.map((skill) => skill.code) })
         question.plannedEnemSkill = slot.targetEnemSkill ?? null
         question.planningAlignment = alignment
-        if (alignment.status === 'unavailable') throw new PlanningAlignmentUnavailableError(alignment.evidence)
-        return alignment.status === 'aligned'
+        return acceptAlignment(alignment)
       } } : {}),
     })
     if (!found.question) {

@@ -134,6 +134,15 @@ async function runOnce(job: ClaimedJob) {
       console.warn(`[worker] job #${job.id} aguardando Jev (${err.failure.category}); tentativa preservada.`)
       return
     }
+    // Conferência de aderência indisponível de forma repetida (o Jev já repete
+    // falhas transitórias e a geração tolera algumas): trata como provedor fora,
+    // adia sem consumir tentativa em vez de marcar erro definitivo.
+    if (err instanceof Error && err.name === 'PlanningAlignmentUnavailableError') {
+      const availableAt = new Date(Date.now() + PROVIDER_RETRY_DELAY_MS)
+      await deferJobForProvider(job, availableAt, `${message} A fila tentará novamente após ${availableAt.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}; nenhuma tentativa de conteúdo foi consumida.`)
+      console.warn(`[worker] job #${job.id} aguardando conferência de aderência (Jev); tentativa preservada.`)
+      return
+    }
     if (err instanceof StructuredGenerationError && TEMPORARY_PROVIDER_FAILURES.has(err.failureCode)) {
       const availableAt = new Date(Date.now() + PROVIDER_RETRY_DELAY_MS)
       await deferJobForProvider(job, availableAt, `O provedor de IA recusou temporariamente a geração (${err.failureCode}). A atividade será retomada automaticamente após ${availableAt.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}; nenhuma tentativa foi consumida.`)
