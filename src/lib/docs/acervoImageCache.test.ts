@@ -30,4 +30,15 @@ describe('imagens originais nos documentos', () => {
     expect([...cache.keys()]).toEqual([100])
     expect(vi.mocked(fetch).mock.calls[0]![0].toString()).toBe('http://acervo.local/api/media/100')
   })
+  it('tenta de novo quando o Acervo falha de forma transitória', async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new Error('fetch failed'))
+    const cache = await buildAcervoImageCache(exam, 'inline')
+    expect([...cache.keys()]).toEqual([10])
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+  it('tenta de novo quando o envio ao Drive falha e desiste após 3 tentativas', async () => {
+    mocks.upload.mockRejectedValue(new Error('drive 500'))
+    await expect(buildAcervoImageCache(exam, 'inline')).rejects.toThrow('Não foi possível incluir a imagem original 10 no documento.')
+    expect(mocks.upload).toHaveBeenCalledTimes(3)
+  })
 })
