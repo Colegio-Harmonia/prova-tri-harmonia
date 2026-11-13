@@ -36,6 +36,7 @@ export type ChapterIssueCode =
   | 'enem_fora_do_recorte'
   | 'sem_bncc'
   | 'sem_objetivo_cognitivo'
+  | 'bloom_nao_classificado'
   | 'bloom_estimado'
   | 'sem_conteudo'
 
@@ -59,6 +60,8 @@ export type ChapterAnalysis = {
   invalidEnemCodes: string[]
   bloomLevels: BloomLevel[]
   bloomEstimated: boolean
+  /** true quando o capítulo não tem nenhum objetivo de aprendizagem aproveitável (vazio, só atitudinal, vago ou só estimado). */
+  needsObjectives: boolean
   issues: ChapterIssue[]
 }
 
@@ -159,6 +162,23 @@ function bimesterNumberOf(period: string | null): number | null {
   return value >= 1 && value <= 4 ? value : null
 }
 
+const firstWord = (text: string) => text.trim().split(/\s+/)[0] ?? ''
+/** Frase aberta por verbo no infinitivo (-ar, -er, -ir, -or), como se espera de um objetivo. */
+const startsWithInfinitive = (text: string) => /^[a-zà-ú]{2,}(ar|er|ir|or|ôr)$/i.test(firstWord(text).replace(/[,;:]$/, ''))
+
+const ACTION_VERB_HINT = 'como identificar, explicar, aplicar, comparar, avaliar ou criar'
+
+/** Diz ao professor, em linguagem de planejamento, o que falta nos objetivos do capítulo. */
+function missingObjectiveMessage(unit: CurricularUnit): string {
+  if (unit.objetivos.length === 0) {
+    return 'Este capítulo ainda não tem objetivo de aprendizagem. O objetivo diz o que o aluno deve ser capaz de fazer ao final e orienta tanto a aula quanto a avaliação.'
+  }
+  if (unit.objetivos.every((objective) => objective.kind === 'atitudinal')) {
+    return `Os objetivos deste capítulo tratam de atitudes e convivência. Vale acrescentar ao menos um objetivo de aprendizagem que possa ser avaliado, começando por um verbo de ação (${ACTION_VERB_HINT}).`
+  }
+  return `Os objetivos deste capítulo não deixam claro o que o aluno deve ser capaz de fazer. Comece cada um por um verbo de ação observável (${ACTION_VERB_HINT}).`
+}
+
 function analyzeChapter(unit: CurricularUnit, scope: EnemScope | null, isEnsinoMedio: boolean, positionInBimester: number): ChapterAnalysis {
   const issues: ChapterIssue[] = []
   const enemSkills: ChapterEnemSkill[] = (unit.enemSkills?.skills ?? []).map((skill) => ({
@@ -170,6 +190,8 @@ function analyzeChapter(unit: CurricularUnit, scope: EnemScope | null, isEnsinoM
   const cognitive = unit.objetivos.filter((objective) => objective.kind === 'cognitiva' && objective.bloomLevel)
   const bloomLevels = [...new Set(cognitive.map((objective) => objective.bloomLevel as BloomLevel))]
     .sort((a, b) => BLOOM_ORDER.indexOf(a) - BLOOM_ORDER.indexOf(b))
+  // Objetivo escrito pelo professor, aberto por verbo no infinitivo, que a tabela de Bloom não reconhece (ex.: "Calcular", "Resolver").
+  const unclassified = unit.objetivosColumnMissing ? [] : unit.objetivos.filter((objective) => objective.kind === 'cognitiva' && !objective.estimated && !objective.bloomLevel && startsWithInfinitive(objective.text))
   const bloomEstimated = unit.objetivosColumnMissing || (cognitive.length > 0 && cognitive.every((objective) => objective.estimated))
 
   if (scope) {
@@ -197,9 +219,12 @@ function analyzeChapter(unit: CurricularUnit, scope: EnemScope | null, isEnsinoM
   }
 
   if (unit.objetivosColumnMissing) {
-    issues.push({ code: 'bloom_estimado', severity: 'info', message: 'Sem objetivos informados: o nível de Bloom deste capítulo é estimado pelo título/conteúdo.' })
+    issues.push({ code: 'bloom_estimado', severity: 'info', message: 'Capítulo sem objetivo de aprendizagem informado; o nível de Bloom mostrado é só uma estimativa a partir do título e dos conteúdos.' })
+  } else if (cognitive.length === 0 && unclassified.length > 0) {
+    // O objetivo existe e é claro; só o verbo não está na tabela de Bloom do sistema.
+    issues.push({ code: 'bloom_nao_classificado', severity: 'info', message: `O capítulo tem objetivo de aprendizagem, mas o sistema ainda não classifica o verbo usado na Taxonomia de Bloom ("${firstWord(unclassified[0].text)}…"). O objetivo vale como está; só o nível de Bloom não pôde ser identificado.` })
   } else if (cognitive.length === 0) {
-    issues.push({ code: 'sem_objetivo_cognitivo', severity: 'media', message: 'Nenhum objetivo com verbo cognitivo claro — não dá para inferir o nível de Bloom do capítulo.' })
+    issues.push({ code: 'sem_objetivo_cognitivo', severity: 'media', message: missingObjectiveMessage(unit) })
   }
 
   if (!unit.conteudo?.trim()) {
@@ -209,7 +234,9 @@ function analyzeChapter(unit: CurricularUnit, scope: EnemScope | null, isEnsinoM
   return {
     rowIndex: unit.rowIndex, title: chapterTitle(unit), planTitle: composePlanUnitTitle(unit, `Unidade ${positionInBimester + 1}`), bimestre: unit.bimestre,
     bimesterNumber: bimesterNumberOf(unit.bimestre), origin: unit.rowIndex >= PLAN_ROW_OFFSET ? 'planejamento' : 'planilha', conteudo: unit.conteudo,
-    bnccCodes, enemSkills, invalidEnemCodes, bloomLevels, bloomEstimated, issues,
+    bnccCodes, enemSkills, invalidEnemCodes, bloomLevels, bloomEstimated,
+    needsObjectives: bloomEstimated || (bloomLevels.length === 0 && unclassified.length === 0),
+    issues,
   }
 }
 
@@ -339,12 +366,17 @@ export function analyzePlanning(selection: CurriculumSelection): PlanningAnalysi
       findings.push({ severity: 'media', title: 'Objetivos concentrados em Lembrar/Compreender', detail: `${Math.round(bloom.lowerOrderShare * 100)}% dos objetivos cognitivos estão nos dois níveis mais baixos. No Ensino Médio o plano deve pender para Aplicar/Analisar/Avaliar, coerente com o ENEM.` })
     }
     if (bloom.allEstimated) {
-      findings.push({ severity: 'info', title: 'Bloom estimado', detail: 'O plano não traz objetivos: os níveis de Bloom foram estimados pelo título/conteúdo e servem só de indicação.' })
+      findings.push({ severity: 'info', title: 'Bloom estimado', detail: 'O plano não traz objetivos de aprendizagem: os níveis de Bloom mostrados são estimativas a partir de títulos e conteúdos e servem só de indicação.' })
     } else if (bloom.estimatedCount > 0) {
       findings.push({ severity: 'info', title: 'Bloom parcialmente estimado', detail: `${plural(bloom.estimatedCount, 'objetivo teve', 'objetivos tiveram')} o nível estimado por falta de objetivos em parte do plano; eles não entram na avaliação da distribuição.` })
     }
-  } else if (chapters.length > 0) {
-    findings.push({ severity: 'media', title: 'Sem objetivos cognitivos', detail: 'Nenhum objetivo com verbo cognitivo foi encontrado; não é possível avaliar a distribuição de Bloom do plano.' })
+  } else if (chapters.length > 0 && chapters.every((chapter) => chapter.needsObjectives)) {
+    findings.push({ severity: 'media', title: 'Plano sem objetivos de aprendizagem', detail: 'Nenhum capítulo diz o que o aluno deve ser capaz de fazer ao final. Sem isso não dá para saber se o plano vai além de lembrar e compreender. Use os objetivos sugeridos em cada capítulo como ponto de partida.' })
+  }
+
+  const withoutObjectives = chapters.filter((chapter) => chapter.needsObjectives && !chapter.bloomEstimated).length
+  if (withoutObjectives > 0 && withoutObjectives < chapters.length) {
+    findings.push({ severity: 'media', title: `${plural(withoutObjectives, 'capítulo', 'capítulos')} sem objetivo de aprendizagem`, detail: 'Nesses capítulos ainda não está dito o que o aluno deve ser capaz de fazer ao final. Use os objetivos sugeridos em cada um como ponto de partida.' })
   }
 
   return {

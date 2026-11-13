@@ -177,3 +177,29 @@ describe('título de unidade igual ao da importação', () => {
     expect(analysis.chapters.map((chapter) => chapter.planTitle)).toEqual(['Brasil Colônia', 'Unidade 2', 'Unidade 1', 'Revolução Francesa'])
   })
 })
+
+describe('mensagens sobre objetivos', () => {
+  const header = ['Bimestre', 'Capítulos', 'Conteúdos', 'Habilidades', 'Objetivos']
+  const message = (objetivos: string) => analyzePlanning(selectionFrom('anos-finais', 6, 'Educação Física', header, [['2', 'Quadrilha', 'Ritmo e coreografia', 'EF67EF11', objetivos]]))
+    .chapters[0].issues.find((issue) => issue.code === 'sem_objetivo_cognitivo')?.message
+
+  it('explica o que falta em cada situação, sem jargão', () => {
+    expect(message('')).toContain('ainda não tem objetivo de aprendizagem')
+    expect(message('Respeitar os colegas. Valorizar a cultura popular.')).toContain('atitudes e convivência')
+    expect(message('Quadrilha e festa junina na escola.')).toContain('não deixam claro o que o aluno deve ser capaz de fazer')
+    expect(message('Explicar a origem da quadrilha.')).toBeUndefined()
+  })
+
+  it('objetivo claro com verbo fora da tabela de Bloom não é chamado de vago nem recebe sugestão', () => {
+    const analysis = analyzePlanning(selectionFrom('anos-finais', 8, 'Matemática', header, [
+      ['1', 'Círculo', 'Área e perímetro', 'EF08MA19', 'Calcular a área do círculo. Resolver problemas com perímetro.'],
+      ['1', 'Festa junina', 'Quadrilha', '', 'Quadrilha e festa junina na escola.'],
+    ]))
+    const [circulo, festa] = analysis.chapters
+    expect(circulo.issues.map((issue) => issue.code)).toContain('bloom_nao_classificado')
+    expect(circulo.issues.map((issue) => issue.code)).not.toContain('sem_objetivo_cognitivo')
+    expect(circulo.issues.find((issue) => issue.code === 'bloom_nao_classificado')?.message).toContain('"Calcular…"')
+    expect(circulo.needsObjectives).toBe(false)
+    expect(festa.needsObjectives).toBe(true)
+  })
+})
