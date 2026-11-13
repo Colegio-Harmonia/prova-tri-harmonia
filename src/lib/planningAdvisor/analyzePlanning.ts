@@ -156,7 +156,7 @@ function bimesterNumberOf(period: string | null): number | null {
   return value >= 1 && value <= 4 ? value : null
 }
 
-function analyzeChapter(unit: CurricularUnit, scope: EnemScope | null, isEnsinoMedio: boolean): ChapterAnalysis {
+function analyzeChapter(unit: CurricularUnit, scope: EnemScope | null, isEnsinoMedio: boolean, positionInBimester: number): ChapterAnalysis {
   const issues: ChapterIssue[] = []
   const enemSkills: ChapterEnemSkill[] = (unit.enemSkills?.skills ?? []).map((skill) => ({
     code: skill.code, competency: skill.competency, skill: skill.skill, count: skill.count,
@@ -204,7 +204,7 @@ function analyzeChapter(unit: CurricularUnit, scope: EnemScope | null, isEnsinoM
   }
 
   return {
-    rowIndex: unit.rowIndex, title: chapterTitle(unit), planTitle: composePlanUnitTitle(unit, ''), bimestre: unit.bimestre,
+    rowIndex: unit.rowIndex, title: chapterTitle(unit), planTitle: composePlanUnitTitle(unit, `Unidade ${positionInBimester + 1}`), bimestre: unit.bimestre,
     bimesterNumber: bimesterNumberOf(unit.bimestre), conteudo: unit.conteudo,
     bnccCodes, enemSkills, invalidEnemCodes, bloomLevels, bloomEstimated, issues,
   }
@@ -278,7 +278,15 @@ function plural(count: number, singular: string, pluralForm: string) {
 export function analyzePlanning(selection: CurriculumSelection): PlanningAnalysis {
   const isEnsinoMedio = selection.segment === 'ensino-medio'
   const scope = isEnsinoMedio ? resolveEnemScope(selection.subject) : null
-  const chapters = selection.units.map((unit) => analyzeChapter(unit, scope, isEnsinoMedio))
+  // A importação do bimestre nomeia linha sem título como "Unidade N", N = posição
+  // dentro do bimestre; a análise precisa do mesmo nome para achar a unidade depois.
+  const seenPerPeriod = new Map<string, number>()
+  const chapters = selection.units.map((unit) => {
+    const period = String(bimesterNumberOf(unit.bimestre) ?? unit.bimestre ?? '')
+    const position = seenPerPeriod.get(period) ?? 0
+    seenPerPeriod.set(period, position + 1)
+    return analyzeChapter(unit, scope, isEnsinoMedio, position)
+  })
   const enem = scope ? buildEnemCoverage(chapters, scope) : null
   const bloom = buildBloomSummary(selection.units)
   const chaptersWithoutBncc = selection.units.filter((unit) => unit.habilidades.status === 'nao_mapeado').length

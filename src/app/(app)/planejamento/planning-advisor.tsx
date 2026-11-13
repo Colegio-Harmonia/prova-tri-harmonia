@@ -131,7 +131,8 @@ export default function PlanningAdvisor({ isManager }: { isManager: boolean }) {
   // Sugestões já levadas ao rascunho ("rowIndex:código") e o retorno da última tentativa por capítulo.
   const [addedKeys, setAddedKeys] = useState<Set<string>>(new Set())
   const [applyingRow, setApplyingRow] = useState<number | null>(null)
-  const [applyResults, setApplyResults] = useState<Record<number, BimesterApplyResult | { status: 'erro'; message: string }>>({})
+  // `codes` guarda exatamente o que o usuário pediu naquela tentativa (uma sugestão ou todas).
+  const [applyResults, setApplyResults] = useState<Record<number, (BimesterApplyResult | { status: 'erro'; message: string }) & { codes: string[] }>>({})
 
   async function addToPlan(chapter: ChapterAnalysis, codes: string[]) {
     if (!chapter.bimesterNumber) return
@@ -142,15 +143,15 @@ export default function PlanningAdvisor({ isManager }: { isManager: boolean }) {
         body: JSON.stringify({ academicYear, segment, gradeYear, subject, items: [{ bimester: chapter.bimesterNumber, title: chapter.planTitle || chapter.title, codes }] }),
       })
       const body = await response.json()
-      if (!response.ok) { setApplyResults((current) => ({ ...current, [chapter.rowIndex]: { status: 'erro', message: [body.error, ...(body.details ?? [])].filter(Boolean).join(' ') || 'Não foi possível adicionar ao planejamento.' } })); return }
+      if (!response.ok) { setApplyResults((current) => ({ ...current, [chapter.rowIndex]: { codes, status: 'erro', message: [body.error, ...(body.details ?? [])].filter(Boolean).join(' ') || 'Não foi possível adicionar ao planejamento.' } })); return }
       const result = (body.results as BimesterApplyResult[])[0]
-      setApplyResults((current) => ({ ...current, [chapter.rowIndex]: result }))
+      setApplyResults((current) => ({ ...current, [chapter.rowIndex]: { ...result, codes } }))
       // "Já tem essas habilidades" também conta como adicionada; capítulo não encontrado, não.
       if (result.status === 'aplicado' || (result.status === 'sem_mudanca' && !result.notFound.length)) {
         setAddedKeys((current) => new Set([...current, ...codes.map((code) => `${chapter.rowIndex}:${code}`)]))
       }
     } catch {
-      setApplyResults((current) => ({ ...current, [chapter.rowIndex]: { status: 'erro', message: 'Não foi possível adicionar ao planejamento. Verifique a conexão e tente de novo.' } }))
+      setApplyResults((current) => ({ ...current, [chapter.rowIndex]: { codes, status: 'erro', message: 'Não foi possível adicionar ao planejamento. Verifique a conexão e tente de novo.' } }))
     } finally {
       setApplyingRow(null)
     }
@@ -164,13 +165,13 @@ export default function PlanningAdvisor({ isManager }: { isManager: boolean }) {
     const body = response ? await response.json().catch(() => ({})) : {}
     if (!response?.ok) {
       setApplyingRow(null)
-      setApplyResults((current) => ({ ...current, [chapter.rowIndex]: { status: 'erro', message: [body.error, ...(body.invalidCodes ?? []), ...(body.duplicateCodes ?? [])].filter(Boolean).join(' · ') || 'Não foi possível importar a planilha para o planejamento.' } }))
+      setApplyResults((current) => ({ ...current, [chapter.rowIndex]: { codes, status: 'erro', message: [body.error, ...(body.invalidCodes ?? []), ...(body.duplicateCodes ?? [])].filter(Boolean).join(' · ') || 'Não foi possível importar a planilha para o planejamento.' } }))
       return
     }
     await addToPlan(chapter, codes)
   }
 
-  function applyFeedback(chapter: ChapterAnalysis, codes: string[]) {
+  function applyFeedback(chapter: ChapterAnalysis) {
     const result = applyResults[chapter.rowIndex]
     if (!result) return null
     const tone = result.status === 'aplicado' ? 'border-status-success-border bg-status-success-surface text-status-success-content' : 'border-status-warning-border bg-status-warning-surface text-status-warning-content'
@@ -179,7 +180,7 @@ export default function PlanningAdvisor({ isManager }: { isManager: boolean }) {
       {'notFound' in result && result.notFound.length > 0 && <p className="mt-1">Capítulo não encontrado no planejamento do bimestre: {result.notFound.join('; ')}. Confira o título em Planejamentos.</p>}
       {'planId' in result && result.planId && <Link href={`/planejamento/${result.planId}`} className="mt-1 inline-block font-semibold underline">Abrir o planejamento do {result.bimester}º bimestre</Link>}
       {result.status === 'sem_planejamento' && (isManager
-        ? <button type="button" disabled={applyingRow !== null} onClick={() => importThenAdd(chapter, codes)} className={`mt-2 block ${primaryButton}`}>Trazer o {chapter.bimesterNumber}º bimestre da planilha para o Planejamento e adicionar</button>
+        ? <button type="button" disabled={applyingRow !== null} onClick={() => importThenAdd(chapter, result.codes)} className={`mt-2 block ${primaryButton}`}>Trazer o {chapter.bimesterNumber}º bimestre da planilha para o Planejamento e adicionar</button>
         : <p className="mt-1">Peça à coordenação para criar ou importar o planejamento deste bimestre.</p>)}
     </div>
   }
@@ -257,7 +258,7 @@ export default function PlanningAdvisor({ isManager }: { isManager: boolean }) {
             working: applyingRow === chapter.rowIndex,
             onAdd: chapter.bimesterNumber ? (chosen) => addToPlan(chapter, chosen) : null,
           }
-          return <ChapterCard key={chapter.rowIndex} chapter={chapter} suggestions={suggestions} showEnem={Boolean(analysis.enem)} apply={apply} feedback={applyFeedback(chapter, codes.filter((code) => !apply.added.has(code)))} />
+          return <ChapterCard key={chapter.rowIndex} chapter={chapter} suggestions={suggestions} showEnem={Boolean(analysis.enem)} apply={apply} feedback={applyFeedback(chapter)} />
         })}</div>
       </section>
 

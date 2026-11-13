@@ -165,3 +165,15 @@ describe('analyzePlanning — apontamentos de revisão', () => {
     expect(analysis.findings.some((finding) => finding.title === 'Bloom parcialmente estimado')).toBe(true)
   })
 })
+
+describe('título de unidade igual ao da importação', () => {
+  it('linha sem título vira "Unidade N" pela posição dentro do bimestre', () => {
+    const analysis = analyzePlanning(selectionFrom('ensino-medio', 1, 'História', ['Bimestre', 'Capítulo', 'Conteúdos'], [
+      ['1', 'Brasil Colônia', 'Açúcar'],
+      ['1', '', 'Mineração'],
+      ['2', '', 'Iluminismo'],
+      ['2', 'Revolução Francesa', 'Jacobinos'],
+    ]))
+    expect(analysis.chapters.map((chapter) => chapter.planTitle)).toEqual(['Brasil Colônia', 'Unidade 2', 'Unidade 1', 'Revolução Francesa'])
+  })
+})

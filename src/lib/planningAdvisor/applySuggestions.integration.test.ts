@@ -85,6 +85,37 @@ describe.skipIf(!pgliteInstalled())('applyEnemSuggestions (Postgres real)', () =
     expect(enem).toEqual(['C2:H7\nC4:H15', 'C5:H21'])
   })
 
+  it('grava só o campo ENEM das unidades-alvo, sem regravar o resto do rascunho', async () => {
+    const { detail } = await enemOf()
+    const draftId = detail.selectedVersionId!
+    // Outro responsável edita o rascunho (conteúdo, BNCC e uma unidade nova)...
+    await planning.saveDraft(coord, draftId, [
+      { title: 'Arcos', content: 'Conteúdo revisto pela coordenação', skills: [{ code: 'EM13MAT306' }, { code: 'EM13MAT308' }], enemSkills: 'C2:H7\nC4:H15' },
+      { title: 'Trigonometria na circunferência', skills: [], enemSkills: 'C5:H21' },
+      { title: 'Funções trigonométricas', skills: [] },
+    ])
+    // ...e a gravação do Assistente, calculada dentro da transação, não desfaz nada disso.
+    let seenInsideTx: string[] = []
+    await planning.patchDraftEnemSkills(prof, draftId, (units) => {
+      seenInsideTx = units.map((unit) => unit.title)
+      const planned = advisor.planChanges(units, [{ bimester: 1, title: 'Funções trigonométricas', codes: ['C5:H20'] }], 'matematica')
+      return { changes: planned.changes, summary: 'teste', result: planned }
+    })
+    expect(seenInsideTx).toEqual(['Arcos', 'Trigonometria na circunferência', 'Funções trigonométricas'])
+    const after = await enemOf()
+    expect(after.enem).toEqual(['C2:H7\nC4:H15', 'C5:H21', 'C5:H20'])
+    expect(after.detail.units[0].content).toBe('Conteúdo revisto pela coordenação')
+    expect(after.detail.units[0].skills.map((skill) => skill.code)).toEqual(['EM13MAT306', 'EM13MAT308'])
+  })
+
+  it('patch recusa versão que não é rascunho e código inválido', async () => {
+    const official = (await enemOf()).detail.officialVersionId!
+    await expect(planning.patchDraftEnemSkills(coord, official, () => ({ changes: [], summary: '', result: null }))).rejects.toThrow(/rascunho/)
+    const draftId = (await enemOf()).detail.selectedVersionId!
+    await expect(planning.patchDraftEnemSkills(coord, draftId, (units) => ({ changes: [{ unitId: units[0].id, enemSkills: 'C9:H99' }], summary: '', result: null }))).rejects.toThrow(/inválidas/)
+    expect((await enemOf()).enem[0]).toBe('C2:H7\nC4:H15')
+  })
+
   it('recusa fora do Ensino Médio', async () => {
     await expect(advisor.applyEnemSuggestions(coord, { ...item(['C1:H1']), segment: 'anos-finais', gradeYear: 9 })).rejects.toThrow(/Ensino Médio/)
   })

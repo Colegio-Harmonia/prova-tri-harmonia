@@ -10,8 +10,8 @@ import { db } from '@/db/client'
 import { curriculumPlans } from '@/db/schema'
 import { getEnemAreaForSubject } from '@/config/enemAreaMap'
 import { isEnemAreaCode, isValidEnemPair, type EnemAreaCode } from '@/config/enemMatrix'
-import { officialVersion, openVersion, type PlanUnitInput } from '@/lib/curriculum/planningPolicy'
-import { getPlanDetail, PlanningError, saveDraft, startNewVersion, type PlanScope, type Viewer } from '@/lib/curriculum/planningService'
+import { officialVersion, openVersion } from '@/lib/curriculum/planningPolicy'
+import { getPlanDetail, patchDraftEnemSkills, PlanningError, startNewVersion, type PlanScope, type Viewer } from '@/lib/curriculum/planningService'
 import { parseEnemSkills } from '@/lib/sheets/enemSkillsParser'
 import { normalizeEnemCode } from './recommendations'
 
@@ -59,6 +59,24 @@ export function mergeEnemCodes(existingRaw: string | null | undefined, codes: st
   return { enemSkills: added.length ? [base, ...added].filter(Boolean).join('\n') : base || null, added }
 }
 
+/** Decide, sobre as unidades dadas, o que cada item acrescenta. Pura: usada no ensaio e dentro da transação. */
+export function planChanges(units: Array<{ id: number; title: string; enemSkills: string | null }>, items: ApplyItem[], area: EnemAreaCode) {
+  const current = new Map(units.map((unit) => [unit.id, unit.enemSkills]))
+  const applied: BimesterApplyResult['applied'] = []
+  const notFound: string[] = []
+  for (const item of items) {
+    const index = matchUnitIndex(units, item.title)
+    if (index < 0) { notFound.push(item.title); continue }
+    const unit = units[index]
+    const merged = mergeEnemCodes(current.get(unit.id), item.codes, area)
+    if (!merged.added.length) continue
+    current.set(unit.id, merged.enemSkills)
+    applied.push({ title: unit.title, codes: merged.added })
+  }
+  const changes = units.filter((unit) => current.get(unit.id) !== unit.enemSkills).map((unit) => ({ unitId: unit.id, enemSkills: current.get(unit.id) ?? null }))
+  return { applied, notFound, changes }
+}
+
 async function applyToBimester(viewer: Viewer, scope: PlanScope, area: EnemAreaCode, items: ApplyItem[]): Promise<BimesterApplyResult> {
   const empty = { bimester: scope.bimester, planId: null, versionNumber: null, applied: [], notFound: [] }
   const [plan] = await db.select({ id: curriculumPlans.id }).from(curriculumPlans).where(and(
@@ -78,26 +96,26 @@ async function applyToBimester(viewer: Viewer, scope: PlanScope, area: EnemAreaC
     const base = open ?? officialVersion(detail.versions)
     if (!base) return { ...empty, planId: plan.id, status: 'bloqueado', message: 'O planejamento ainda não tem nenhuma versão.' }
 
-    // Calcula a mudança sobre o conteúdo atual ANTES de abrir versão nova,
+    // Ensaia a mudança sobre o conteúdo atual ANTES de abrir versão nova,
     // para não deixar rascunho vazio quando nada se aplica.
-    const units: PlanUnitInput[] = (await getPlanDetail(viewer, plan.id, base.id)).units
-    const applied: BimesterApplyResult['applied'] = []
-    const notFound: string[] = []
-    for (const item of items) {
-      const index = matchUnitIndex(units, item.title)
-      if (index < 0) { notFound.push(item.title); continue }
-      const merged = mergeEnemCodes(units[index].enemSkills, item.codes, area)
-      if (!merged.added.length) continue
-      units[index] = { ...units[index], enemSkills: merged.enemSkills }
-      applied.push({ title: units[index].title, codes: merged.added })
-    }
-    if (!applied.length) {
-      return { ...empty, planId: plan.id, versionNumber: base.versionNumber, notFound, status: 'sem_mudanca', message: notFound.length ? 'Os capítulos não foram encontrados no planejamento deste bimestre.' : 'O planejamento já tem essas habilidades.' }
+    const preview = planChanges((await getPlanDetail(viewer, plan.id, base.id)).units.map((unit, index) => ({ id: index, title: unit.title, enemSkills: unit.enemSkills ?? null })), items, area)
+    if (!preview.applied.length) {
+      return { ...empty, planId: plan.id, versionNumber: base.versionNumber, notFound: preview.notFound, status: 'sem_mudanca', message: preview.notFound.length ? 'Os capítulos não foram encontrados no planejamento deste bimestre.' : 'O planejamento já tem essas habilidades.' }
     }
 
     const draft = open ?? await startNewVersion(viewer, plan.id, APPLY_NOTE)
     const versionId = 'versionId' in draft ? draft.versionId : draft.id
-    await saveDraft(viewer, versionId, units)
+    // A gravação refaz o cálculo dentro da transação, sobre as unidades
+    // travadas: só o campo ENEM das unidades-alvo muda, e edição simultânea
+    // de outro responsável não é sobrescrita.
+    const { applied, notFound } = await patchDraftEnemSkills(viewer, versionId, (units) => {
+      const planned = planChanges(units, items, area)
+      const codes = planned.applied.flatMap((entry) => entry.codes)
+      return { changes: planned.changes, summary: `habilidades ENEM adicionadas pelo Assistente (${codes.join(', ') || 'nenhuma'})`, result: planned }
+    })
+    if (!applied.length) {
+      return { ...empty, planId: plan.id, versionNumber: draft.versionNumber, notFound, status: 'sem_mudanca', message: 'O planejamento já tem essas habilidades.' }
+    }
     return {
       bimester: scope.bimester, planId: plan.id, versionNumber: draft.versionNumber, applied, notFound, status: 'aplicado',
       message: `Adicionado ao rascunho (versão ${draft.versionNumber}) do ${scope.bimester}º bimestre. Envie para revisão em Planejamentos para valer nas provas.`,
