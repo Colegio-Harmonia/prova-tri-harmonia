@@ -5,6 +5,21 @@
 > Última atualização: 13/11/2026 — Assistente de Planejamento publicado. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
 > [`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md).
 
+## Regularização servidor × main — 13/11/2026
+
+Depois do snapshot `abd6093` (10/11), a árvore de produção recebeu correções
+que nunca chegaram ao `main`: lote 477 (retry e teto de concorrência do Jev,
+`JEV_MAX_CONCURRENCY`; `createPlanningAcceptance` descarta candidato em vez de
+abortar; worker adia job com Jev fora) e o filtro por disciplina/teto de
+conferências em `acervoQuestions.ts` (11/11), além de `manual/route.ts`.
+Eram 11 arquivos; todo o resto da diferença era ajuste feito só no `main`
+depois do snapshot (deploy script, baseline, LazyMathText, cores semânticas).
+
+Conciliação: estado do servidor commitado sobre `abd6093` e mesclado por
+3-way no `main` + Assistente, sem conflito. Suíte completa (987), TypeScript,
+lint e regressão passaram. Com isso o `main` volta a ser a fonte da produção e
+`npm run deploy:production` pode ser usado.
+
 ## Assistente de Planejamento (Matriz do ENEM) — 12/11/2026
 
 Nova aba **Assistente** em `/planejamento` (professor, coordenação e direção):

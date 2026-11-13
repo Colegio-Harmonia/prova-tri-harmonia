@@ -9,7 +9,7 @@ import { cognitiveObjectives, pickTargetEnemSkill, pickTargetSkills } from '@/li
 import { getOfficialBnccSkill } from '@/lib/curriculum/officialBncc'
 import type { CurriculumSelection, CurricularUnit } from '@/types/exam'
 import { generateApprovedQuestionStatement } from '@/lib/exams/questionGenerationStages'
-import { assessPlanningAlignment, planningTargetForUnit, PlanningAlignmentUnavailableError } from './planningAlignment'
+import { assessPlanningAlignment, createPlanningAcceptance, planningTargetForUnit } from './planningAlignment'
 
 type Params = {
   curriculum: CurriculumSelection
@@ -54,6 +54,7 @@ export async function generateQuestionWithUnifiedFlow(params: Params): Promise<{
   const earlyTargets = pickTargetSkills({ unit, slotIndexInUnit: params.questionNumber - 1, forcedCodes: params.targetSkillCodes })
   const targetEnemSkill = pickTargetEnemSkill({ unit, slotIndexInUnit: params.questionNumber - 1, forcedCode: params.targetEnemCode })
   const planningTarget = planningTargetForUnit(unit, { ...params.curriculum, classLabel: params.classLabel }, targetEnemSkill, earlyTargets.map((skill) => skill.code))
+  const acceptAlignment = createPlanningAcceptance(3)
   const found = params.sourcePreference === 'ia' ? null : await findAcervoQuestion({
     codes: earlyTargets.map((skill) => skill.code), number: params.questionNumber, type: params.type,
     excludedQuestions: params.excludedQuestions, history: params.acervoHistory,
@@ -64,8 +65,7 @@ export async function generateQuestionWithUnifiedFlow(params: Params): Promise<{
         const alignment = await assessPlanningAlignment(question, planningTarget)
         question.plannedEnemSkill = targetEnemSkill
         question.planningAlignment = alignment
-        if (alignment.status === 'unavailable') throw new PlanningAlignmentUnavailableError(alignment.evidence)
-        return alignment.status === 'aligned'
+        return acceptAlignment(alignment)
       },
     } : {}),
   })
