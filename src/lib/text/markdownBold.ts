@@ -7,9 +7,9 @@ export type BoldSegment = { text: string; bold: boolean }
 // `**` solto (sem par) também fica como está.
 const BOLD_PATTERN = /(?<![\p{L}\p{N}])\*\*(?=\S)((?:[^\n]|\n(?!\s*\n))+?)(?<=\S)\*\*(?![\p{L}\p{N}])/gu
 
-// Trecho entre crases (`código`): Markdown não interpreta ênfase ali, e a
-// questão pode estar justamente ensinando a sintaxe `**texto**`.
-const CODE_SPAN_PATTERN = /`[^`\n]+`/g
+// Código (bloco entre três crases ou trecho entre crases): Markdown não
+// interpreta ênfase ali, e a questão pode estar ensinando a sintaxe `**x**`.
+const CODE_SPAN_PATTERN = /```[\s\S]*?```|`[^`\n]+`/g
 
 // `2 **3** 2` casa com o padrão de ênfase, mas é potência encadeada:
 // trecho só numérico, com operando numérico dos dois lados.
@@ -28,7 +28,7 @@ export function splitBoldSegments(text: string | null | undefined): BoldSegment[
   if (!text) return []
   // Mascara o código entre crases mantendo os índices, para que um `**`
   // ali dentro nunca seja pareado com um marcador de fora.
-  const masked = text.replace(CODE_SPAN_PATTERN, (span) => ' '.repeat(span.length))
+  const masked = text.replace(CODE_SPAN_PATTERN, (span) => span.replace(/[^\n]/g, ' '))
   const segments: BoldSegment[] = []
   let last = 0
   for (const match of masked.matchAll(BOLD_PATTERN)) {

@@ -28,6 +28,9 @@ describe('splitBoldSegments', () => {
   it('não interpreta ** dentro de código entre crases', () => {
     expect(plain('Use o literal `**texto**` e **destaque**')).toBe('Use o literal `**texto**` e destaque')
     expect(bolds('Use `**` e **destaque** aqui')).toEqual(['destaque'])
+    const fenced = 'Veja:\n```\nprint("**ola**")\nx = 2 **3** 2\n```\nDepois **responda**.'
+    expect(plain(fenced)).toBe('Veja:\n```\nprint("**ola**")\nx = 2 **3** 2\n```\nDepois responda.')
+    expect(bolds(fenced)).toEqual(['responda'])
   })
 
   it('é null-safe', () => {

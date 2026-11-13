@@ -2,8 +2,26 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 13/11/2026 — produção regularizada com o main e publicada pelo script oficial. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
+> Última atualização: 13/11/2026 — negrito Markdown na Prova Adaptada; antes, produção regularizada com o main e publicada pelo script oficial. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
 > [`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md).
+
+## Negrito em Markdown na Prova Adaptada — 13/11/2026
+
+A biblioteca de TDAH pede à IA `**negrito**` nas palavras-chave do comando, mas
+o gerador do Docs inseria o texto cru e os asteriscos saíam impressos (caso
+real: prova 649). `src/lib/text/markdownBold.ts` (`splitBoldSegments`) agora
+converte o trecho em negrito real no Docs (`textToOps` em `provaDocBuilder.ts`,
+somado aos verbos de comando) e na comparação da tela `/gerar/[id]/adaptar`.
+
+- Não vira ênfase: potência (`2**3`, `2 **3** 2`), `**` sem par, código entre
+  crases ou em bloco de três crases.
+- Limitações: `**` em célula de tabela Markdown (vira imagem por outro
+  caminho) e fórmula LaTeX dentro do trecho saem sem negrito; potência com
+  variável e espaçamento misto (`a **b** c`) vira negrito.
+- Adaptações já geradas não mudam: gerar o documento de novo.
+- Uma primeira versão foi aberta por engano no repositório arquivado
+  `prova-tri` (PR 307): worktrees do checkout local têm `origin` apontando
+  para lá — usar o remote do `prova-tri-harmonia`.
 
 ## Assistente grava no Planejamento, não na planilha — 13/11/2026
 
