@@ -209,6 +209,19 @@ describe('negrito nos verbos de comando do enunciado', () => {
 })
 
 
+describe('negrito em Markdown (**trecho**) — Prova Adaptada', () => {
+  it('imprime sem asteriscos e com bold só no trecho marcado, junto com os verbos de comando', () => {
+    const q = { ...objectiveQuestion(1, [{ letter: 'A', text: 'a **única** opção' }]), statement: 'Marque a alternativa **INCORRETA**.' }
+    const exam = examWith([q])
+    exam.metadata.segment = 'anos-finais'
+    const ops = buildProvaOps(exam, new Map(), new Map())
+    expect(renderedText(ops)).not.toContain('**')
+    const bold = ops.filter((op): op is { kind: 'text'; text: string; bold?: boolean } => op.kind === 'text' && !!op.bold).map((op) => op.text)
+    expect(bold).toEqual(expect.arrayContaining(['Marque', 'INCORRETA', 'única']))
+  })
+})
+
+
 describe('origem da questão no documento da prova', () => {
   it.each([['TECHY', 'Importado do Techy'], ['SAE', 'Importado do SAE']])('imprime crédito para original %s sem banca', (origin, attribution) => {
     const imported = { ...objectiveQuestion(1, []), source: 'acervo' as const, acervoRef: { questionId: 10, origin, externalId: null, portalUrl: null, importedAt: '', original: {} } }

@@ -5,6 +5,7 @@ import { buildAcervoImageCache } from './acervoImageCache'
 import type { docs_v1 } from 'googleapis'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { findMarkerRange } from './richTextInsert'
+import { splitBoldSegments } from '@/lib/text/markdownBold'
 import type { AssessmentMeta } from './assessmentMeta'
 import { splitLatexSegments, IMAGE_ALTERNATIVE_PLACEHOLDER } from '@/lib/math/latexRender'
 import { splitCommandVerbs, shouldBoldCommandVerbs, isEnglishSubject, type CommandVerbOptions } from './commandVerbs'
@@ -29,6 +30,13 @@ type ProvaOp =
  * conteúdo da questão.
  */
 export function textToOps(text: string, latexCache: LatexImageCache, bold?: boolean, commandVerbs?: CommandVerbOptions | null): ProvaOp[] {
+  // `**trecho**` vira negrito real no Docs (sem os asteriscos) — a Docs API
+  // insere texto cru e não interpreta Markdown. A Prova Adaptada (TDAH) pede
+  // essa marcação à IA explicitamente.
+  return splitBoldSegments(text).flatMap((part) => plainTextToOps(part.text, latexCache, part.bold || bold, commandVerbs))
+}
+
+function plainTextToOps(text: string, latexCache: LatexImageCache, bold?: boolean, commandVerbs?: CommandVerbOptions | null): ProvaOp[] {
   return splitLatexSegments(text).flatMap((seg): ProvaOp[] => {
     if (seg.type === 'text') {
       if (!seg.content) return []
