@@ -5,6 +5,19 @@ import { useCallback, useEffect, useState } from 'react'
 import { ADAPTATION_LIBRARIES } from '@/config/adaptationLibraries'
 import type { AdaptationProfileId } from '@/db/schema'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
+import { splitBoldSegments } from '@/lib/text/markdownBold'
+
+// A IA marca ênfase com **negrito** (Markdown); aqui vira <strong> de verdade,
+// igual ao que sai no Google Docs.
+function BoldText({ text }: { text: string | null | undefined }) {
+  return (
+    <>
+      {splitBoldSegments(text).map((seg, i) =>
+        seg.bold ? <strong key={i} className="font-semibold">{seg.text}</strong> : <span key={i}>{seg.text}</span>,
+      )}
+    </>
+  )
+}
 
 // Aba "Adaptação de Atividade" (Módulo 4): seleção múltipla de laudos com
 // preview das regras das bibliotecas, geração via fila, revisão lado a
@@ -299,18 +312,18 @@ export default function AdaptarExam({ examId }: { examId: number }) {
                         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                           <div className="rounded bg-surface-subtle p-3">
                             <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-content-muted">Original</p>
-                            {original.supportText && <p className="mb-2 whitespace-pre-wrap text-xs text-content-secondary">{original.supportText}</p>}
-                            <p className="whitespace-pre-wrap text-sm text-content-primary">{original.statement}</p>
+                            {original.supportText && <p className="mb-2 whitespace-pre-wrap text-xs text-content-secondary"><BoldText text={original.supportText} /></p>}
+                            <p className="whitespace-pre-wrap text-sm text-content-primary"><BoldText text={original.statement} /></p>
                             {original.alternatives?.map((alt) => (
-                              <p key={alt.letter} className="mt-1 text-xs text-content-secondary">{alt.letter}) {alt.text}</p>
+                              <p key={alt.letter} className="mt-1 text-xs text-content-secondary">{alt.letter}) <BoldText text={alt.text} /></p>
                             ))}
                           </div>
                           <div className="rounded bg-action-primary/10 p-3">
                             <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-action-primary">Adaptada</p>
-                            {aq.supportText && <p className="mb-2 whitespace-pre-wrap text-xs text-content-secondary">{aq.supportText}</p>}
-                            <p className="whitespace-pre-wrap text-sm text-content-primary">{aq.statement}</p>
+                            {aq.supportText && <p className="mb-2 whitespace-pre-wrap text-xs text-content-secondary"><BoldText text={aq.supportText} /></p>}
+                            <p className="whitespace-pre-wrap text-sm text-content-primary"><BoldText text={aq.statement} /></p>
                             {aq.alternatives?.map((alt) => (
-                              <p key={alt.letter} className="mt-1 text-xs text-content-secondary">{alt.letter}) {alt.text}</p>
+                              <p key={alt.letter} className="mt-1 text-xs text-content-secondary">{alt.letter}) <BoldText text={alt.text} /></p>
                             ))}
                           </div>
                         </div>
