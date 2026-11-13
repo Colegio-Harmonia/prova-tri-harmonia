@@ -68,12 +68,12 @@ function ChapterCard({ chapter, suggestions, showEnem, apply, feedback }: { chap
   return <div className="rounded border border-border p-3">
     <div className="flex flex-wrap items-baseline justify-between gap-2">
       <p className="font-medium">{chapter.title}</p>
-      {chapter.bimestre && <span className="text-xs text-content-muted">Período: {chapter.bimestre}</span>}
+      <span className="text-xs text-content-muted">{chapter.bimestre && `Período: ${chapter.bimestre} · `}{chapter.origin === 'planejamento' ? 'Planejamento da Prova TRI' : 'Planilha'}</span>
     </div>
     {chapter.conteudo && <p className="mt-1 text-sm text-content-secondary">{chapter.conteudo}</p>}
     <dl className="mt-2 grid gap-1 text-xs text-content-secondary sm:grid-cols-3">
-      {showEnem && <div><dt className="font-semibold text-content-primary">ENEM na planilha</dt><dd className="font-mono">{chapter.enemSkills.map((skill) => skill.count > 1 ? `${skill.code} ×${skill.count}` : skill.code).join(', ') || '—'}</dd></div>}
-      <div><dt className="font-semibold text-content-primary">BNCC na planilha</dt><dd className="font-mono">{chapter.bnccCodes.join(', ') || '—'}</dd></div>
+      {showEnem && <div><dt className="font-semibold text-content-primary">ENEM planejado</dt><dd className="font-mono">{chapter.enemSkills.map((skill) => skill.count > 1 ? `${skill.code} ×${skill.count}` : skill.code).join(', ') || '—'}</dd></div>}
+      <div><dt className="font-semibold text-content-primary">BNCC planejada</dt><dd className="font-mono">{chapter.bnccCodes.join(', ') || '—'}</dd></div>
       <div><dt className="font-semibold text-content-primary">Bloom dos objetivos{chapter.bloomEstimated ? ' (estimado)' : ''}</dt><dd>{chapter.bloomLevels.map((level) => BLOOM_LABEL[level]).join(', ') || '—'}</dd></div>
     </dl>
     {visibleIssues.length > 0 && <ul className="mt-3 space-y-1">{visibleIssues.map((issue) => <li key={issue.code} className="flex flex-wrap items-baseline gap-2 text-sm"><Badge severity={issue.severity}>{SEVERITY_LABEL[issue.severity]}</Badge><span>{issue.message}</span></li>)}</ul>}
@@ -193,7 +193,7 @@ export default function PlanningAdvisor({ isManager }: { isManager: boolean }) {
     try {
       const response = await fetch('/api/curriculum/planning-advisor', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ segment, gradeYear, subject, withSuggestions: withSuggestions && segment === 'ensino-medio' }),
+        body: JSON.stringify({ segment, gradeYear, subject, academicYear, withSuggestions: withSuggestions && segment === 'ensino-medio' }),
       })
       const body = await response.json()
       if (!response.ok) { setMessage([body.error, body.availableTabs?.length ? `Abas disponíveis: ${body.availableTabs.join(', ')}` : ''].filter(Boolean).join(' ') || 'Não foi possível analisar o planejamento.'); return }
@@ -211,16 +211,16 @@ export default function PlanningAdvisor({ isManager }: { isManager: boolean }) {
   const isEnsinoMedio = segment === 'ensino-medio'
 
   return <div className="mt-6 space-y-5">
-    <p className="text-sm text-content-secondary">O assistente lê o plano de curso do ano inteiro na planilha e aponta o que falta. No Ensino Médio, confere as habilidades da Matriz de Referência do ENEM (INEP) por capítulo; nos demais segmentos, BNCC e Bloom. Ele só recomenda: o que você aceitar entra como rascunho no Planejamento da Prova TRI e só vale depois de aprovado. A planilha nunca é alterada.</p>
+    <p className="text-sm text-content-secondary">O assistente lê o plano do ano inteiro e aponta o que falta. Cada bimestre vem do Planejamento da Prova TRI quando já existe lá; a planilha só completa os bimestres que ainda não foram trazidos. No Ensino Médio, confere as habilidades da Matriz de Referência do ENEM (INEP) por capítulo; nos demais segmentos, BNCC e Bloom. Ele só recomenda: o que você aceitar entra como rascunho no Planejamento da Prova TRI e só vale depois de aprovado. A planilha nunca é alterada.</p>
     <div className="grid gap-3 rounded border border-border bg-surface p-4 sm:grid-cols-2 lg:grid-cols-4">
       <select aria-label="Segmento" disabled={loading} value={segment} onChange={(e) => changeSegment(e.target.value as Segment)} className={fieldClass}>{Object.entries(SEGMENT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       <select aria-label="Série" disabled={loading} value={gradeYear} onChange={(e) => { setGradeYear(Number(e.target.value)); setReport(null) }} className={fieldClass}>{SEGMENT_GRADES[segment].map((grade) => <option key={grade} value={grade}>{grade}º ano</option>)}</select>
       <select aria-label="Disciplina" disabled={loading} value={subject} onChange={(e) => { setSubject(e.target.value); setReport(null) }} className={fieldClass}>{SEGMENT_SUBJECTS[segment].map((item) => <option key={item}>{item}</option>)}</select>
       <button type="button" disabled={loading} onClick={analyze} className="rounded bg-harmonia-green px-4 py-2 font-semibold text-action-primary-foreground disabled:opacity-50">{loading ? 'Analisando…' : 'Analisar planejamento'}</button>
-      {isEnsinoMedio && <label className="flex items-center gap-2 text-sm text-content-secondary sm:col-span-2">
+      <label className="flex items-center gap-2 text-sm text-content-secondary sm:col-span-2">
         Ano letivo do planejamento
-        <input aria-label="Ano letivo do planejamento" type="number" min={2020} max={2100} disabled={loading} value={academicYear} onChange={(e) => { setAcademicYear(Number(e.target.value)); resetApply() }} className={`${fieldClass} w-24`} />
-      </label>}
+        <input aria-label="Ano letivo do planejamento" type="number" min={2020} max={2100} disabled={loading} value={academicYear} onChange={(e) => { setAcademicYear(Number(e.target.value)); setReport(null); resetApply() }} className={`${fieldClass} w-24`} />
+      </label>
       {isEnsinoMedio && <label className="flex items-center gap-2 text-sm text-content-secondary sm:col-span-2 lg:col-span-4">
         <input type="checkbox" disabled={loading} checked={withSuggestions} onChange={(e) => setWithSuggestions(e.target.checked)} />
         Pedir à IA sugestões de habilidades do ENEM por capítulo (pode levar até um minuto)
@@ -231,7 +231,7 @@ export default function PlanningAdvisor({ isManager }: { isManager: boolean }) {
     {analysis && <>
       <section className="rounded border border-border bg-surface p-4">
         <h2 className="font-semibold">{analysis.subject} · {analysis.gradeYear}º ano</h2>
-        <p className="text-sm text-content-secondary">Origem: aba {analysis.tabName} · {analysis.chapters.length} capítulos · {analysis.bncc.distinctCodes} códigos BNCC distintos{analysis.enem ? ` · ${analysis.enem.coveredCount}/${analysis.enem.rows.length} habilidades ENEM cobertas` : ''}</p>
+        <p className="text-sm text-content-secondary">Origem: {analysis.tabName} · {analysis.chapters.length} capítulos · {analysis.bncc.distinctCodes} códigos BNCC distintos{analysis.enem ? ` · ${analysis.enem.coveredCount}/${analysis.enem.rows.length} habilidades ENEM cobertas` : ''}</p>
         {analysis.findings.length === 0
           ? <p className="mt-3 rounded border border-status-success-border bg-status-success-surface p-3 text-sm text-status-success-content">Nenhuma pendência encontrada neste planejamento.</p>
           : <ul className="mt-3 space-y-2">{analysis.findings.map((finding) => <li key={finding.title} className={`rounded border p-3 text-sm ${SEVERITY_CLASS[finding.severity]}`}><p className="font-semibold">{SEVERITY_LABEL[finding.severity]}: {finding.title}</p><p className="mt-1">{finding.detail}</p></li>)}</ul>}
@@ -263,7 +263,7 @@ export default function PlanningAdvisor({ isManager }: { isManager: boolean }) {
       </section>
 
       {analysis.sheetWarnings.length > 0 && <details className="rounded border border-border bg-surface p-4 text-sm">
-        <summary className="cursor-pointer font-semibold">Avisos da leitura da planilha ({analysis.sheetWarnings.length})</summary>
+        <summary className="cursor-pointer font-semibold">Avisos da leitura do planejamento ({analysis.sheetWarnings.length})</summary>
         <ul className="mt-2 space-y-1 text-content-secondary">{analysis.sheetWarnings.map((warning) => <li key={warning}>• {warning}</li>)}</ul>
       </details>}
     </>}

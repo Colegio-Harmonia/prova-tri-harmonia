@@ -5,6 +5,24 @@
 > Última atualização: 13/11/2026 — negrito Markdown na Prova Adaptada; antes, produção regularizada com o main e publicada pelo script oficial. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
 > [`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md).
 
+## Assistente lê do Planejamento — 13/11/2026
+
+Decisão do usuário: o Planejamento da Prova TRI é a fonte; a planilha é
+provisória. O Assistente passou a ler **cada bimestre do Planejamento quando ele
+existe** e a planilha só nos bimestres ainda não trazidos (`combineSources` em
+`internalPlanSource.ts`). Com os quatro bimestres no Planejamento, a planilha
+nem é consultada.
+
+- Lê a versão **em trabalho** (rascunho/revisão) quando há, senão a oficial:
+  reanalisar depois de "Adicionar ao planejamento" já mostra a habilidade.
+- Planejamento criado mas sem unidades não substitui a planilha do bimestre.
+- Cada capítulo mostra a origem (Planejamento ou Planilha); o campo "Ano letivo"
+  da tela define de qual ano ler.
+- Em 13/11/2026, o EM só tinha planejamento interno do 4º bimestre: 1º–3º
+  seguem vindo da planilha até serem importados.
+
+Validação: suíte (1006), TypeScript, lint e regressão. Sem migration.
+**Não conferido no navegador.**
 ## Negrito em Markdown na Prova Adaptada — 13/11/2026
 
 A biblioteca de TDAH pede à IA `**negrito**` nas palavras-chave do comando, mas

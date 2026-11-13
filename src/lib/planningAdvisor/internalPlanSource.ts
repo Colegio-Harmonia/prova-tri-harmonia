@@ -1,67 +1,116 @@
-import { and, desc, eq, inArray } from 'drizzle-orm'
+/**
+ * Fonte do Assistente: o Planejamento da Prova TRI é a referência; a planilha
+ * só completa os bimestres que ainda não foram trazidos para cá.
+ */
+import { and, asc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { curriculumPlanVersions, curriculumPlans } from '@/db/schema'
-import { CurriculumPlanError, getCurriculumFromPlan } from '@/lib/curriculum/planCurriculum'
-import type { CurriculumSelection, Segment } from '@/types/exam'
+import { curriculumPlanAssignments, curriculumPlanSkills, curriculumPlanUnits, curriculumPlanVersions, curriculumPlans } from '@/db/schema'
+import { isStaffSuperuser, type UserRole } from '@/lib/auth/roles'
+import { buildCurriculumFromPlan, type PlanUnitRow } from '@/lib/curriculum/planCurriculum'
+import { officialVersion, openVersion, PLANNING_STATUS_LABELS, type PlanningStatus } from '@/lib/curriculum/planningPolicy'
+import type { CurriculumSelection, CurricularUnit, Segment } from '@/types/exam'
+import { PLAN_ROW_OFFSET } from './rowOrigin'
 
-/** Mantém rowIndex único ao juntar bimestres (cada planejamento numera suas unidades de 0). */
-const ROW_OFFSET_PER_BIMESTER = 1000
 
-/** Versão oficial do planejamento: aprovada ou encerrada (mesmo critério do módulo de planejamento). */
-export const OFFICIAL_VERSION_STATUSES = ['aprovado', 'encerrado'] as const
+export type AdvisorScope = { segment: Segment; gradeYear: number; subject: string }
+export type BimesterSelection = { bimester: number; versionNumber: number; status: PlanningStatus; selection: CurriculumSelection }
+export type AdvisorUnitOrigin = 'planejamento' | 'planilha'
 
-export type BimesterSelection = { bimester: number; selection: CurriculumSelection }
+export function bimesterNumberOf(period: string | null | undefined): number | null {
+  const digits = period?.match(/\d+/)
+  const value = digits ? Number(digits[0]) : NaN
+  return value >= 1 && value <= 4 ? value : null
+}
 
-/** Junta os planejamentos internos aprovados de cada bimestre num plano do ano. */
-export function mergeBimesterSelections(
-  scope: { segment: Segment; gradeYear: number; subject: string },
-  parts: BimesterSelection[],
-  extraWarnings: string[] = [],
-): CurriculumSelection {
-  const ordered = [...parts].sort((a, b) => a.bimester - b.bimester)
-  return {
-    ...scope,
-    tabName: `Planejamento interno (${ordered.map((part) => `${part.bimester}º bimestre`).join(', ')})`,
-    units: ordered.flatMap((part) => part.selection.units.map((unit) => ({
-      ...unit,
-      rowIndex: part.bimester * ROW_OFFSET_PER_BIMESTER + unit.rowIndex,
-      bimestre: String(part.bimester),
-    }))),
-    unmappedWarnings: [...ordered.flatMap((part) => part.selection.unmappedWarnings), ...extraWarnings],
-  }
+/** De onde veio cada unidade da seleção combinada (pelo rowIndex). */
+export function unitOrigin(unit: Pick<CurricularUnit, 'rowIndex'>): AdvisorUnitOrigin {
+  return unit.rowIndex >= PLAN_ROW_OFFSET ? 'planejamento' : 'planilha'
 }
 
 /**
- * Plano do ano a partir do planejamento interno (`/planejamento`): usado
- * quando a disciplina não é lida da planilha (ex.: Inglês do EM, cuja aba é
- * ambígua). Considera o ano letivo mais recente com planejamento e a versão
- * oficial de cada bimestre — aprovada ou já encerrada (bimestre fechado
- * continua fazendo parte do ano). Devolve null quando não há nenhuma.
+ * Junta as duas fontes num plano do ano: bimestre que tem Planejamento usa o
+ * Planejamento (a planilha desse bimestre é ignorada); os demais vêm da
+ * planilha. `sheet` nulo = planilha indisponível para a disciplina.
  */
-export async function getYearCurriculumFromInternalPlans(scope: { segment: Segment; gradeYear: number; subject: string }): Promise<CurriculumSelection | null> {
+export function combineSources(scope: AdvisorScope, parts: BimesterSelection[], sheet: CurriculumSelection | null, notes: string[] = []): CurriculumSelection {
+  const ordered = [...parts].sort((a, b) => a.bimester - b.bimester)
+  const planned = new Set(ordered.map((part) => part.bimester))
+  const fromPlans: CurricularUnit[] = ordered.flatMap((part) => part.selection.units.map((unit) => ({
+    ...unit, rowIndex: part.bimester * PLAN_ROW_OFFSET + unit.rowIndex, bimestre: String(part.bimester),
+  })))
+  const fromSheet = (sheet?.units ?? []).filter((unit) => {
+    const bimester = bimesterNumberOf(unit.bimestre)
+    return bimester === null || !planned.has(bimester)
+  })
+  const sheetBimesters = [...new Set(fromSheet.map((unit) => bimesterNumberOf(unit.bimestre)))]
+
+  // Ordem do ano: por bimestre; linhas da planilha sem bimestre reconhecível ficam no fim.
+  const order = (unit: CurricularUnit) => bimesterNumberOf(unit.bimestre) ?? 99
+  const units = [...fromPlans, ...fromSheet].map((unit, index) => ({ unit, index })).sort((a, b) => order(a.unit) - order(b.unit) || a.index - b.index).map((entry) => entry.unit)
+
+  const labels: string[] = []
+  if (ordered.length) labels.push(`Planejamento da Prova TRI (${ordered.map((part) => `${part.bimester}º bim., versão ${part.versionNumber} ${PLANNING_STATUS_LABELS[part.status].toLowerCase()}`).join('; ')})`)
+  if (fromSheet.length && sheet) {
+    const which = sheetBimesters.filter((value): value is number => value !== null).sort()
+    labels.push(`planilha "${sheet.tabName}"${which.length ? ` (${which.map((value) => `${value}º`).join(', ')} bim.)` : ''}`)
+  }
+
+  return {
+    ...scope,
+    tabName: labels.join(' + ') || sheet?.tabName || 'sem origem',
+    units,
+    unmappedWarnings: [
+      ...ordered.flatMap((part) => part.selection.unmappedWarnings),
+      // Avisos da planilha só interessam para o que de fato veio dela.
+      ...(fromSheet.length ? sheet?.unmappedWarnings ?? [] : []),
+      ...notes,
+    ],
+  }
+}
+
+export type AdvisorViewer = { id: number; role: UserRole }
+
+/**
+ * Planejamentos internos da disciplina no ano letivo, um por bimestre.
+ *
+ * Quem pode ver o planejamento (coordenação/direção ou professor atribuído —
+ * mesma regra de `canViewPlan`) lê a versão EM TRABALHO (rascunho/revisão)
+ * quando existe, senão a oficial: o Assistente apoia quem está planejando e
+ * precisa enxergar o que acabou de entrar no rascunho. Os demais professores
+ * só leem a versão OFICIAL (aprovada/encerrada), que já é a referência pública
+ * da escola na geração de provas; rascunho alheio nunca é exposto.
+ */
+export async function getBimesterPlanSelections(scope: AdvisorScope, academicYear: number, viewer: AdvisorViewer): Promise<BimesterSelection[]> {
   const plans = await db.select().from(curriculumPlans)
-    .where(and(eq(curriculumPlans.segment, scope.segment), eq(curriculumPlans.gradeYear, scope.gradeYear), eq(curriculumPlans.subject, scope.subject)))
-    .orderBy(desc(curriculumPlans.academicYear), curriculumPlans.bimester)
-  if (!plans.length) return null
-  const academicYear = plans[0].academicYear
+    .where(and(eq(curriculumPlans.academicYear, academicYear), eq(curriculumPlans.segment, scope.segment), eq(curriculumPlans.gradeYear, scope.gradeYear), eq(curriculumPlans.subject, scope.subject)))
+    .orderBy(asc(curriculumPlans.bimester))
+  if (!plans.length) return []
+  const versions = await db.select({ id: curriculumPlanVersions.id, planId: curriculumPlanVersions.planId, versionNumber: curriculumPlanVersions.versionNumber, status: curriculumPlanVersions.status })
+    .from(curriculumPlanVersions).where(inArray(curriculumPlanVersions.planId, plans.map((plan) => plan.id)))
+
+  const assigned = isStaffSuperuser(viewer.role) ? null : new Set(
+    (await db.select({ planId: curriculumPlanAssignments.planId }).from(curriculumPlanAssignments)
+      .where(and(eq(curriculumPlanAssignments.userId, viewer.id), inArray(curriculumPlanAssignments.planId, plans.map((plan) => plan.id))))).map((row) => row.planId),
+  )
 
   const parts: BimesterSelection[] = []
-  const skipped: string[] = []
-  for (const plan of plans.filter((item) => item.academicYear === academicYear)) {
-    // Sem o id da versão, getCurriculumFromPlan só enxerga 'aprovado' e o
-    // bimestre encerrado sumiria da análise do ano.
-    const official = await db.query.curriculumPlanVersions.findFirst({
-      where: and(eq(curriculumPlanVersions.planId, plan.id), inArray(curriculumPlanVersions.status, [...OFFICIAL_VERSION_STATUSES])),
-      orderBy: [desc(curriculumPlanVersions.versionNumber)],
+  for (const plan of plans) {
+    const own = versions.filter((version) => version.planId === plan.id)
+    const canSeeDraft = assigned === null || assigned.has(plan.id)
+    const version = (canSeeDraft ? openVersion(own) : null) ?? officialVersion(own)
+    if (!version) continue
+    const units = await db.select().from(curriculumPlanUnits).where(eq(curriculumPlanUnits.versionId, version.id)).orderBy(asc(curriculumPlanUnits.position))
+    // Planejamento criado e ainda vazio não substitui a planilha do bimestre.
+    if (!units.length) continue
+    const skills = await db.select().from(curriculumPlanSkills).where(inArray(curriculumPlanSkills.unitId, units.map((unit) => unit.id))).orderBy(asc(curriculumPlanSkills.position))
+    const rows: PlanUnitRow[] = units.map((unit) => ({
+      position: unit.position, title: unit.title, content: unit.content, objectives: unit.objectives, enemSkills: unit.enemSkills,
+      skills: skills.filter((skill) => skill.unitId === unit.id).map((skill) => ({ code: skill.code, description: skill.description })),
+    }))
+    parts.push({
+      bimester: plan.bimester, versionNumber: version.versionNumber, status: version.status,
+      selection: buildCurriculumFromPlan({ ...scope, bimester: plan.bimester, academicYear }, `Planejamento interno #${plan.id}`, rows),
     })
-    if (!official) { skipped.push(`${plan.bimester}º bimestre fora da análise: sem versão aprovada ou encerrada.`); continue }
-    try {
-      const selection = await getCurriculumFromPlan(plan.id, { ...scope, bimester: plan.bimester, academicYear, curriculumPlanVersionId: official.id })
-      parts.push({ bimester: plan.bimester, selection })
-    } catch (error) {
-      if (!(error instanceof CurriculumPlanError)) throw error
-      skipped.push(`${plan.bimester}º bimestre fora da análise: ${error.message}`)
-    }
   }
-  return parts.length ? mergeBimesterSelections(scope, parts, skipped) : null
+  return parts
 }

@@ -3,7 +3,8 @@ import { llmAvailable } from '@/lib/gemini/llmClient'
 import { generateValidatedStructuredContent } from '@/lib/gemini/structuredRepair'
 import { TabResolutionError } from '@/lib/sheets/tabResolver'
 import type { CurriculumSelection, Segment } from '@/types/exam'
-import { getYearCurriculumFromInternalPlans } from './internalPlanSource'
+import { SheetNotConfiguredError } from '@/config/gradeSheets'
+import { combineSources, getBimesterPlanSelections, type AdvisorViewer } from './internalPlanSource'
 import { analyzePlanning, type PlanningAnalysis } from './analyzePlanning'
 import {
   recommendEnemSkills,
@@ -21,31 +22,48 @@ export type PlanningAdvisorParams = {
   segment: Segment
   gradeYear: number
   subject: string
+  /** Quem está pedindo: define se rascunhos do Planejamento podem ser lidos. */
+  viewer: AdvisorViewer
+  /** Ano letivo dos planejamentos internos a considerar; padrão: ano corrente. */
+  academicYear?: number
   /** Pede sugestões de habilidade ENEM à IA (só Ensino Médio). */
   withSuggestions: boolean
 }
 
 /**
- * Planilha primeiro; se a aba não puder ser resolvida (ex.: Inglês do EM,
- * planejado só no planejamento interno), usa os planejamentos internos
- * aprovados do ano. Sem nenhum dos dois, devolve o erro original da planilha.
+ * Planejamento da Prova TRI primeiro: cada bimestre que já tem planejamento
+ * interno é lido de lá; a planilha só completa os bimestres restantes. Se a
+ * planilha não puder ser lida (aba ambígua, série sem planilha), o que houver
+ * no Planejamento basta; sem nenhum dos dois, devolve o erro da planilha.
  */
 async function loadYearCurriculum(params: PlanningAdvisorParams): Promise<CurriculumSelection> {
   const scope = { segment: params.segment, gradeYear: params.gradeYear, subject: params.subject }
+  const sheetYear = new Date().getFullYear()
+  const academicYear = params.academicYear ?? sheetYear
+  const parts = await getBimesterPlanSelections(scope, academicYear, params.viewer)
+
+  // Os quatro bimestres já estão no Planejamento: a planilha não é mais consultada.
+  if (new Set(parts.map((part) => part.bimester)).size === 4) return combineSources(scope, parts, null)
+
+  // A planilha é uma só por série e representa o ano letivo corrente: não
+  // pode completar o plano de outro ano.
+  if (academicYear !== sheetYear) {
+    return combineSources(scope, parts, null, [`Só o Planejamento da Prova TRI foi considerado: a planilha representa ${sheetYear}, não ${academicYear}.`])
+  }
+
   try {
-    return await getCurriculumForExam(scope)
+    return combineSources(scope, parts, await getCurriculumForExam(scope))
   } catch (error) {
-    if (!(error instanceof TabResolutionError)) throw error
-    const fromPlans = await getYearCurriculumFromInternalPlans(scope)
-    if (!fromPlans) throw error
-    return fromPlans
+    const sheetUnavailable = error instanceof TabResolutionError || error instanceof SheetNotConfiguredError
+    if (!sheetUnavailable || !parts.length) throw error
+    return combineSources(scope, parts, null, ['Os bimestres sem planejamento na Prova TRI ficaram fora da análise: a planilha desta disciplina não pôde ser lida.'])
   }
 }
 
 /**
  * Lê o planejamento do ANO INTEIRO (sem filtro de bimestre nem de Status
  * Cronograma), analisa e, se pedido, acrescenta sugestões da IA. Só leitura:
- * nada é gravado na planilha nem no banco de planejamento.
+ * a análise em si não grava nada.
  */
 export async function runPlanningAdvisor(params: PlanningAdvisorParams): Promise<PlanningAdvisorReport> {
   const selection = await loadYearCurriculum(params)

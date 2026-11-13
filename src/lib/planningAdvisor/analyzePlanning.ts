@@ -16,6 +16,7 @@ import { isEnemAreaCode, type EnemAreaCode } from '@/config/enemMatrix'
 import { ENEM_AREA_LABELS, getOfficialEnemCompetencyText, getOfficialEnemSkillText, listOfficialEnemSkills, type OfficialEnemSkill } from '@/config/enemMatrixOfficial'
 import { getSaebApplicability } from '@/config/saebApplicability'
 import { composePlanUnitTitle } from '@/lib/curriculum/planUnitTitle'
+import { PLAN_ROW_OFFSET } from './rowOrigin'
 import type { CurriculumSelection, CurricularUnit } from '@/types/exam'
 
 export const BLOOM_ORDER: BloomLevel[] = ['lembrar', 'compreender', 'aplicar', 'analisar', 'avaliar', 'criar']
@@ -50,6 +51,8 @@ export type ChapterAnalysis = {
   bimestre: string | null
   /** Bimestre 1-4 quando o período da planilha é um bimestre reconhecível; senão null. */
   bimesterNumber: number | null
+  /** De onde o capítulo foi lido: Planejamento da Prova TRI ou planilha. */
+  origin: 'planejamento' | 'planilha'
   conteudo: string | null
   bnccCodes: string[]
   enemSkills: ChapterEnemSkill[]
@@ -174,7 +177,7 @@ function analyzeChapter(unit: CurricularUnit, scope: EnemScope | null, isEnsinoM
       issues.push({ code: 'sem_habilidade_enem', severity: 'alta', message: 'Capítulo sem habilidade da Matriz do ENEM associada.' })
     }
     if (invalidEnemCodes.length) {
-      issues.push({ code: 'codigo_enem_invalido', severity: 'alta', message: `Código(s) que não existem na matriz de ${scope.areaLabel}: ${invalidEnemCodes.join(', ')}. Corrija na planilha — o par competência:habilidade não confere.` })
+      issues.push({ code: 'codigo_enem_invalido', severity: 'alta', message: `Código(s) que não existem na matriz de ${scope.areaLabel}: ${invalidEnemCodes.join(', ')}. Corrija na origem — o par competência:habilidade não confere.` })
     }
     const outside = enemSkills.filter((skill) => !scope.competencies.includes(skill.competency))
     if (outside.length) {
@@ -189,12 +192,12 @@ function analyzeChapter(unit: CurricularUnit, scope: EnemScope | null, isEnsinoM
     issues.push({
       code: 'sem_bncc',
       severity: mappedByEnem ? 'info' : 'media',
-      message: `Sem habilidade BNCC na planilha${unit.habilidades.reason ? ` (${unit.habilidades.reason})` : ''}.${mappedByEnem ? ' O capítulo já está mapeado pela Matriz do ENEM.' : ' O campo BNCC das provas deste capítulo sai como "não mapeado".'}`,
+      message: `Sem habilidade BNCC${unit.habilidades.reason ? ` (${unit.habilidades.reason})` : ''}.${mappedByEnem ? ' O capítulo já está mapeado pela Matriz do ENEM.' : ' O campo BNCC das provas deste capítulo sai como "não mapeado".'}`,
     })
   }
 
   if (unit.objetivosColumnMissing) {
-    issues.push({ code: 'bloom_estimado', severity: 'info', message: 'A aba não tem coluna "Objetivos": o nível de Bloom deste capítulo é estimado pelo título/conteúdo.' })
+    issues.push({ code: 'bloom_estimado', severity: 'info', message: 'Sem objetivos informados: o nível de Bloom deste capítulo é estimado pelo título/conteúdo.' })
   } else if (cognitive.length === 0) {
     issues.push({ code: 'sem_objetivo_cognitivo', severity: 'media', message: 'Nenhum objetivo com verbo cognitivo claro — não dá para inferir o nível de Bloom do capítulo.' })
   }
@@ -205,7 +208,7 @@ function analyzeChapter(unit: CurricularUnit, scope: EnemScope | null, isEnsinoM
 
   return {
     rowIndex: unit.rowIndex, title: chapterTitle(unit), planTitle: composePlanUnitTitle(unit, `Unidade ${positionInBimester + 1}`), bimestre: unit.bimestre,
-    bimesterNumber: bimesterNumberOf(unit.bimestre), conteudo: unit.conteudo,
+    bimesterNumber: bimesterNumberOf(unit.bimestre), origin: unit.rowIndex >= PLAN_ROW_OFFSET ? 'planejamento' : 'planilha', conteudo: unit.conteudo,
     bnccCodes, enemSkills, invalidEnemCodes, bloomLevels, bloomEstimated, issues,
   }
 }
@@ -296,7 +299,7 @@ export function analyzePlanning(selection: CurriculumSelection): PlanningAnalysi
 
   const findings: PlanningFinding[] = []
   if (chapters.length === 0) {
-    findings.push({ severity: 'alta', title: 'Nenhum capítulo encontrado', detail: 'A aba não trouxe linhas de planejamento; confira a planilha.' })
+    findings.push({ severity: 'alta', title: 'Nenhum capítulo encontrado', detail: 'Não há unidades no Planejamento da Prova TRI nem linhas na planilha para esta disciplina.' })
   }
   if (isEnsinoMedio && !scope) {
     findings.push({ severity: 'info', title: 'Disciplina sem área do ENEM configurada', detail: `${selection.subject} não está associada a uma área da Matriz do ENEM no sistema; a análise ficou em BNCC × Bloom.` })
@@ -308,7 +311,7 @@ export function analyzePlanning(selection: CurriculumSelection): PlanningAnalysi
         severity: 'alta',
         title: all ? 'Planejamento ainda sem habilidades do ENEM' : `${plural(enem.chaptersWithoutEnem, 'capítulo', 'capítulos')} sem habilidade do ENEM`,
         detail: all
-          ? `Nenhum dos ${chapters.length} capítulos traz código da Matriz do ENEM (formato C2:H5). Inclua a coluna "Habilidades ENEM" na aba e preencha por capítulo.`
+          ? `Nenhum dos ${chapters.length} capítulos traz código da Matriz do ENEM (formato C2:H5). Use as sugestões por capítulo e adicione ao planejamento de cada bimestre.`
           : `De ${chapters.length} capítulos, ${enem.chaptersWithoutEnem} não têm código da Matriz do ENEM (formato C2:H5).`,
       })
     }
@@ -324,7 +327,7 @@ export function analyzePlanning(selection: CurriculumSelection): PlanningAnalysi
     }
   }
   if (bnccGapCount > 0) {
-    findings.push({ severity: 'media', title: `${plural(bnccGapCount, 'capítulo', 'capítulos')} sem BNCC${isEnsinoMedio ? ' nem ENEM' : ''}`, detail: 'A coluna "Habilidades" está vazia ou sem código BNCC nesses capítulos. O sistema não inventa código: as provas saem com BNCC "não mapeado" até a planilha ser preenchida.' })
+    findings.push({ severity: 'media', title: `${plural(bnccGapCount, 'capítulo', 'capítulos')} sem BNCC${isEnsinoMedio ? ' nem ENEM' : ''}`, detail: 'Esses capítulos estão sem código BNCC. O sistema não inventa código: as provas saem com BNCC "não mapeado" até o planejamento ser preenchido.' })
   }
   if (bloom.total > 0) {
     // As críticas usam só objetivos reais; os estimados ganham aviso próprio.
@@ -336,9 +339,9 @@ export function analyzePlanning(selection: CurriculumSelection): PlanningAnalysi
       findings.push({ severity: 'media', title: 'Objetivos concentrados em Lembrar/Compreender', detail: `${Math.round(bloom.lowerOrderShare * 100)}% dos objetivos cognitivos estão nos dois níveis mais baixos. No Ensino Médio o plano deve pender para Aplicar/Analisar/Avaliar, coerente com o ENEM.` })
     }
     if (bloom.allEstimated) {
-      findings.push({ severity: 'info', title: 'Bloom estimado', detail: 'A aba não tem coluna "Objetivos": os níveis de Bloom foram estimados pelo título/conteúdo e servem só de indicação.' })
+      findings.push({ severity: 'info', title: 'Bloom estimado', detail: 'O plano não traz objetivos: os níveis de Bloom foram estimados pelo título/conteúdo e servem só de indicação.' })
     } else if (bloom.estimatedCount > 0) {
-      findings.push({ severity: 'info', title: 'Bloom parcialmente estimado', detail: `${plural(bloom.estimatedCount, 'objetivo teve', 'objetivos tiveram')} o nível estimado por falta da coluna "Objetivos" em parte das abas; eles não entram na avaliação da distribuição.` })
+      findings.push({ severity: 'info', title: 'Bloom parcialmente estimado', detail: `${plural(bloom.estimatedCount, 'objetivo teve', 'objetivos tiveram')} o nível estimado por falta de objetivos em parte do plano; eles não entram na avaliação da distribuição.` })
     }
   } else if (chapters.length > 0) {
     findings.push({ severity: 'media', title: 'Sem objetivos cognitivos', detail: 'Nenhum objetivo com verbo cognitivo foi encontrado; não é possível avaliar a distribuição de Bloom do plano.' })
