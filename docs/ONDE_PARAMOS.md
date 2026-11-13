@@ -5,6 +5,30 @@
 > Última atualização: 13/11/2026 — negrito Markdown na Prova Adaptada; antes, produção regularizada com o main e publicada pelo script oficial. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
 > [`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md).
 
+## Assistente: bimestre e criação de unidade; aba "Bloom e verbos" — 14/11/2026
+
+Pedidos do usuário, a partir de um caso real (Matemática do 3º ano EM, cuja
+planilha é organizada por frente, sem bimestre).
+
+- **Bimestre escolhido no cartão:** capítulo que vem sem bimestre ganha um
+  seletor (1º a 4º); antes a seleção ficava desabilitada.
+- **Unidade criada no rascunho:** ao adicionar, se a unidade não existe no
+  planejamento do bimestre, ela nasce ao fim do rascunho com título, conteúdos e
+  o que foi escolhido (`createIfMissing`). Título ambíguo no planejamento nunca
+  cria nem escolhe. `patchDraftUnitFields` passou a aceitar `inserts`.
+- **Planejamento do bimestre inexistente:** a coordenação cria dali mesmo
+  (`createPlanIfMissing`, pela regra de `createPlan`); o professor é orientado a
+  pedir à coordenação.
+- **Aba "Bloom e verbos"** em `/planejamento` (todos os perfis): guia para a
+  equipe pedagógica com as regras de leitura, definição e exemplos de cada nível
+  (`src/config/bloomGuide.ts`) e a tabela de verbos com o uso real nos
+  planejamentos, contado ao abrir a página (`bloomVerbUsage.ts`). Só contagens;
+  nenhum texto de planejamento é exibido. `BLOOM_BASE_VERBS` marca os 25 verbos
+  do manual.
+
+Validação: suíte, TypeScript, lint e regressão. Sem migration.
+**Não conferido no navegador.**
+
 ## Tabela de verbos de Bloom ampliada — 13/11/2026
 
 Trazido para o `main` o trabalho do PR #46 (05/10, nunca mesclado): tabela de

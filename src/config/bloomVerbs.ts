@@ -50,6 +50,20 @@ export const BLOOM_VERB_TABLE: Record<BloomLevel, string[]> = {
   ],
 }
 
+/**
+ * Os 25 verbos da tabela original do manual do projeto (CLAUDE.md raiz). Os
+ * demais vieram da ampliação de 05/10/2026 e são decisões pedagógicas
+ * revisáveis pela coordenação.
+ */
+export const BLOOM_BASE_VERBS: ReadonlySet<string> = new Set([
+  'identificar', 'listar', 'nomear', 'reconhecer',
+  'explicar', 'descrever', 'compreender', 'interpretar',
+  'aplicar', 'utilizar', 'executar', 'vivenciar', 'praticar',
+  'comparar', 'diferenciar', 'analisar', 'planejar e utilizar estratégias',
+  'avaliar', 'justificar', 'discutir a importância de',
+  'criar', 'elaborar', 'produzir', 'propor', 'planejar e produzir alternativas',
+])
+
 // Sentences containing these are attitudinal/afetivo, not cognitive — per the
 // root CLAUDE.md warning ("reconhecer e valorizar as diferenças individuais"
 // must NOT become a Bloom "Lembrar" question just because it contains
