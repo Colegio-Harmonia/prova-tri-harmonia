@@ -13,7 +13,9 @@ const bodySchema = z.object({
     title: z.string().trim().min(1),
     codes: z.array(z.string().trim().min(1)).max(10).optional(),
     objectives: z.array(z.string().trim().min(1).max(300)).max(10).optional(),
+    createIfMissing: z.object({ content: z.string().max(4000).nullable().optional() }).optional(),
   }).refine((item) => (item.codes?.length ?? 0) + (item.objectives?.length ?? 0) > 0, 'Informe ao menos uma habilidade ou um objetivo.')).min(1).max(200),
+  createPlanIfMissing: z.boolean().optional(),
 })
 
 // Leva habilidades ENEM e objetivos escolhidos no Assistente para o RASCUNHO do

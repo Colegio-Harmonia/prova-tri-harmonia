@@ -79,7 +79,7 @@ function ObjectiveSuggestionsBlock({ suggestions, apply }: { suggestions: Chapte
       const added = apply.addedObjectives.has(objective.text)
       return <li key={objective.text} className="text-sm">
         <label className="flex items-start gap-2">
-          <input type="checkbox" className="mt-1" disabled={added || apply.busy || !apply.onAddObjectives} checked={added || selected.has(objective.text)} onChange={() => toggle(objective.text)} />
+          <input type="checkbox" className="mt-1" disabled={added || apply.busy} checked={added || selected.has(objective.text)} onChange={() => toggle(objective.text)} />
           <span>
             <span className="text-content-primary">{objective.text}</span>
             <span className="ml-2 rounded border border-border px-1.5 py-0.5 text-xs text-content-secondary">{BLOOM_LABEL[objective.bloomLevel]}</span>
@@ -90,11 +90,11 @@ function ObjectiveSuggestionsBlock({ suggestions, apply }: { suggestions: Chapte
     })}</ul>
     {apply.onAddObjectives
       ? pending.length > 0 && <button type="button" disabled={apply.busy || chosen.length === 0} onClick={() => apply.onAddObjectives?.(chosen)} className={`mt-3 ${primaryButton}`}>{apply.working ? 'Adicionando…' : chosen.length ? `Adicionar ${chosen.length} ao planejamento` : 'Marque os objetivos para adicionar'}</button>
-      : <p className="mt-2 text-xs text-content-muted">Este capítulo não tem bimestre identificado na origem; copie os objetivos direto em Planejamentos.</p>}
+      : <p className="mt-2 text-xs text-content-muted">Escolha acima o bimestre do capítulo para poder adicionar.</p>}
   </div>
 }
 
-function ChapterCard({ chapter, suggestions, objectiveSuggestions, showEnem, apply, feedback }: { chapter: ChapterAnalysis; suggestions?: ChapterSuggestions; objectiveSuggestions?: ChapterObjectiveSuggestions; showEnem: boolean; apply: ApplyControls; feedback?: React.ReactNode }) {
+function ChapterCard({ chapter, suggestions, objectiveSuggestions, showEnem, apply, feedback, bimesterPicker }: { chapter: ChapterAnalysis; suggestions?: ChapterSuggestions; objectiveSuggestions?: ChapterObjectiveSuggestions; showEnem: boolean; apply: ApplyControls; feedback?: React.ReactNode; bimesterPicker?: React.ReactNode }) {
   const visibleIssues = chapter.issues.filter((issue: ChapterIssue) => issue.severity !== 'info')
   const notes = chapter.issues.filter((issue: ChapterIssue) => issue.severity === 'info')
   return <div className="rounded border border-border p-3">
@@ -110,6 +110,7 @@ function ChapterCard({ chapter, suggestions, objectiveSuggestions, showEnem, app
     </dl>
     {visibleIssues.length > 0 && <ul className="mt-3 space-y-1">{visibleIssues.map((issue) => <li key={issue.code} className="flex flex-wrap items-baseline gap-2 text-sm"><Badge severity={issue.severity}>{SEVERITY_LABEL[issue.severity]}</Badge><span>{issue.message}</span></li>)}</ul>}
     {notes.length > 0 && <ul className="mt-2 space-y-0.5 text-xs text-content-muted">{notes.map((issue) => <li key={issue.code}>• {issue.message}</li>)}</ul>}
+    {bimesterPicker}
     {suggestions && <div className="mt-3 rounded border border-border bg-surface-subtle p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-semibold">Sugestões da IA para o professor validar</p>
@@ -119,7 +120,6 @@ function ChapterCard({ chapter, suggestions, objectiveSuggestions, showEnem, app
         </div>
       </div>
       <ul className="mt-2 space-y-3">{suggestions.suggestions.map((suggestion) => <SuggestionRow key={suggestion.code} suggestion={suggestion} apply={apply} />)}</ul>
-      {!apply.onAdd && <p className="mt-2 text-xs text-content-muted">Este capítulo não tem bimestre identificado na origem; adicione as habilidades direto em Planejamentos.</p>}
     </div>}
     {objectiveSuggestions && <ObjectiveSuggestionsBlock suggestions={objectiveSuggestions} apply={apply} />}
     {feedback}
@@ -164,16 +164,20 @@ export default function PlanningAdvisor({ isManager }: { isManager: boolean }) {
   // Sugestões já levadas ao rascunho ("rowIndex:código") e o retorno da última tentativa por capítulo.
   const [addedKeys, setAddedKeys] = useState<Set<string>>(new Set())
   const [applyingRow, setApplyingRow] = useState<number | null>(null)
+  // Capítulo sem bimestre na origem: o professor diz em qual bimestre vai trabalhá-lo.
+  const [chosenBimester, setChosenBimester] = useState<Record<number, number>>({})
+  const bimesterOf = (chapter: ChapterAnalysis) => chapter.bimesterNumber ?? chosenBimester[chapter.rowIndex] ?? null
   // `picked` guarda exatamente o que o usuário pediu naquela tentativa.
   const [applyResults, setApplyResults] = useState<Record<number, (BimesterApplyResult | { status: 'erro'; message: string }) & { picked: Picked }>>({})
 
-  async function addToPlan(chapter: ChapterAnalysis, picked: Picked) {
-    if (!chapter.bimesterNumber) return
+  async function addToPlan(chapter: ChapterAnalysis, picked: Picked, createPlanIfMissing = false) {
+    const bimester = bimesterOf(chapter)
+    if (!bimester) return
     setApplyingRow(chapter.rowIndex)
     try {
       const response = await fetch('/api/curriculum/planning-advisor/apply', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ academicYear, segment, gradeYear, subject, items: [{ bimester: chapter.bimesterNumber, title: chapter.planTitle || chapter.title, ...(picked.codes.length ? { codes: picked.codes } : {}), ...(picked.objectives.length ? { objectives: picked.objectives } : {}) }] }),
+        body: JSON.stringify({ academicYear, segment, gradeYear, subject, ...(createPlanIfMissing ? { createPlanIfMissing: true } : {}), items: [{ bimester, title: chapter.planTitle || chapter.title, createIfMissing: { content: chapter.conteudo }, ...(picked.codes.length ? { codes: picked.codes } : {}), ...(picked.objectives.length ? { objectives: picked.objectives } : {}) }] }),
       })
       const body = await response.json()
       if (!response.ok) { setApplyResults((current) => ({ ...current, [chapter.rowIndex]: { picked, status: 'erro', message: [body.error, ...(body.details ?? [])].filter(Boolean).join(' ') || 'Não foi possível adicionar ao planejamento.' } })); return }
@@ -213,13 +217,15 @@ export default function PlanningAdvisor({ isManager }: { isManager: boolean }) {
       {'notFound' in result && result.notFound.length > 0 && <p className="mt-1">Capítulo não encontrado no planejamento do bimestre: {result.notFound.join('; ')}. Confira o título em Planejamentos.</p>}
       {'planId' in result && result.planId && <Link href={`/planejamento/${result.planId}`} className="mt-1 inline-block font-semibold underline">Abrir o planejamento do {result.bimester}º bimestre</Link>}
       {result.status === 'sem_planejamento' && (isManager
-        ? <button type="button" disabled={applyingRow !== null} onClick={() => importThenAdd(chapter, result.picked)} className={`mt-2 block ${primaryButton}`}>Trazer o {chapter.bimesterNumber}º bimestre da planilha para o Planejamento e adicionar</button>
+        ? (chapter.bimesterNumber && chapter.origin === 'planilha'
+          ? <button type="button" disabled={applyingRow !== null} onClick={() => importThenAdd(chapter, result.picked)} className={`mt-2 block ${primaryButton}`}>Trazer o {chapter.bimesterNumber}º bimestre da planilha para o Planejamento e adicionar</button>
+          : <button type="button" disabled={applyingRow !== null} onClick={() => addToPlan(chapter, result.picked, true)} className={`mt-2 block ${primaryButton}`}>Criar o planejamento do {bimesterOf(chapter)}º bimestre e adicionar</button>)
         : <p className="mt-1">Peça à coordenação para criar ou importar o planejamento deste bimestre.</p>)}
     </div>
   }
 
   function changeSegment(value: Segment) { setSegment(value); setGradeYear(SEGMENT_GRADES[value][0]); setSubject(SEGMENT_SUBJECTS[value][0]); setReport(null) }
-  function resetApply() { setAddedKeys(new Set()); setApplyResults({}) }
+  function resetApply() { setAddedKeys(new Set()); setApplyResults({}); setChosenBimester({}) }
 
   async function analyze() {
     setLoading(true); setMessage(''); setReport(null); resetApply()
@@ -298,11 +304,17 @@ export default function PlanningAdvisor({ isManager }: { isManager: boolean }) {
             added: new Set(codes.filter((code) => addedKeys.has(`${chapter.rowIndex}:${code}`))),
             busy: applyingRow !== null,
             working: applyingRow === chapter.rowIndex,
-            onAdd: chapter.bimesterNumber ? (chosen) => addToPlan(chapter, { codes: chosen, objectives: [] }) : null,
+            onAdd: bimesterOf(chapter) ? (chosen) => addToPlan(chapter, { codes: chosen, objectives: [] }) : null,
             addedObjectives: new Set((objectiveSuggestions?.objectives ?? []).map((objective) => objective.text).filter((text) => addedKeys.has(`${chapter.rowIndex}:o:${text}`))),
-            onAddObjectives: chapter.bimesterNumber ? (chosen) => addToPlan(chapter, { codes: [], objectives: chosen }) : null,
+            onAddObjectives: bimesterOf(chapter) ? (chosen) => addToPlan(chapter, { codes: [], objectives: chosen }) : null,
           }
-          return <ChapterCard key={chapter.rowIndex} chapter={chapter} suggestions={suggestions} objectiveSuggestions={objectiveSuggestions} showEnem={Boolean(analysis.enem)} apply={apply} feedback={applyFeedback(chapter)} />
+          return <ChapterCard key={chapter.rowIndex} chapter={chapter} suggestions={suggestions} objectiveSuggestions={objectiveSuggestions} showEnem={Boolean(analysis.enem)} apply={apply} feedback={applyFeedback(chapter)}
+            bimesterPicker={!chapter.bimesterNumber && (suggestions || objectiveSuggestions) ? <label className="mt-3 flex flex-wrap items-center gap-2 rounded border border-status-warning-border bg-status-warning-surface p-2 text-sm text-status-warning-content">
+              Este capítulo veio sem bimestre. Em qual bimestre ele será trabalhado?
+              <select aria-label={`Bimestre de ${chapter.title}`} disabled={applyingRow !== null} value={chosenBimester[chapter.rowIndex] ?? ''} onChange={(e) => { const value = Number(e.target.value); setChosenBimester((current) => { const next = { ...current }; if (value) next[chapter.rowIndex] = value; else delete next[chapter.rowIndex]; return next }) }} className="rounded border border-border bg-canvas px-2 py-1 text-content-primary">
+                <option value="">Escolha…</option>{[1, 2, 3, 4].map((item) => <option key={item} value={item}>{item}º bimestre</option>)}
+              </select>
+            </label> : null} />
         })}</div>
       </section>
 

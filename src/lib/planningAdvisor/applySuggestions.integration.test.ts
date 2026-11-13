@@ -151,6 +151,32 @@ describe.skipIf(!pgliteInstalled())('applyAdvisorSuggestions (Postgres real)', (
     expect(again.results[0].status).toBe('sem_mudanca')
   })
 
+  it('cria no rascunho a unidade que ainda não existe, ao fim, sem tocar nas outras', async () => {
+    const before = (await enemOf()).detail.units.map((unit) => unit.title)
+    const { results } = await advisor.applyAdvisorSuggestions(prof, { ...scope, items: [{ bimester: 1, title: 'Vetores e transformações lineares', codes: ['C5:H19'], objectives: ['Aplicar operações com vetores'], createIfMissing: { content: 'Vetores • Matrizes' } }] })
+    expect(results[0]).toMatchObject({ status: 'aplicado', applied: [{ title: 'Vetores e transformações lineares', created: true, codes: ['C5:H19'] }] })
+    expect(results[0].message).toContain('Unidade criada')
+    const { detail } = await enemOf()
+    expect(detail.units.map((unit) => unit.title)).toEqual([...before, 'Vetores e transformações lineares'])
+    expect(detail.units.at(-1)).toMatchObject({ content: 'Vetores • Matrizes', enemSkills: 'C5:H19', objectives: 'Aplicar operações com vetores.', skills: [] })
+    // Pedir de novo não duplica a unidade: agora ela existe e só recebe o que faltar.
+    const again = await advisor.applyAdvisorSuggestions(prof, { ...scope, items: [{ bimester: 1, title: 'Vetores e transformações lineares', codes: ['C5:H19', 'C5:H21'], createIfMissing: {} }] })
+    expect(again.results[0].applied).toEqual([{ title: 'Vetores e transformações lineares', codes: ['C5:H21'], objectives: [] }])
+    expect((await enemOf()).detail.units).toHaveLength(before.length + 1)
+  })
+
+  it('bimestre sem planejamento: só a coordenação cria, e a unidade nasce no rascunho', async () => {
+    const item = { ...scope, items: [{ bimester: 3, title: 'Vetores', codes: ['C5:H19'], createIfMissing: { content: 'Vetores' } }] }
+    expect((await advisor.applyAdvisorSuggestions(coord, item)).results[0].status).toBe('sem_planejamento')
+    const denied = await advisor.applyAdvisorSuggestions(prof, { ...item, createPlanIfMissing: true })
+    expect(denied.results[0]).toMatchObject({ status: 'bloqueado', planId: null })
+    const { results } = await advisor.applyAdvisorSuggestions(coord, { ...item, createPlanIfMissing: true })
+    expect(results[0]).toMatchObject({ status: 'aplicado', versionNumber: 1, applied: [{ title: 'Vetores', created: true }] })
+    const detail = await planning.getPlanDetail(coord, results[0].planId!)
+    expect(detail.versions.map((version) => version.status)).toEqual(['rascunho'])
+    expect(detail.units).toMatchObject([{ title: 'Vetores', enemSkills: 'C5:H19' }])
+  })
+
   it('recusa habilidade ENEM fora do Ensino Médio', async () => {
     await expect(advisor.applyAdvisorSuggestions(coord, { ...item(['C1:H1']), segment: 'anos-finais', gradeYear: 9 })).rejects.toThrow(/Ensino Médio/)
   })
