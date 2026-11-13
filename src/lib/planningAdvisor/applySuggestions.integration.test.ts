@@ -11,7 +11,7 @@ vi.mock('@/lib/curriculum/bnccDescriptions', () => ({
   enrichBnccDescriptions: async <T extends { code: string; description: string | null }>(skills: T[]) => skills.map((skill) => ({ ...skill, description: skill.description ?? `Oficial ${skill.code}` })),
 }))
 
-describe.skipIf(!pgliteInstalled())('applyEnemSuggestions (Postgres real)', () => {
+describe.skipIf(!pgliteInstalled())('applyAdvisorSuggestions (Postgres real)', () => {
   let planning: typeof import('@/lib/curriculum/planningService')
   let advisor: typeof import('./applySuggestions')
   const coord = { id: 1, role: 'coordenacao' as const }
@@ -42,26 +42,26 @@ describe.skipIf(!pgliteInstalled())('applyEnemSuggestions (Postgres real)', () =
   }, 60_000)
 
   it('avisa quando o bimestre não tem planejamento', async () => {
-    const { results } = await advisor.applyEnemSuggestions(prof, { ...scope, items: [{ bimester: 3, title: 'Arcos', codes: ['C4:H15'] }] })
+    const { results } = await advisor.applyAdvisorSuggestions(prof, { ...scope, items: [{ bimester: 3, title: 'Arcos', codes: ['C4:H15'] }] })
     expect(results[0]).toMatchObject({ bimester: 3, status: 'sem_planejamento', planId: null })
   })
 
   it('professor responsável adiciona ao rascunho aberto, sem duplicar nem aceitar código inválido', async () => {
-    const { results } = await advisor.applyEnemSuggestions(prof, item(['C4:H15', 'C2:H7', 'C9:H99']))
-    expect(results[0]).toMatchObject({ status: 'aplicado', versionNumber: 1, applied: [{ title: 'Arcos', codes: ['C4:H15'] }] })
+    const { results } = await advisor.applyAdvisorSuggestions(prof, item(['C4:H15', 'C2:H7', 'C9:H99']))
+    expect(results[0]).toMatchObject({ status: 'aplicado', versionNumber: 1, applied: [{ title: 'Arcos', codes: ['C4:H15'], objectives: [] }] })
     const { detail, enem } = await enemOf()
     expect(enem).toEqual(['C2:H7\nC4:H15', null])
     expect(detail.versions.map((version) => version.status)).toEqual(['rascunho'])
     expect(detail.units[0].skills.map((skill) => skill.code)).toEqual(['EM13MAT306'])
 
-    const again = await advisor.applyEnemSuggestions(prof, item(['C4:H15']))
+    const again = await advisor.applyAdvisorSuggestions(prof, item(['C4:H15']))
     expect(again.results[0]).toMatchObject({ status: 'sem_mudanca', applied: [] })
   })
 
   it('não grava nada para capítulo inexistente nem para professor sem acesso', async () => {
-    const missing = await advisor.applyEnemSuggestions(prof, item(['C5:H21'], 'Logaritmos'))
+    const missing = await advisor.applyAdvisorSuggestions(prof, item(['C5:H21'], 'Logaritmos'))
     expect(missing.results[0]).toMatchObject({ status: 'sem_mudanca', notFound: ['Logaritmos'] })
-    const denied = await advisor.applyEnemSuggestions(other, item(['C5:H21']))
+    const denied = await advisor.applyAdvisorSuggestions(other, item(['C5:H21']))
     expect(denied.results[0]).toMatchObject({ status: 'bloqueado' })
     expect((await enemOf()).enem).toEqual(['C2:H7\nC4:H15', null])
   })
@@ -69,7 +69,7 @@ describe.skipIf(!pgliteInstalled())('applyEnemSuggestions (Postgres real)', () =
   it('bloqueia enquanto a versão está em revisão', async () => {
     const { detail } = await enemOf()
     await planning.transitionVersion(prof, detail.selectedVersionId!, 'em_revisao')
-    const { results } = await advisor.applyEnemSuggestions(coord, item(['C5:H21']))
+    const { results } = await advisor.applyAdvisorSuggestions(coord, item(['C5:H21']))
     expect(results[0]).toMatchObject({ status: 'bloqueado' })
     expect(results[0].message).toContain('em revisão')
     await planning.transitionVersion(coord, detail.selectedVersionId!, 'aprovado')
@@ -77,7 +77,7 @@ describe.skipIf(!pgliteInstalled())('applyEnemSuggestions (Postgres real)', () =
 
   it('com versão aprovada, abre nova versão em rascunho e deixa a oficial intacta', async () => {
     const official = (await enemOf()).detail.officialVersionId!
-    const { results } = await advisor.applyEnemSuggestions(prof, item(['C5:H21'], 'Trigonometria na circunferência'))
+    const { results } = await advisor.applyAdvisorSuggestions(prof, item(['C5:H21'], 'Trigonometria na circunferência'))
     expect(results[0]).toMatchObject({ status: 'aplicado', versionNumber: 2 })
     expect((await enemOf(official)).enem).toEqual(['C2:H7\nC4:H15', null])
     const { detail, enem } = await enemOf()
@@ -96,7 +96,7 @@ describe.skipIf(!pgliteInstalled())('applyEnemSuggestions (Postgres real)', () =
     ])
     // ...e a gravação do Assistente, calculada dentro da transação, não desfaz nada disso.
     let seenInsideTx: string[] = []
-    await planning.patchDraftEnemSkills(prof, draftId, (units) => {
+    await planning.patchDraftUnitFields(prof, draftId, (units) => {
       seenInsideTx = units.map((unit) => unit.title)
       const planned = advisor.planChanges(units, [{ bimester: 1, title: 'Funções trigonométricas', codes: ['C5:H20'] }], 'matematica')
       return { changes: planned.changes, summary: 'teste', result: planned }
@@ -110,9 +110,9 @@ describe.skipIf(!pgliteInstalled())('applyEnemSuggestions (Postgres real)', () =
 
   it('patch recusa versão que não é rascunho e código inválido', async () => {
     const official = (await enemOf()).detail.officialVersionId!
-    await expect(planning.patchDraftEnemSkills(coord, official, () => ({ changes: [], summary: '', result: null }))).rejects.toThrow(/rascunho/)
+    await expect(planning.patchDraftUnitFields(coord, official, () => ({ changes: [], summary: '', result: null }))).rejects.toThrow(/rascunho/)
     const draftId = (await enemOf()).detail.selectedVersionId!
-    await expect(planning.patchDraftEnemSkills(coord, draftId, (units) => ({ changes: [{ unitId: units[0].id, enemSkills: 'C9:H99' }], summary: '', result: null }))).rejects.toThrow(/inválidas/)
+    await expect(planning.patchDraftUnitFields(coord, draftId, (units) => ({ changes: [{ unitId: units[0].id, enemSkills: 'C9:H99' }], summary: '', result: null }))).rejects.toThrow(/inválidas/)
     expect((await enemOf()).enem[0]).toBe('C2:H7\nC4:H15')
   })
 
@@ -138,7 +138,20 @@ describe.skipIf(!pgliteInstalled())('applyEnemSuggestions (Postgres real)', () =
     expect(parts[0].selection.units[1].enemSkills).toBeUndefined()
   })
 
-  it('recusa fora do Ensino Médio', async () => {
-    await expect(advisor.applyEnemSuggestions(coord, { ...item(['C1:H1']), segment: 'anos-finais', gradeYear: 9 })).rejects.toThrow(/Ensino Médio/)
+  it('objetivos entram no rascunho em qualquer segmento, sem tocar em habilidades', async () => {
+    const fund = { academicYear: 2027, segment: 'anos-iniciais' as const, gradeYear: 4, subject: 'Língua Portuguesa' }
+    const created = await planning.createPlan(coord, { ...fund, bimester: 1 })
+    await planning.saveDraft(coord, created.versionId, [{ title: 'Aprendendo a aprender', content: 'Verbete de wiki', skills: [{ code: 'EF04LP23' }] }])
+    const { results } = await advisor.applyAdvisorSuggestions(coord, { ...fund, items: [{ bimester: 1, title: 'Aprendendo a aprender', objectives: ['Explicar a função de um verbete', 'Produzir um mapa mental'] }] })
+    expect(results[0]).toMatchObject({ status: 'aplicado', applied: [{ codes: [], objectives: ['Explicar a função de um verbete', 'Produzir um mapa mental'] }] })
+    const detail = await planning.getPlanDetail(coord, created.planId)
+    expect(detail.units[0].objectives).toBe('Explicar a função de um verbete.\nProduzir um mapa mental.')
+    expect(detail.units[0].skills.map((skill) => skill.code)).toEqual(['EF04LP23'])
+    const again = await advisor.applyAdvisorSuggestions(coord, { ...fund, items: [{ bimester: 1, title: 'Aprendendo a aprender', objectives: ['explicar a função de um verbete.'] }] })
+    expect(again.results[0].status).toBe('sem_mudanca')
+  })
+
+  it('recusa habilidade ENEM fora do Ensino Médio', async () => {
+    await expect(advisor.applyAdvisorSuggestions(coord, { ...item(['C1:H1']), segment: 'anos-finais', gradeYear: 9 })).rejects.toThrow(/Ensino Médio/)
   })
 })

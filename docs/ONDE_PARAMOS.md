@@ -5,6 +5,26 @@
 > Última atualização: 13/11/2026 — negrito Markdown na Prova Adaptada; antes, produção regularizada com o main e publicada pelo script oficial. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
 > [`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md).
 
+## Assistente sugere objetivos — 13/11/2026
+
+Pedido do usuário (caso real: Língua Portuguesa 4º ano, capítulos sem
+objetivo): quando o professor não preencheu objetivos, o Assistente sugere de 3
+a 4 por capítulo e ele marca os que quer levar ao rascunho do planejamento.
+
+- `objectiveSuggestions.ts`: a IA redige a partir de título, conteúdos e texto
+  das habilidades BNCC do capítulo. **O nível de Bloom não vem da IA**: é lido
+  do verbo que abre a frase (`bloomVerbs.ts`). Frase sem verbo da tabela,
+  atitudinal, repetida ou longa é descartada.
+- Vale para todos os segmentos (antes a IA só rodava no Ensino Médio).
+- Gravação: `applyAdvisorSuggestions` aceita `objectives` além de `codes`;
+  `planningService.patchDraftUnitFields` (antes `patchDraftEnemSkills`) altera
+  só os campos escolhidos, em rascunho, com trava. Objetivos já escritos pelo
+  professor são preservados.
+- Contexto de IA novo: `planning-advisor/objectives`.
+
+Validação: suíte, TypeScript, lint e regressão. Sem migration.
+**Não conferido no navegador.**
+
 ## Assistente lê do Planejamento — 13/11/2026
 
 Decisão do usuário: o Planejamento da Prova TRI é a fonte; a planilha é
