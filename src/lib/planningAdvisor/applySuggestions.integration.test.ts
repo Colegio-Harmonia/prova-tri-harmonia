@@ -116,6 +116,19 @@ describe.skipIf(!pgliteInstalled())('applyEnemSuggestions (Postgres real)', () =
     expect((await enemOf()).enem[0]).toBe('C2:H7\nC4:H15')
   })
 
+  it('o Assistente lê a versão em trabalho do Planejamento e ignora planejamento vazio', async () => {
+    await planning.createPlan(coord, { ...scope, bimester: 2 }) // criado e ainda sem unidades
+    const source = await import('./internalPlanSource')
+    const parts = await source.getBimesterPlanSelections(scope, 2027)
+    expect(parts.map((part) => [part.bimester, part.status, part.versionNumber])).toEqual([[1, 'rascunho', 2]])
+    expect(parts[0].selection.units.map((unit) => [unit.tituloCapitulo, unit.enemSkills?.skills.map((skill) => skill.code) ?? []])).toEqual([
+      ['Arcos', ['C2:H7', 'C4:H15']],
+      ['Trigonometria na circunferência', ['C5:H21']],
+      ['Funções trigonométricas', ['C5:H20']],
+    ])
+    expect(await source.getBimesterPlanSelections(scope, 2030)).toEqual([])
+  })
+
   it('recusa fora do Ensino Médio', async () => {
     await expect(advisor.applyEnemSuggestions(coord, { ...item(['C1:H1']), segment: 'anos-finais', gradeYear: 9 })).rejects.toThrow(/Ensino Médio/)
   })

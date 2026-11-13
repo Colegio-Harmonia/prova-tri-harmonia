@@ -9,6 +9,7 @@ const bodySchema = z.object({
   segment: z.enum(['anos-iniciais', 'anos-finais', 'ensino-medio']),
   gradeYear: z.number().int(),
   subject: z.string().min(1),
+  academicYear: z.number().int().min(2020).max(2100).optional(),
   withSuggestions: z.boolean().optional(),
 })
 
