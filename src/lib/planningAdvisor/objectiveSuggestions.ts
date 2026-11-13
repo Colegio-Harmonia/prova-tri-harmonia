@@ -10,7 +10,7 @@
  * professor escolhe o que quer levar ao rascunho do planejamento.
  */
 import { z } from 'zod'
-import { BLOOM_VERB_TABLE, isAttitudinal, type BloomLevel } from '@/config/bloomVerbs'
+import { BLOOM_VERB_TABLE, inferBloomLevels, isAttitudinal, type BloomLevel } from '@/config/bloomVerbs'
 import type { CurriculumSelection } from '@/types/exam'
 import { BLOOM_ORDER, type PlanningAnalysis } from './analyzePlanning'
 
@@ -58,15 +58,21 @@ export type RawObjectives = z.infer<typeof objectivesResultSchema>
 const stripAccents = (value: string) => value.normalize('NFD').replace(/[̀-ͯ]/g, '')
 const squash = (value: string) => value.replace(/\s+/g, ' ').trim()
 
-const VERBS_BY_LENGTH = (Object.entries(BLOOM_VERB_TABLE) as Array<[BloomLevel, string[]]>)
-  .flatMap(([level, verbs]) => verbs.map((verb) => ({ level, verb: stripAccents(verb.toLowerCase()) })))
-  .sort((a, b) => b.verb.length - a.verb.length)
-
-/** Nível de Bloom do verbo que ABRE a frase; null se ela não começa por verbo da tabela. */
+/** Nível de Bloom do verbo que ABRE a frase; null se ela não começa por verbo da tabela (ou é atitudinal). */
 export function bloomFromLeadingVerb(sentence: string): BloomLevel | null {
-  const normalized = stripAccents(squash(sentence).toLowerCase())
-  const match = VERBS_BY_LENGTH.find(({ verb }) => normalized === verb || normalized.startsWith(`${verb} `) || normalized.startsWith(`${verb},`))
-  return match?.level ?? null
+  const inference = inferBloomLevels(sentence)
+  return inference.via === 'lider' ? inference.level : null
+}
+
+/**
+ * Verbos oferecidos à IA para REDIGIR objetivos: os primeiros de cada nível
+ * (a base do manual pedagógico vem na frente). A validação aceita qualquer
+ * verbo da tabela; a lista curta só evita objetivo aberto por verbo fraco
+ * como "fazer" ou "ler".
+ */
+const PROMPT_VERBS_PER_LEVEL = 8
+export function promptVerbsFor(level: BloomLevel): string[] {
+  return BLOOM_VERB_TABLE[level].filter((verb) => !verb.includes(' ') && !verb.includes('-')).slice(0, PROMPT_VERBS_PER_LEVEL)
 }
 
 /** Capítulos sem objetivo aproveitável (vazio, só atitudinal, vago ou só estimado). Objetivo claro com verbo fora da tabela de Bloom não entra. */
@@ -86,7 +92,7 @@ export function buildObjectivePrompt(
   bnccDescriptions: ReadonlyMap<string, string>,
 ): string {
   const unitsByRow = new Map(selection.units.map((unit) => [unit.rowIndex, unit]))
-  const verbs = BLOOM_ORDER.map((level) => `${level}: ${BLOOM_VERB_TABLE[level].join(', ')}`).join('\n')
+  const verbs = BLOOM_ORDER.map((level) => `${level}: ${promptVerbsFor(level).join(', ')}`).join('\n')
   const chapters = batch.map((chapter) => {
     const unit = unitsByRow.get(chapter.rowIndex)
     const skills = (unit?.habilidades.skills ?? []).slice(0, MAX_SKILLS_IN_PROMPT).map((skill) => {

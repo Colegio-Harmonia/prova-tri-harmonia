@@ -5,6 +5,28 @@
 > Última atualização: 13/11/2026 — negrito Markdown na Prova Adaptada; antes, produção regularizada com o main e publicada pelo script oficial. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
 > [`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md).
 
+## Tabela de verbos de Bloom ampliada — 13/11/2026
+
+Trazido para o `main` o trabalho do PR #46 (05/10, nunca mesclado): tabela de
+~25 para ~230 verbos e `inferBloomLevels()`, que lê o nível pelo verbo que ABRE
+a frase, casa por palavra inteira e trata verbos coordenados ("Resolver e
+elaborar" → o mais alto). Decisões da coordenação já registradas lá:
+elaborar = Criar, resolver = Aplicar, discutir = Analisar.
+
+Impacto medido nos dados de produção (só leitura, 13/11):
+- 626 descrições de habilidades BNCC: sem nível de 204 para 9 (as 9 são
+  atitudinais ou verbos raros); 97 mudaram de nível (ex.: lembrar → analisar em
+  23, por deixar de casar trecho de palavra).
+- 1.528 frases de objetivos dos planejamentos: 273 ganharam nível, 40 mudaram,
+  3 perderam. Seguem sem nível 773, quase todas não são objetivo (marcadores,
+  numeração e "título — conteúdo" gravado por importações antigas).
+
+No Assistente: `bloomFromLeadingVerb` delega a `inferBloomLevels`; o prompt de
+objetivos oferece só os 8 primeiros verbos de cada nível, mas a validação
+aceita qualquer verbo da tabela. Afeta todo lugar que infere Bloom por verbo
+(leitura de objetivos na geração de provas e no planejamento). Sem migration;
+nada salvo é recalculado.
+
 ## Assistente sugere objetivos — 13/11/2026
 
 Pedido do usuário (caso real: Língua Portuguesa 4º ano, capítulos sem
