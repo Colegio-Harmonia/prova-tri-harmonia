@@ -27,6 +27,6 @@ export default async function PlanningPage(props: { searchParams: Promise<{ aba?
       <Link href="/planejamento?aba=assistente" aria-current={tab === 'assistente' ? 'page' : undefined} className={tabClass(tab === 'assistente')}>Assistente</Link>
       {isManager && <Link href="/planejamento?aba=importar" aria-current={tab === 'importar' ? 'page' : undefined} className={tabClass(tab === 'importar')}>Importar planilha</Link>}
     </nav>
-    {tab === 'importar' ? <PlanningImport /> : tab === 'assistente' ? <PlanningAdvisor /> : tab === 'indicadores' ? <PlanningIndicators /> : <PlanningList isManager={isManager} />}
+    {tab === 'importar' ? <PlanningImport /> : tab === 'assistente' ? <PlanningAdvisor isManager={isManager} /> : tab === 'indicadores' ? <PlanningIndicators /> : <PlanningList isManager={isManager} />}
   </div>
 }

@@ -1,11 +1,13 @@
 'use client'
 
+import Link from 'next/link'
 import { useState } from 'react'
 import { SEGMENT_GRADES, SEGMENT_LABELS, SEGMENT_SUBJECTS } from '@/config/subjects'
 import type { Segment } from '@/types/exam'
 import type { ChapterAnalysis, ChapterIssue, EnemCoverage, PlanningAnalysis, PlanningFinding } from '@/lib/planningAdvisor/analyzePlanning'
 import { BLOOM_ORDER } from '@/lib/planningAdvisor/analyzePlanning'
 import type { AdvisorRecommendations, ChapterSuggestions, EnemSkillSuggestion, SuggestionConfidence } from '@/lib/planningAdvisor/recommendations'
+import type { BimesterApplyResult } from '@/lib/planningAdvisor/applySuggestions'
 
 type Report = { analysis: PlanningAnalysis; recommendations: AdvisorRecommendations | null }
 type Severity = PlanningFinding['severity']
@@ -29,22 +31,38 @@ function CopyCodes({ codes }: { codes: string[] }) {
   async function copy() {
     try { await navigator.clipboard.writeText(codes.join('\n')); setCopied(true); setTimeout(() => setCopied(false), 2000) } catch { setCopied(false) }
   }
-  return <button type="button" onClick={copy} className="rounded border border-border px-2 py-1 text-xs font-medium text-content-secondary hover:text-content-primary">{copied ? 'Copiado' : 'Copiar códigos para a planilha'}</button>
+  return <button type="button" onClick={copy} className="rounded border border-border px-2 py-1 text-xs font-medium text-content-secondary hover:text-content-primary">{copied ? 'Copiado' : 'Copiar códigos'}</button>
 }
 
-function SuggestionRow({ suggestion }: { suggestion: EnemSkillSuggestion }) {
+type ApplyControls = {
+  /** Códigos deste capítulo já levados ao rascunho nesta sessão. */
+  added: Set<string>
+  busy: boolean
+  /** true só no capítulo que está sendo gravado agora. */
+  working: boolean
+  /** null quando o capítulo não tem bimestre reconhecível (não dá para localizar o planejamento). */
+  onAdd: ((codes: string[]) => void) | null
+}
+
+const primaryButton = 'rounded bg-harmonia-green px-2 py-1 text-xs font-semibold text-action-primary-foreground disabled:opacity-50'
+
+function SuggestionRow({ suggestion, apply }: { suggestion: EnemSkillSuggestion; apply: ApplyControls }) {
+  const added = apply.added.has(suggestion.code)
   return <li className="text-sm">
-    <div className="flex flex-wrap items-baseline gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       <span className="font-mono text-xs font-semibold text-content-primary">{suggestion.code}</span>
       <span className="rounded border border-border px-1.5 py-0.5 text-xs text-content-secondary">{CONFIDENCE_LABEL[suggestion.confidence]}</span>
       {suggestion.fillsGap && <span className="rounded border border-status-success-border bg-status-success-surface px-1.5 py-0.5 text-xs font-medium text-status-success-content">Cobre lacuna do ano</span>}
+      {added
+        ? <span className="ml-auto text-xs font-medium text-status-success-content">Adicionada ao rascunho</span>
+        : apply.onAdd && <button type="button" disabled={apply.busy} onClick={() => apply.onAdd?.([suggestion.code])} className="ml-auto rounded border border-border px-2 py-1 text-xs font-medium text-content-secondary hover:text-content-primary disabled:opacity-50">Adicionar ao planejamento</button>}
     </div>
     <p className="mt-0.5 text-content-secondary">{suggestion.description}</p>
     <p className="mt-1 border-l-2 border-border pl-2 text-xs text-content-muted"><span className="font-semibold">Por que a IA sugeriu:</span> {suggestion.justification}</p>
   </li>
 }
 
-function ChapterCard({ chapter, suggestions, showEnem }: { chapter: ChapterAnalysis; suggestions?: ChapterSuggestions; showEnem: boolean }) {
+function ChapterCard({ chapter, suggestions, showEnem, apply, feedback }: { chapter: ChapterAnalysis; suggestions?: ChapterSuggestions; showEnem: boolean; apply: ApplyControls; feedback?: React.ReactNode }) {
   const visibleIssues = chapter.issues.filter((issue: ChapterIssue) => issue.severity !== 'info')
   const notes = chapter.issues.filter((issue: ChapterIssue) => issue.severity === 'info')
   return <div className="rounded border border-border p-3">
@@ -63,9 +81,14 @@ function ChapterCard({ chapter, suggestions, showEnem }: { chapter: ChapterAnaly
     {suggestions && <div className="mt-3 rounded border border-border bg-surface-subtle p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-semibold">Sugestões da IA para o professor validar</p>
-        <CopyCodes codes={suggestions.suggestions.map((suggestion) => suggestion.code)} />
+        <div className="flex flex-wrap items-center gap-2">
+          {apply.onAdd && suggestions.suggestions.some((suggestion) => !apply.added.has(suggestion.code)) && <button type="button" disabled={apply.busy} onClick={() => apply.onAdd?.(suggestions.suggestions.map((suggestion) => suggestion.code))} className={primaryButton}>{apply.working ? 'Adicionando…' : 'Adicionar todas ao planejamento'}</button>}
+          <CopyCodes codes={suggestions.suggestions.map((suggestion) => suggestion.code)} />
+        </div>
       </div>
-      <ul className="mt-2 space-y-3">{suggestions.suggestions.map((suggestion) => <SuggestionRow key={suggestion.code} suggestion={suggestion} />)}</ul>
+      <ul className="mt-2 space-y-3">{suggestions.suggestions.map((suggestion) => <SuggestionRow key={suggestion.code} suggestion={suggestion} apply={apply} />)}</ul>
+      {!apply.onAdd && <p className="mt-2 text-xs text-content-muted">Este capítulo não tem bimestre identificado na origem; adicione as habilidades direto em Planejamentos.</p>}
+      {feedback}
     </div>}
   </div>
 }
@@ -96,7 +119,7 @@ function EnemCoverageSection({ enem, remainingGaps }: { enem: EnemCoverage; rema
   </section>
 }
 
-export default function PlanningAdvisor() {
+export default function PlanningAdvisor({ isManager }: { isManager: boolean }) {
   const [segment, setSegment] = useState<Segment>('ensino-medio')
   const [gradeYear, setGradeYear] = useState(1)
   const [subject, setSubject] = useState('Língua Portuguesa')
@@ -104,11 +127,68 @@ export default function PlanningAdvisor() {
   const [report, setReport] = useState<Report | null>(null)
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
+  const [academicYear, setAcademicYear] = useState(() => new Date().getFullYear())
+  // Sugestões já levadas ao rascunho ("rowIndex:código") e o retorno da última tentativa por capítulo.
+  const [addedKeys, setAddedKeys] = useState<Set<string>>(new Set())
+  const [applyingRow, setApplyingRow] = useState<number | null>(null)
+  const [applyResults, setApplyResults] = useState<Record<number, BimesterApplyResult | { status: 'erro'; message: string }>>({})
+
+  async function addToPlan(chapter: ChapterAnalysis, codes: string[]) {
+    if (!chapter.bimesterNumber) return
+    setApplyingRow(chapter.rowIndex)
+    try {
+      const response = await fetch('/api/curriculum/planning-advisor/apply', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ academicYear, segment, gradeYear, subject, items: [{ bimester: chapter.bimesterNumber, title: chapter.planTitle || chapter.title, codes }] }),
+      })
+      const body = await response.json()
+      if (!response.ok) { setApplyResults((current) => ({ ...current, [chapter.rowIndex]: { status: 'erro', message: [body.error, ...(body.details ?? [])].filter(Boolean).join(' ') || 'Não foi possível adicionar ao planejamento.' } })); return }
+      const result = (body.results as BimesterApplyResult[])[0]
+      setApplyResults((current) => ({ ...current, [chapter.rowIndex]: result }))
+      // "Já tem essas habilidades" também conta como adicionada; capítulo não encontrado, não.
+      if (result.status === 'aplicado' || (result.status === 'sem_mudanca' && !result.notFound.length)) {
+        setAddedKeys((current) => new Set([...current, ...codes.map((code) => `${chapter.rowIndex}:${code}`)]))
+      }
+    } catch {
+      setApplyResults((current) => ({ ...current, [chapter.rowIndex]: { status: 'erro', message: 'Não foi possível adicionar ao planejamento. Verifique a conexão e tente de novo.' } }))
+    } finally {
+      setApplyingRow(null)
+    }
+  }
+
+  /** Traz o bimestre da planilha para o Planejamento (rascunho) e então adiciona as habilidades. */
+  async function importThenAdd(chapter: ChapterAnalysis, codes: string[]) {
+    if (!chapter.bimesterNumber) return
+    setApplyingRow(chapter.rowIndex)
+    const response = await fetch('/api/curriculum/plans/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ academicYear, segment, gradeYear, subject, bimester: chapter.bimesterNumber }) }).catch(() => null)
+    const body = response ? await response.json().catch(() => ({})) : {}
+    if (!response?.ok) {
+      setApplyingRow(null)
+      setApplyResults((current) => ({ ...current, [chapter.rowIndex]: { status: 'erro', message: [body.error, ...(body.invalidCodes ?? []), ...(body.duplicateCodes ?? [])].filter(Boolean).join(' · ') || 'Não foi possível importar a planilha para o planejamento.' } }))
+      return
+    }
+    await addToPlan(chapter, codes)
+  }
+
+  function applyFeedback(chapter: ChapterAnalysis, codes: string[]) {
+    const result = applyResults[chapter.rowIndex]
+    if (!result) return null
+    const tone = result.status === 'aplicado' ? 'border-status-success-border bg-status-success-surface text-status-success-content' : 'border-status-warning-border bg-status-warning-surface text-status-warning-content'
+    return <div role="status" className={`mt-3 rounded border p-2 text-xs ${tone}`}>
+      <p>{result.message}</p>
+      {'notFound' in result && result.notFound.length > 0 && <p className="mt-1">Capítulo não encontrado no planejamento do bimestre: {result.notFound.join('; ')}. Confira o título em Planejamentos.</p>}
+      {'planId' in result && result.planId && <Link href={`/planejamento/${result.planId}`} className="mt-1 inline-block font-semibold underline">Abrir o planejamento do {result.bimester}º bimestre</Link>}
+      {result.status === 'sem_planejamento' && (isManager
+        ? <button type="button" disabled={applyingRow !== null} onClick={() => importThenAdd(chapter, codes)} className={`mt-2 block ${primaryButton}`}>Trazer o {chapter.bimesterNumber}º bimestre da planilha para o Planejamento e adicionar</button>
+        : <p className="mt-1">Peça à coordenação para criar ou importar o planejamento deste bimestre.</p>)}
+    </div>
+  }
 
   function changeSegment(value: Segment) { setSegment(value); setGradeYear(SEGMENT_GRADES[value][0]); setSubject(SEGMENT_SUBJECTS[value][0]); setReport(null) }
+  function resetApply() { setAddedKeys(new Set()); setApplyResults({}) }
 
   async function analyze() {
-    setLoading(true); setMessage(''); setReport(null)
+    setLoading(true); setMessage(''); setReport(null); resetApply()
     try {
       const response = await fetch('/api/curriculum/planning-advisor', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -130,12 +210,16 @@ export default function PlanningAdvisor() {
   const isEnsinoMedio = segment === 'ensino-medio'
 
   return <div className="mt-6 space-y-5">
-    <p className="text-sm text-content-secondary">O assistente lê o plano de curso do ano inteiro na planilha e aponta o que falta. No Ensino Médio, confere as habilidades da Matriz de Referência do ENEM (INEP) por capítulo; nos demais segmentos, BNCC e Bloom. Ele só recomenda: a planilha nunca é alterada.</p>
+    <p className="text-sm text-content-secondary">O assistente lê o plano de curso do ano inteiro na planilha e aponta o que falta. No Ensino Médio, confere as habilidades da Matriz de Referência do ENEM (INEP) por capítulo; nos demais segmentos, BNCC e Bloom. Ele só recomenda: o que você aceitar entra como rascunho no Planejamento da Prova TRI e só vale depois de aprovado. A planilha nunca é alterada.</p>
     <div className="grid gap-3 rounded border border-border bg-surface p-4 sm:grid-cols-2 lg:grid-cols-4">
       <select aria-label="Segmento" disabled={loading} value={segment} onChange={(e) => changeSegment(e.target.value as Segment)} className={fieldClass}>{Object.entries(SEGMENT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       <select aria-label="Série" disabled={loading} value={gradeYear} onChange={(e) => { setGradeYear(Number(e.target.value)); setReport(null) }} className={fieldClass}>{SEGMENT_GRADES[segment].map((grade) => <option key={grade} value={grade}>{grade}º ano</option>)}</select>
       <select aria-label="Disciplina" disabled={loading} value={subject} onChange={(e) => { setSubject(e.target.value); setReport(null) }} className={fieldClass}>{SEGMENT_SUBJECTS[segment].map((item) => <option key={item}>{item}</option>)}</select>
       <button type="button" disabled={loading} onClick={analyze} className="rounded bg-harmonia-green px-4 py-2 font-semibold text-action-primary-foreground disabled:opacity-50">{loading ? 'Analisando…' : 'Analisar planejamento'}</button>
+      {isEnsinoMedio && <label className="flex items-center gap-2 text-sm text-content-secondary sm:col-span-2">
+        Ano letivo do planejamento
+        <input aria-label="Ano letivo do planejamento" type="number" min={2020} max={2100} disabled={loading} value={academicYear} onChange={(e) => { setAcademicYear(Number(e.target.value)); resetApply() }} className={`${fieldClass} w-24`} />
+      </label>}
       {isEnsinoMedio && <label className="flex items-center gap-2 text-sm text-content-secondary sm:col-span-2 lg:col-span-4">
         <input type="checkbox" disabled={loading} checked={withSuggestions} onChange={(e) => setWithSuggestions(e.target.checked)} />
         Pedir à IA sugestões de habilidades do ENEM por capítulo (pode levar até um minuto)
@@ -156,7 +240,7 @@ export default function PlanningAdvisor() {
 
       {recommendations && recommendations.status !== 'ok' && recommendations.message && <p role="status" className="rounded border border-status-warning-border bg-status-warning-surface p-3 text-sm text-status-warning-content">{recommendations.message}</p>}
       {recommendations?.status === 'ok' && <p role="status" className="rounded border border-border bg-surface p-3 text-sm text-content-secondary">
-        {recommendations.message ?? `A IA sugeriu habilidades para ${recommendations.chapters.length} ${recommendations.chapters.length === 1 ? 'capítulo' : 'capítulos'}. Ela só escolhe entre as habilidades oficiais do INEP; cada sugestão precisa ser validada pelo professor antes de ir para a planilha.`}
+        {recommendations.message ?? `A IA sugeriu habilidades para ${recommendations.chapters.length} ${recommendations.chapters.length === 1 ? 'capítulo' : 'capítulos'}. Ela só escolhe entre as habilidades oficiais do INEP; cada sugestão precisa ser validada pelo professor. Use “Adicionar ao planejamento” para levá-la ao rascunho do bimestre.`}
         {recommendations.discardedCount > 0 && ` ${recommendations.discardedCount} ${recommendations.discardedCount === 1 ? 'sugestão foi descartada' : 'sugestões foram descartadas'} por não conferir com a matriz.`}
       </p>}
 
@@ -164,7 +248,17 @@ export default function PlanningAdvisor() {
 
       <section className="rounded border border-border bg-surface p-4">
         <h2 className="font-semibold">Capítulo por capítulo</h2>
-        <div className="mt-3 space-y-2">{analysis.chapters.map((chapter) => <ChapterCard key={chapter.rowIndex} chapter={chapter} suggestions={suggestionsByRow.get(chapter.rowIndex)} showEnem={Boolean(analysis.enem)} />)}</div>
+        <div className="mt-3 space-y-2">{analysis.chapters.map((chapter) => {
+          const suggestions = suggestionsByRow.get(chapter.rowIndex)
+          const codes = suggestions?.suggestions.map((suggestion) => suggestion.code) ?? []
+          const apply: ApplyControls = {
+            added: new Set(codes.filter((code) => addedKeys.has(`${chapter.rowIndex}:${code}`))),
+            busy: applyingRow !== null,
+            working: applyingRow === chapter.rowIndex,
+            onAdd: chapter.bimesterNumber ? (chosen) => addToPlan(chapter, chosen) : null,
+          }
+          return <ChapterCard key={chapter.rowIndex} chapter={chapter} suggestions={suggestions} showEnem={Boolean(analysis.enem)} apply={apply} feedback={applyFeedback(chapter, codes.filter((code) => !apply.added.has(code)))} />
+        })}</div>
       </section>
 
       {analysis.sheetWarnings.length > 0 && <details className="rounded border border-border bg-surface p-4 text-sm">

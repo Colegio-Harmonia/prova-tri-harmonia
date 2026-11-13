@@ -50,6 +50,10 @@ describe('analyzePlanning — Ensino Médio', () => {
   ])
   const analysis = analyzePlanning(selection)
 
+  it('expõe bimestre e título da unidade para levar ao planejamento interno', () => {
+    expect(analysis.chapters.map((chapter) => [chapter.bimesterNumber, chapter.planTitle])).toEqual([[1, 'Termologia'], [1, 'Óptica geométrica'], [2, 'Ondas']])
+  })
+
   it('aponta capítulo sem habilidade ENEM', () => {
     const optica = analysis.chapters[1]
     expect(optica.issues.map((issue) => issue.code)).toContain('sem_habilidade_enem')
