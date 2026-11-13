@@ -4,7 +4,7 @@ vi.mock('@/db/client', () => ({ db: {} }))
 
 import { buildCurriculumFromPlan } from '@/lib/curriculum/planCurriculum'
 import { analyzePlanning } from './analyzePlanning'
-import { mergeBimesterSelections } from './internalPlanSource'
+import { mergeBimesterSelections, OFFICIAL_VERSION_STATUSES } from './internalPlanSource'
 
 const scope = { segment: 'ensino-medio' as const, gradeYear: 1, subject: 'Inglês' }
 
@@ -24,7 +24,7 @@ describe('mergeBimesterSelections', () => {
     expect(merged.units.map((unit) => [unit.rowIndex, unit.bimestre, unit.tituloCapitulo])).toEqual([
       [1000, '1', 'Unit 1A'], [1001, '1', 'Unit 1B'], [2000, '2', 'Unit 2A'], [2001, '2', 'Unit 2B'],
     ])
-    expect(merged.tabName).toBe('Planejamento interno aprovado (1º bimestre, 2º bimestre)')
+    expect(merged.tabName).toBe('Planejamento interno (1º bimestre, 2º bimestre)')
     expect(merged.unmappedWarnings.at(-1)).toContain('3º bimestre fora da análise')
   })
 
@@ -34,5 +34,11 @@ describe('mergeBimesterSelections', () => {
     expect(analysis.enem?.coveredCount).toBe(2)
     expect(analysis.enem?.rows[0].occurrences).toBe(2)
     expect(analysis.enem?.chaptersWithoutEnem).toBe(2)
+  })
+})
+
+describe('versão oficial', () => {
+  it('inclui bimestre encerrado, não só aprovado', () => {
+    expect(OFFICIAL_VERSION_STATUSES).toEqual(['aprovado', 'encerrado'])
   })
 })
