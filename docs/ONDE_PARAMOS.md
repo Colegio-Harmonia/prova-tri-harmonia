@@ -48,6 +48,13 @@ do próximo build ali, trazer este PR (ou os arquivos de `src/lib/planningAdviso
 `src/config/enemMatrixOfficial.ts`, `planejamento/planning-advisor.tsx`,
 `planejamento/page.tsx` e `api/curriculum/planning-advisor`).
 
+**Atualização no mesmo dia:** nova imagem `prova-tri:assistente-20261113b`
+(61c3473af6a3) com as correções da 2ª rodada de revisão (lote de sugestões e
+fallback para o planejamento interno). Mesmo procedimento; a anterior
+(`prova-tri:assistente-20261113`) fica como rollback imediato. Conferido no
+container: Inglês 1º e 2º EM passam a ser analisados pelo planejamento interno
+aprovado (só o 4º bimestre tem versão aprovada hoje).
+
 Conferido após a troca: `web` saudável, login 200 (local e público) e o serviço
 rodado dentro do container sobre Sociologia 1º EM com o provedor real — sugestões
 por capítulo devolvidas e validadas contra a matriz. Tela autenticada ainda não
