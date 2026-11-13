@@ -4,7 +4,8 @@
  */
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/db/client'
-import { curriculumPlanSkills, curriculumPlanUnits, curriculumPlanVersions, curriculumPlans } from '@/db/schema'
+import { curriculumPlanAssignments, curriculumPlanSkills, curriculumPlanUnits, curriculumPlanVersions, curriculumPlans } from '@/db/schema'
+import { isStaffSuperuser, type UserRole } from '@/lib/auth/roles'
 import { buildCurriculumFromPlan, type PlanUnitRow } from '@/lib/curriculum/planCurriculum'
 import { officialVersion, openVersion, PLANNING_STATUS_LABELS, type PlanningStatus } from '@/lib/curriculum/planningPolicy'
 import type { CurriculumSelection, CurricularUnit, Segment } from '@/types/exam'
@@ -67,13 +68,19 @@ export function combineSources(scope: AdvisorScope, parts: BimesterSelection[], 
   }
 }
 
+export type AdvisorViewer = { id: number; role: UserRole }
+
 /**
- * Planejamentos internos da disciplina no ano letivo, um por bimestre. Lê a
- * versão EM TRABALHO (rascunho/revisão) quando existe, senão a oficial
- * (aprovada/encerrada): o Assistente apoia quem está planejando, então precisa
- * enxergar o que acabou de ser adicionado ao rascunho.
+ * Planejamentos internos da disciplina no ano letivo, um por bimestre.
+ *
+ * Quem pode ver o planejamento (coordenação/direção ou professor atribuído —
+ * mesma regra de `canViewPlan`) lê a versão EM TRABALHO (rascunho/revisão)
+ * quando existe, senão a oficial: o Assistente apoia quem está planejando e
+ * precisa enxergar o que acabou de entrar no rascunho. Os demais professores
+ * só leem a versão OFICIAL (aprovada/encerrada), que já é a referência pública
+ * da escola na geração de provas; rascunho alheio nunca é exposto.
  */
-export async function getBimesterPlanSelections(scope: AdvisorScope, academicYear: number): Promise<BimesterSelection[]> {
+export async function getBimesterPlanSelections(scope: AdvisorScope, academicYear: number, viewer: AdvisorViewer): Promise<BimesterSelection[]> {
   const plans = await db.select().from(curriculumPlans)
     .where(and(eq(curriculumPlans.academicYear, academicYear), eq(curriculumPlans.segment, scope.segment), eq(curriculumPlans.gradeYear, scope.gradeYear), eq(curriculumPlans.subject, scope.subject)))
     .orderBy(asc(curriculumPlans.bimester))
@@ -81,10 +88,16 @@ export async function getBimesterPlanSelections(scope: AdvisorScope, academicYea
   const versions = await db.select({ id: curriculumPlanVersions.id, planId: curriculumPlanVersions.planId, versionNumber: curriculumPlanVersions.versionNumber, status: curriculumPlanVersions.status })
     .from(curriculumPlanVersions).where(inArray(curriculumPlanVersions.planId, plans.map((plan) => plan.id)))
 
+  const assigned = isStaffSuperuser(viewer.role) ? null : new Set(
+    (await db.select({ planId: curriculumPlanAssignments.planId }).from(curriculumPlanAssignments)
+      .where(and(eq(curriculumPlanAssignments.userId, viewer.id), inArray(curriculumPlanAssignments.planId, plans.map((plan) => plan.id))))).map((row) => row.planId),
+  )
+
   const parts: BimesterSelection[] = []
   for (const plan of plans) {
     const own = versions.filter((version) => version.planId === plan.id)
-    const version = openVersion(own) ?? officialVersion(own)
+    const canSeeDraft = assigned === null || assigned.has(plan.id)
+    const version = (canSeeDraft ? openVersion(own) : null) ?? officialVersion(own)
     if (!version) continue
     const units = await db.select().from(curriculumPlanUnits).where(eq(curriculumPlanUnits.versionId, version.id)).orderBy(asc(curriculumPlanUnits.position))
     // Planejamento criado e ainda vazio não substitui a planilha do bimestre.

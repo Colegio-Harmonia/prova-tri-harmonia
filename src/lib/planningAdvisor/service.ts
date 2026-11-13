@@ -4,7 +4,7 @@ import { generateValidatedStructuredContent } from '@/lib/gemini/structuredRepai
 import { TabResolutionError } from '@/lib/sheets/tabResolver'
 import type { CurriculumSelection, Segment } from '@/types/exam'
 import { SheetNotConfiguredError } from '@/config/gradeSheets'
-import { combineSources, getBimesterPlanSelections } from './internalPlanSource'
+import { combineSources, getBimesterPlanSelections, type AdvisorViewer } from './internalPlanSource'
 import { analyzePlanning, type PlanningAnalysis } from './analyzePlanning'
 import {
   recommendEnemSkills,
@@ -22,6 +22,8 @@ export type PlanningAdvisorParams = {
   segment: Segment
   gradeYear: number
   subject: string
+  /** Quem está pedindo: define se rascunhos do Planejamento podem ser lidos. */
+  viewer: AdvisorViewer
   /** Ano letivo dos planejamentos internos a considerar; padrão: ano corrente. */
   academicYear?: number
   /** Pede sugestões de habilidade ENEM à IA (só Ensino Médio). */
@@ -36,11 +38,18 @@ export type PlanningAdvisorParams = {
  */
 async function loadYearCurriculum(params: PlanningAdvisorParams): Promise<CurriculumSelection> {
   const scope = { segment: params.segment, gradeYear: params.gradeYear, subject: params.subject }
-  const academicYear = params.academicYear ?? new Date().getFullYear()
-  const parts = await getBimesterPlanSelections(scope, academicYear)
+  const sheetYear = new Date().getFullYear()
+  const academicYear = params.academicYear ?? sheetYear
+  const parts = await getBimesterPlanSelections(scope, academicYear, params.viewer)
 
   // Os quatro bimestres já estão no Planejamento: a planilha não é mais consultada.
   if (new Set(parts.map((part) => part.bimester)).size === 4) return combineSources(scope, parts, null)
+
+  // A planilha é uma só por série e representa o ano letivo corrente: não
+  // pode completar o plano de outro ano.
+  if (academicYear !== sheetYear) {
+    return combineSources(scope, parts, null, [`Só o Planejamento da Prova TRI foi considerado: a planilha representa ${sheetYear}, não ${academicYear}.`])
+  }
 
   try {
     return combineSources(scope, parts, await getCurriculumForExam(scope))

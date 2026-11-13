@@ -119,14 +119,23 @@ describe.skipIf(!pgliteInstalled())('applyEnemSuggestions (Postgres real)', () =
   it('o Assistente lê a versão em trabalho do Planejamento e ignora planejamento vazio', async () => {
     await planning.createPlan(coord, { ...scope, bimester: 2 }) // criado e ainda sem unidades
     const source = await import('./internalPlanSource')
-    const parts = await source.getBimesterPlanSelections(scope, 2027)
+    const parts = await source.getBimesterPlanSelections(scope, 2027, prof)
     expect(parts.map((part) => [part.bimester, part.status, part.versionNumber])).toEqual([[1, 'rascunho', 2]])
     expect(parts[0].selection.units.map((unit) => [unit.tituloCapitulo, unit.enemSkills?.skills.map((skill) => skill.code) ?? []])).toEqual([
       ['Arcos', ['C2:H7', 'C4:H15']],
       ['Trigonometria na circunferência', ['C5:H21']],
       ['Funções trigonométricas', ['C5:H20']],
     ])
-    expect(await source.getBimesterPlanSelections(scope, 2030)).toEqual([])
+    expect(await source.getBimesterPlanSelections(scope, 2030, coord)).toEqual([])
+    expect((await source.getBimesterPlanSelections(scope, 2027, coord))[0].status).toBe('rascunho')
+  })
+
+  it('professor sem atribuição lê só a versão oficial, nunca o rascunho de outro', async () => {
+    const source = await import('./internalPlanSource')
+    const parts = await source.getBimesterPlanSelections(scope, 2027, other)
+    expect(parts.map((part) => [part.bimester, part.status, part.versionNumber])).toEqual([[1, 'aprovado', 1]])
+    expect(parts[0].selection.units.map((unit) => unit.tituloCapitulo)).toEqual(['Arcos', 'Trigonometria na circunferência'])
+    expect(parts[0].selection.units[1].enemSkills).toBeUndefined()
   })
 
   it('recusa fora do Ensino Médio', async () => {
