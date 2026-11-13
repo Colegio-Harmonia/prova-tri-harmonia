@@ -17,7 +17,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { cn } from '@/lib/cn'
 import { useGenerationJobs } from '@/components/queue/GenerationJobsProvider'
 
@@ -81,6 +81,8 @@ export function AppNavigation({ isSuperuser, mobile = false, onNavigate }: AppNa
   // Planejamento aparece para todos: professor vê os planejamentos atribuídos a ele.
   const items = isSuperuser ? [...primaryItems, planningItem, managementItem, aiManagementItem, settingsItem] : [...primaryItems, planningItem]
   // Submenus começam sempre fechados; só abrem quando o usuário clica no chevron.
+  // Prefixo único por instância: desktop e mobile podem estar montados ao mesmo tempo.
+  const instanceId = useId()
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
   const toggleGroup = (href: string) => setOpenGroups((current) => ({ ...current, [href]: !current[href] }))
 
@@ -91,7 +93,7 @@ export function AppNavigation({ isSuperuser, mobile = false, onNavigate }: AppNa
         const Icon = item.icon
         const hasSubmenu = item.href === '/desempenho'
         const submenuOpen = hasSubmenu && Boolean(openGroups[item.href])
-        const submenuId = `submenu-${item.href.slice(1)}`
+        const submenuId = `${instanceId}submenu-${item.href.slice(1)}`
 
         return (
           <div key={item.href} className={cn(hasSubmenu && 't-acc')} data-open={hasSubmenu ? String(submenuOpen) : undefined}>
