@@ -203,6 +203,9 @@ export async function recommendEnemSkills(
   if (!analysis.enem) {
     return { status: 'nao_aplicavel', message: 'Sugestão de habilidades do ENEM só se aplica a disciplinas do Ensino Médio com área do ENEM.', chapters: [], remainingGaps: [], discardedCount: 0 }
   }
+  if (analysis.chapters.length === 0) {
+    return { status: 'ok', message: 'O planejamento não tem capítulos; não há onde sugerir habilidades.', chapters: [], remainingGaps: remainingGapCodes(analysis, []), discardedCount: 0 }
+  }
   const targets = chaptersForSuggestion(analysis)
   if (targets.length === 0) {
     return { status: 'ok', message: 'Todos os capítulos já têm habilidade do ENEM e não há lacunas de cobertura no recorte da disciplina.', chapters: [], remainingGaps: [], discardedCount: 0 }

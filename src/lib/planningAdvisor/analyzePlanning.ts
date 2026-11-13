@@ -84,8 +84,12 @@ export type EnemCoverage = {
 export type BloomSummary = {
   counts: Record<BloomLevel, number>
   total: number
+  /** Calculado só com objetivos reais (não estimados). */
   lowerOrderShare: number | null
+  /** Calculado só com objetivos reais (não estimados). */
   higherOrderCount: number
+  /** Objetivos cujo nível foi estimado sem coluna "Objetivos"; não entram nas críticas. */
+  estimatedCount: number
   /** true quando todo o Bloom do plano foi estimado sem coluna "Objetivos". */
   allEstimated: boolean
 }
@@ -218,20 +222,26 @@ function buildEnemCoverage(chapters: ChapterAnalysis[], scope: EnemScope): EnemC
 
 function buildBloomSummary(units: CurricularUnit[]): BloomSummary {
   const counts: Record<BloomLevel, number> = { lembrar: 0, compreender: 0, aplicar: 0, analisar: 0, avaliar: 0, criar: 0 }
+  // Objetivo estimado (aba sem "Objetivos") cai em Lembrar/Compreender por
+  // padrão: aparece na contagem, mas não pode pesar na crítica ao plano.
+  const real: Record<BloomLevel, number> = { lembrar: 0, compreender: 0, aplicar: 0, analisar: 0, avaliar: 0, criar: 0 }
   let estimated = 0
   for (const unit of units) {
     for (const objective of unit.objetivos) {
       if (objective.kind !== 'cognitiva' || !objective.bloomLevel) continue
       counts[objective.bloomLevel]++
       if (objective.estimated || unit.objetivosColumnMissing) estimated++
+      else real[objective.bloomLevel]++
     }
   }
   const total = BLOOM_ORDER.reduce((sum, level) => sum + counts[level], 0)
-  const lower = LOWER_ORDER.reduce((sum, level) => sum + counts[level], 0)
+  const realTotal = total - estimated
+  const lower = LOWER_ORDER.reduce((sum, level) => sum + real[level], 0)
   return {
     counts, total,
-    lowerOrderShare: total ? lower / total : null,
-    higherOrderCount: HIGHER_ORDER.reduce((sum, level) => sum + counts[level], 0),
+    lowerOrderShare: realTotal ? lower / realTotal : null,
+    higherOrderCount: HIGHER_ORDER.reduce((sum, level) => sum + real[level], 0),
+    estimatedCount: estimated,
     allEstimated: total > 0 && estimated === total,
   }
 }
@@ -260,6 +270,8 @@ export function analyzePlanning(selection: CurriculumSelection): PlanningAnalysi
   const enem = scope ? buildEnemCoverage(chapters, scope) : null
   const bloom = buildBloomSummary(selection.units)
   const chaptersWithoutBncc = selection.units.filter((unit) => unit.habilidades.status === 'nao_mapeado').length
+  // No EM, capítulo já mapeado pela Matriz do ENEM não conta como lacuna de BNCC.
+  const bnccGapCount = selection.units.filter((unit) => unit.habilidades.status === 'nao_mapeado' && !(isEnsinoMedio && unit.enemSkills?.skills.length)).length
   const distinctCodes = new Set(selection.units.flatMap((unit) => unit.habilidades.skills.map((skill) => skill.code.toUpperCase()))).size
 
   const findings: PlanningFinding[] = []
@@ -291,12 +303,11 @@ export function analyzePlanning(selection: CurriculumSelection): PlanningAnalysi
       })
     }
   }
-  if (chaptersWithoutBncc > 0 && !(isEnsinoMedio && enem && enem.chaptersWithoutEnem === 0)) {
-    findings.push({ severity: 'media', title: `${plural(chaptersWithoutBncc, 'capítulo', 'capítulos')} sem BNCC`, detail: 'A coluna "Habilidades" está vazia ou sem código BNCC nesses capítulos. O sistema não inventa código: as provas saem com BNCC "não mapeado" até a planilha ser preenchida.' })
+  if (bnccGapCount > 0) {
+    findings.push({ severity: 'media', title: `${plural(bnccGapCount, 'capítulo', 'capítulos')} sem BNCC${isEnsinoMedio ? ' nem ENEM' : ''}`, detail: 'A coluna "Habilidades" está vazia ou sem código BNCC nesses capítulos. O sistema não inventa código: as provas saem com BNCC "não mapeado" até a planilha ser preenchida.' })
   }
   if (bloom.total > 0) {
-    // Bloom estimado sem "Objetivos" cai em Lembrar/Compreender por padrão:
-    // não serve de base para criticar a distribuição do plano.
+    // As críticas usam só objetivos reais; os estimados ganham aviso próprio.
     if (bloom.allEstimated) {
       // só o aviso de estimativa, abaixo
     } else if (bloom.higherOrderCount === 0) {
@@ -306,6 +317,8 @@ export function analyzePlanning(selection: CurriculumSelection): PlanningAnalysi
     }
     if (bloom.allEstimated) {
       findings.push({ severity: 'info', title: 'Bloom estimado', detail: 'A aba não tem coluna "Objetivos": os níveis de Bloom foram estimados pelo título/conteúdo e servem só de indicação.' })
+    } else if (bloom.estimatedCount > 0) {
+      findings.push({ severity: 'info', title: 'Bloom parcialmente estimado', detail: `${plural(bloom.estimatedCount, 'objetivo teve', 'objetivos tiveram')} o nível estimado por falta da coluna "Objetivos" em parte das abas; eles não entram na avaliação da distribuição.` })
     }
   } else if (chapters.length > 0) {
     findings.push({ severity: 'media', title: 'Sem objetivos cognitivos', detail: 'Nenhum objetivo com verbo cognitivo foi encontrado; não é possível avaliar a distribuição de Bloom do plano.' })

@@ -132,12 +132,12 @@ export default function PlanningAdvisor() {
   return <div className="mt-6 space-y-5">
     <p className="text-sm text-content-secondary">O assistente lê o plano de curso do ano inteiro na planilha e aponta o que falta. No Ensino Médio, confere as habilidades da Matriz de Referência do ENEM (INEP) por capítulo; nos demais segmentos, BNCC e Bloom. Ele só recomenda: a planilha nunca é alterada.</p>
     <div className="grid gap-3 rounded border border-border bg-surface p-4 sm:grid-cols-2 lg:grid-cols-4">
-      <select aria-label="Segmento" value={segment} onChange={(e) => changeSegment(e.target.value as Segment)} className={fieldClass}>{Object.entries(SEGMENT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-      <select aria-label="Série" value={gradeYear} onChange={(e) => { setGradeYear(Number(e.target.value)); setReport(null) }} className={fieldClass}>{SEGMENT_GRADES[segment].map((grade) => <option key={grade} value={grade}>{grade}º ano</option>)}</select>
-      <select aria-label="Disciplina" value={subject} onChange={(e) => { setSubject(e.target.value); setReport(null) }} className={fieldClass}>{SEGMENT_SUBJECTS[segment].map((item) => <option key={item}>{item}</option>)}</select>
+      <select aria-label="Segmento" disabled={loading} value={segment} onChange={(e) => changeSegment(e.target.value as Segment)} className={fieldClass}>{Object.entries(SEGMENT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+      <select aria-label="Série" disabled={loading} value={gradeYear} onChange={(e) => { setGradeYear(Number(e.target.value)); setReport(null) }} className={fieldClass}>{SEGMENT_GRADES[segment].map((grade) => <option key={grade} value={grade}>{grade}º ano</option>)}</select>
+      <select aria-label="Disciplina" disabled={loading} value={subject} onChange={(e) => { setSubject(e.target.value); setReport(null) }} className={fieldClass}>{SEGMENT_SUBJECTS[segment].map((item) => <option key={item}>{item}</option>)}</select>
       <button type="button" disabled={loading} onClick={analyze} className="rounded bg-harmonia-green px-4 py-2 font-semibold text-action-primary-foreground disabled:opacity-50">{loading ? 'Analisando…' : 'Analisar planejamento'}</button>
       {isEnsinoMedio && <label className="flex items-center gap-2 text-sm text-content-secondary sm:col-span-2 lg:col-span-4">
-        <input type="checkbox" checked={withSuggestions} onChange={(e) => setWithSuggestions(e.target.checked)} />
+        <input type="checkbox" disabled={loading} checked={withSuggestions} onChange={(e) => setWithSuggestions(e.target.checked)} />
         Pedir à IA sugestões de habilidades do ENEM por capítulo (pode levar até um minuto)
       </label>}
     </div>

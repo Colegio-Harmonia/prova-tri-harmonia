@@ -133,3 +133,31 @@ describe('analyzePlanning — Fundamental', () => {
     expect(analysis.findings.some((finding) => finding.title.includes('Nenhum objetivo em Analisar'))).toBe(true)
   })
 })
+
+describe('analyzePlanning — apontamentos de revisão', () => {
+  it('conta como lacuna de BNCC só o capítulo sem BNCC e sem ENEM', () => {
+    const analysis = analyzePlanning(selectionFrom('ensino-medio', 2, 'Física', EM_HEADER, [
+      ['1', 'Termologia', 'Calor', '', 'C6:H21', 'Analisar trocas de calor.'],
+      ['1', 'Ondas', 'Fenômenos ondulatórios', '', 'C1:H1', 'Explicar a propagação de ondas.'],
+      ['2', 'Óptica', 'Reflexão', '', '', 'Explicar a formação de imagens.'],
+    ]))
+    expect(analysis.bncc.chaptersWithoutBncc).toBe(3)
+    expect(analysis.findings.some((finding) => finding.title === '1 capítulo sem BNCC nem ENEM')).toBe(true)
+  })
+
+  it('não usa objetivos estimados para criticar a distribuição de Bloom', () => {
+    const real = parseCurriculumRows([
+      ['1', 'Termologia', 'Calor', '', 'C6:H21', 'Analisar trocas de calor. Avaliar o uso de energia. Aplicar a lei de Fourier.'],
+    ], resolveColumnRoles(EM_HEADER), 'ensino-medio', 'Física')
+    const estimated = parseCurriculumRows(
+      Array.from({ length: 6 }, (_, index) => ['2', `Capítulo ${index}`, 'Conteúdo', '']),
+      resolveColumnRoles(['Bimestre', 'Capítulo', 'Conteúdos', 'Habilidades']), 'ensino-medio', 'Física',
+    ).map((unit) => ({ ...unit, rowIndex: 100 + unit.rowIndex }))
+    const analysis = analyzePlanning({ segment: 'ensino-medio', gradeYear: 2, subject: 'Física', tabName: 'A + B', units: [...real, ...estimated], unmappedWarnings: [] })
+    expect(analysis.bloom.estimatedCount).toBe(6)
+    expect(analysis.bloom.lowerOrderShare).toBe(0)
+    expect(analysis.bloom.higherOrderCount).toBe(2)
+    expect(analysis.findings.some((finding) => finding.title.includes('concentrados'))).toBe(false)
+    expect(analysis.findings.some((finding) => finding.title === 'Bloom parcialmente estimado')).toBe(true)
+  })
+})

@@ -106,6 +106,15 @@ describe('recommendEnemSkills', () => {
     expect(result.remainingGaps).toContain('C1:H2')
   })
 
+  it('mantém as lacunas quando o planejamento não tem capítulos', async () => {
+    const selection: CurriculumSelection = { segment: 'ensino-medio', gradeYear: 2, subject: 'Física', tabName: 'Física', units: [], unmappedWarnings: [] }
+    const generate = vi.fn()
+    const result = await recommendEnemSkills(analyzePlanning(selection), selection, generate)
+    expect(generate).not.toHaveBeenCalled()
+    expect(result.message).toContain('não tem capítulos')
+    expect(result.remainingGaps).toHaveLength(23)
+  })
+
   it('não chama a IA fora do Ensino Médio', async () => {
     const units = parseCurriculumRows([['1', 'Frações', 'EF07MA05']], resolveColumnRoles(['Bimestre', 'Capítulos', 'Habilidades']), 'anos-finais', 'Matemática')
     const selection: CurriculumSelection = { segment: 'anos-finais', gradeYear: 7, subject: 'Matemática', tabName: 'Mat', units, unmappedWarnings: [] }
