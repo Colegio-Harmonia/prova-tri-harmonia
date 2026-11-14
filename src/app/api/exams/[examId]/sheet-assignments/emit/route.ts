@@ -11,6 +11,7 @@ import { loadExamAndAuthorize } from '@/lib/corrections/authorize'
 import { CURRENT_SHEET_LAYOUT, objectiveSheetGeometry, planSheetPages } from '@/lib/scan-sheets/sheetLayout'
 import { generateSheetPdf } from '@/lib/scan-sheets/sheetPdf'
 import { createPageQrPayload, createSheetTokenDigest, issuedSheetTokens, readSheetQrSigningKeys, SheetQrSigningConfigurationError } from '@/lib/scan-sheets/sheetQr'
+import { byStudentName, hashOrNull } from '@/lib/security/studentIdentity'
 
 export const runtime = 'nodejs'
 
@@ -53,10 +54,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
 
   const conditions = [eq(examSheetAssignments.examId, examId), eq(examSheetAssignments.status, action === 'emit' ? 'pronta' : 'emitida')]
   if (parsed.data.assignmentIds) conditions.push(inArray(examSheetAssignments.id, parsed.data.assignmentIds))
-  const assignments = await db.query.examSheetAssignments.findMany({
-    where: and(...conditions),
-    orderBy: [asc(examSheetAssignments.studentNameSnapshot)],
-  })
+  const assignments = (await db.query.examSheetAssignments.findMany({ where: and(...conditions) }))
+    .sort(byStudentName((assignment) => assignment.studentNameSnapshot))
   if (assignments.length === 0) {
     return NextResponse.json({ error: action === 'emit' ? 'Não há folhas prontas para emissão.' : 'Não há cartões emitidos para baixar.' }, { status: 409 })
   }
@@ -140,6 +139,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
               examId,
               examCorrectionId: emission.assignment.examCorrectionId,
               classroomStudentId: emission.assignment.classroomStudentId,
+              classroomStudentHash: hashOrNull(emission.assignment.classroomStudentId),
               studentNameSnapshot: emission.assignment.studentNameSnapshot,
               studentEmailSnapshot: emission.assignment.studentEmailSnapshot,
               publicId: emission.publicId,

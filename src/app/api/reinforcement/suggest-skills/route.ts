@@ -6,6 +6,7 @@ import { examCorrections, generatedExams, users } from '@/db/schema'
 import { isStaffSuperuser } from '@/lib/auth/roles'
 import { getEnemAreaForSubject, getEnemCompetenciesForSubject } from '@/config/enemAreaMap'
 import type { CorrectionAnswer } from '@/types/correction'
+import { matchesEncrypted } from '@/lib/security/studentIdentity'
 
 // Sugestão automática de habilidades pro reforço (Módulo 3, spec 3.3):
 // ranqueia as habilidades INEP com PIOR desempenho real, cruzando as
@@ -60,8 +61,8 @@ export async function GET(req: NextRequest) {
       eq(examCorrections.status, 'revisado'),
       eq(examCorrections.attendanceStatus, 'presente'),
   ]
-  if (classroomStudentId) correctionConditions.push(eq(examCorrections.classroomStudentId, classroomStudentId))
-  else if (studentName) correctionConditions.push(eq(examCorrections.studentName, studentName))
+  if (classroomStudentId) correctionConditions.push(matchesEncrypted(examCorrections.classroomStudentId, examCorrections.classroomStudentHash, classroomStudentId))
+  else if (studentName) correctionConditions.push(matchesEncrypted(examCorrections.studentName, examCorrections.studentNameHash, studentName))
   const corrections = await db.query.examCorrections.findMany({
     where: and(...correctionConditions),
     columns: { examId: true, answers: true },

@@ -9,6 +9,7 @@ import type { CorrectionAnswer } from '@/types/correction'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import type { Segment } from '@/types/exam'
 import { decideResultOrganization, type ResultOrganizationDecisionInput, type ResultOrganizationScope } from '@/lib/ai/resultOrganizationDecision'
+import { matchesEncrypted } from '@/lib/security/studentIdentity'
 
 const BLOOM_LEVELS = ['lembrar', 'compreender', 'aplicar', 'analisar', 'avaliar', 'criar'] as const
 const DOK_LEVELS = ['DOK_1', 'DOK_2', 'DOK_3', 'DOK_4'] as const
@@ -280,8 +281,8 @@ export async function GET(req: NextRequest) {
   }
   // O aluno não possui conta no sistema. O filtro ainda passa pelo escopo de
   // prova já aplicado acima, portanto não amplia a visão de um professor.
-  if (classroomStudentId) conditions.push(eq(examCorrections.classroomStudentId, classroomStudentId))
-  else if (studentName) conditions.push(eq(examCorrections.studentName, studentName))
+  if (classroomStudentId) conditions.push(matchesEncrypted(examCorrections.classroomStudentId, examCorrections.classroomStudentHash, classroomStudentId))
+  else if (studentName) conditions.push(matchesEncrypted(examCorrections.studentName, examCorrections.studentNameHash, studentName))
 
   const rows = await db
     .select({

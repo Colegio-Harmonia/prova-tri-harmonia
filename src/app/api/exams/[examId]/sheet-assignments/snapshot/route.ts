@@ -5,6 +5,7 @@ import { examSheetAssignments } from '@/db/schema'
 import { auth } from '@/auth/auth'
 import { loadExamAndAuthorize } from '@/lib/corrections/authorize'
 import { SheetAssignmentsSnapshotError, snapshotSheetAssignments } from '@/lib/scan-sheets/sheetAssignments'
+import { byStudentName } from '@/lib/security/studentIdentity'
 
 // A lista pode ser congelada depois da aprovação (antes da impressão) e
 // continua acessível durante a reimpressão, mas nunca é aberta depois da
@@ -20,10 +21,8 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ examId: 
   const result = await loadExamAndAuthorize(examId, session.user.email)
   if ('error' in result) return result.error
 
-  const assignments = await db.query.examSheetAssignments.findMany({
-    where: eq(examSheetAssignments.examId, examId),
-    orderBy: [asc(examSheetAssignments.studentNameSnapshot)],
-  })
+  const assignments = (await db.query.examSheetAssignments.findMany({ where: eq(examSheetAssignments.examId, examId) }))
+    .sort(byStudentName((assignment) => assignment.studentNameSnapshot))
   return NextResponse.json({ assignments })
 }
 

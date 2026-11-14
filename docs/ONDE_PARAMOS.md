@@ -5,6 +5,26 @@
 > Última atualização: 13/11/2026 — negrito Markdown na Prova Adaptada; antes, produção regularizada com o main e publicada pelo script oficial. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
 > [`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md).
 
+## Criptografia de dados de aluno — PREPARADA, não ativada — 14/11/2026
+
+⚠️ **Congelamento:** o usuário pediu para não mexer em produção até o fim do
+período de provas (estimado em 28/11/2026). Este trabalho está só em PR.
+
+Nome, e-mail e identificador do Classroom do aluno (e o rótulo de aluno com
+laudo, e a análise do simulado SAE) passam a ser gravados cifrados quando
+`STUDENT_DATA_KEY` estiver configurada. Série e turma ficam como estão, por
+decisão do usuário. Roteiro de ativação, limites e reversão em
+[`CRIPTOGRAFIA_DADOS_ALUNO.md`](CRIPTOGRAFIA_DADOS_ALUNO.md).
+
+- Sem chave, o comportamento é idêntico ao anterior.
+- Migration `0055` (aditiva) e conversão `npm run encrypt-student-data`
+  (ensaio por padrão) ainda **não foram aplicadas em nenhum banco**.
+- `EXAM_STATUSES` passou para `src/config/examStatuses.ts` (o schema agora usa
+  criptografia do Node e não pode ir para o navegador).
+
+Depois da criptografia vem o **Assistente de Resultados** (análise das provas
+corrigidas), já combinado com o usuário e ainda não iniciado.
+
 ## Assistente: bimestre e criação de unidade; aba "Bloom e verbos" — 14/11/2026
 
 Pedidos do usuário, a partir de um caso real (Matemática do 3º ano EM, cuja
