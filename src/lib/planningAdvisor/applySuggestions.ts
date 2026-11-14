@@ -11,15 +11,26 @@ import { curriculumPlans } from '@/db/schema'
 import { getEnemAreaForSubject } from '@/config/enemAreaMap'
 import { isEnemAreaCode, isValidEnemPair, type EnemAreaCode } from '@/config/enemMatrix'
 import { officialVersion, openVersion } from '@/lib/curriculum/planningPolicy'
-import { getPlanDetail, patchDraftUnitFields, PlanningError, startNewVersion, type PlanScope, type Viewer } from '@/lib/curriculum/planningService'
+import { createPlan, getPlanDetail, patchDraftUnitFields, PlanningError, startNewVersion, type PlanScope, type Viewer } from '@/lib/curriculum/planningService'
 import { parseEnemSkills } from '@/lib/sheets/enemSkillsParser'
 import { normalizeEnemCode } from './recommendations'
 
 export const APPLY_NOTE = 'Sugestões do Assistente de Planejamento aceitas pelo professor'
 
 /** `codes` = habilidades ENEM (só Ensino Médio); `objectives` = objetivos de aprendizagem (qualquer segmento). */
-export type ApplyItem = { bimester: number; title: string; codes?: string[]; objectives?: string[] }
-export type ApplyInput = Omit<PlanScope, 'bimester'> & { items: ApplyItem[] }
+export type ApplyItem = {
+  bimester: number
+  title: string
+  codes?: string[]
+  objectives?: string[]
+  /** Quando a unidade não existe no planejamento do bimestre, cria-a no rascunho com este conteúdo. */
+  createIfMissing?: { content?: string | null }
+}
+export type ApplyInput = Omit<PlanScope, 'bimester'> & {
+  items: ApplyItem[]
+  /** Cria o planejamento do bimestre quando ele não existe (só coordenação/direção, pela regra do planningService). */
+  createPlanIfMissing?: boolean
+}
 
 export type BimesterApplyResult = {
   bimester: number
@@ -28,18 +39,18 @@ export type BimesterApplyResult = {
   planId: number | null
   versionNumber: number | null
   /** Capítulos que receberam habilidades ou objetivos novos nesta chamada. */
-  applied: Array<{ title: string; codes: string[]; objectives: string[] }>
+  applied: Array<{ title: string; codes: string[]; objectives: string[]; created?: boolean }>
   /** Capítulos que não existem (ou aparecem repetidos) no planejamento do bimestre. */
   notFound: string[]
 }
 
 const squash = (value: string) => value.replace(/\s+/g, ' ').trim().toLowerCase()
 
-/** Índice da unidade com aquele título; -1 se não houver ou se houver mais de uma (ambíguo). */
+/** Índice da unidade com aquele título; -1 se não houver; -2 se houver mais de uma (ambíguo: nunca se escolhe nem se cria). */
 export function matchUnitIndex(units: Array<{ title: string }>, title: string): number {
   const wanted = squash(title)
   const matches = units.map((unit, index) => (squash(unit.title) === wanted ? index : -1)).filter((index) => index >= 0)
-  return matches.length === 1 ? matches[0] : -1
+  return matches.length === 1 ? matches[0] : matches.length === 0 ? -1 : -2
 }
 
 const sameText = (value: string) => squash(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[.;]+$/, '')
@@ -88,8 +99,22 @@ export function planChanges(units: UnitFields[], items: ApplyItem[], area: EnemA
   const objectives = new Map(units.map((unit) => [unit.id, unit.objectives]))
   const applied: BimesterApplyResult['applied'] = []
   const notFound: string[] = []
+  const inserts: Array<{ title: string; content: string | null; objectives: string | null; enemSkills: string | null }> = []
   for (const item of items) {
     const index = matchUnitIndex(units, item.title)
+    if (index === -1 && item.createIfMissing && item.title.trim()) {
+      // Unidade ainda não trazida para o planejamento: nasce no rascunho com o que o professor escolheu.
+      const title = item.title.replace(/\s+/g, ' ').trim()
+      let created = inserts.find((unit) => squash(unit.title) === squash(title))
+      const isNew = !created
+      if (!created) { created = { title, content: item.createIfMissing.content?.trim() || null, objectives: null, enemSkills: null }; inserts.push(created) }
+      const codes = area && item.codes?.length ? mergeEnemCodes(created.enemSkills, item.codes, area) : null
+      const texts = item.objectives?.length ? mergeObjectives(created.objectives, item.objectives) : null
+      if (codes) created.enemSkills = codes.enemSkills
+      if (texts) created.objectives = texts.objectives
+      if (isNew || codes?.added.length || texts?.added.length) applied.push({ title: created.title, codes: codes?.added ?? [], objectives: texts?.added ?? [], created: true })
+      continue
+    }
     if (index < 0) { notFound.push(item.title); continue }
     const unit = units[index]
     // Sem área do ENEM (fora do EM ou disciplina sem área), códigos são ignorados.
@@ -105,36 +130,44 @@ export function planChanges(units: UnitFields[], items: ApplyItem[], area: EnemA
     if (objectives.get(unit.id) !== unit.objectives) change.objectives = objectives.get(unit.id) ?? null
     return Object.keys(change).length > 1 ? [change] : []
   })
-  return { applied, notFound, changes }
+  return { applied, notFound, changes, inserts }
 }
 
-async function applyToBimester(viewer: Viewer, scope: PlanScope, area: EnemAreaCode | null, items: ApplyItem[]): Promise<BimesterApplyResult> {
+async function applyToBimester(viewer: Viewer, scope: PlanScope, area: EnemAreaCode | null, items: ApplyItem[], createPlan_ = false): Promise<BimesterApplyResult> {
   const empty = { bimester: scope.bimester, planId: null, versionNumber: null, applied: [], notFound: [] }
   const [plan] = await db.select({ id: curriculumPlans.id }).from(curriculumPlans).where(and(
     eq(curriculumPlans.academicYear, scope.academicYear), eq(curriculumPlans.segment, scope.segment),
     eq(curriculumPlans.gradeYear, scope.gradeYear), eq(curriculumPlans.subject, scope.subject), eq(curriculumPlans.bimester, scope.bimester),
   ))
-  if (!plan) {
-    return { ...empty, status: 'sem_planejamento', message: `Ainda não existe planejamento do ${scope.bimester}º bimestre de ${scope.academicYear} na Prova TRI.` }
+  let planId = plan?.id
+  if (!planId) {
+    if (!createPlan_) return { ...empty, status: 'sem_planejamento', message: `Ainda não existe planejamento do ${scope.bimester}º bimestre de ${scope.academicYear} na Prova TRI.` }
+    try {
+      planId = (await createPlan(viewer, scope)).planId
+    } catch (error) {
+      if (!(error instanceof PlanningError)) throw error
+      return { ...empty, status: 'bloqueado', message: error.message }
+    }
   }
+  const plan_ = { id: planId }
 
   try {
-    const detail = await getPlanDetail(viewer, plan.id)
+    const detail = await getPlanDetail(viewer, plan_.id)
     const open = openVersion(detail.versions)
     if (open?.status === 'em_revisao') {
-      return { ...empty, planId: plan.id, versionNumber: open.versionNumber, status: 'bloqueado', message: `A versão ${open.versionNumber} está em revisão; aguarde a coordenação concluir antes de adicionar habilidades.` }
+      return { ...empty, planId: plan_.id, versionNumber: open.versionNumber, status: 'bloqueado', message: `A versão ${open.versionNumber} está em revisão; aguarde a coordenação concluir antes de adicionar habilidades.` }
     }
     const base = open ?? officialVersion(detail.versions)
-    if (!base) return { ...empty, planId: plan.id, status: 'bloqueado', message: 'O planejamento ainda não tem nenhuma versão.' }
+    if (!base) return { ...empty, planId: plan_.id, status: 'bloqueado', message: 'O planejamento ainda não tem nenhuma versão.' }
 
     // Ensaia a mudança sobre o conteúdo atual ANTES de abrir versão nova,
     // para não deixar rascunho vazio quando nada se aplica.
-    const preview = planChanges((await getPlanDetail(viewer, plan.id, base.id)).units.map((unit, index) => ({ id: index, title: unit.title, enemSkills: unit.enemSkills ?? null, objectives: unit.objectives ?? null })), items, area)
+    const preview = planChanges((await getPlanDetail(viewer, plan_.id, base.id)).units.map((unit, index) => ({ id: index, title: unit.title, enemSkills: unit.enemSkills ?? null, objectives: unit.objectives ?? null })), items, area)
     if (!preview.applied.length) {
-      return { ...empty, planId: plan.id, versionNumber: base.versionNumber, notFound: preview.notFound, status: 'sem_mudanca', message: preview.notFound.length ? 'Os capítulos não foram encontrados no planejamento deste bimestre.' : 'O planejamento já tem esses itens.' }
+      return { ...empty, planId: plan_.id, versionNumber: base.versionNumber, notFound: preview.notFound, status: 'sem_mudanca', message: preview.notFound.length ? 'Os capítulos não foram encontrados no planejamento deste bimestre.' : 'O planejamento já tem esses itens.' }
     }
 
-    const draft = open ?? await startNewVersion(viewer, plan.id, APPLY_NOTE)
+    const draft = open ?? await startNewVersion(viewer, plan_.id, APPLY_NOTE)
     const versionId = 'versionId' in draft ? draft.versionId : draft.id
     // A gravação refaz o cálculo dentro da transação, sobre as unidades
     // travadas: só o campo ENEM das unidades-alvo muda, e edição simultânea
@@ -144,18 +177,20 @@ async function applyToBimester(viewer: Viewer, scope: PlanScope, area: EnemAreaC
       const codes = planned.applied.flatMap((entry) => entry.codes)
       const objectiveCount = planned.applied.reduce((sum, entry) => sum + entry.objectives.length, 0)
       const parts = [codes.length ? `habilidades ENEM ${codes.join(', ')}` : '', objectiveCount ? `${objectiveCount} objetivo(s)` : ''].filter(Boolean)
-      return { changes: planned.changes, summary: `adicionado pelo Assistente: ${parts.join(' e ') || 'nada'}`, result: planned }
+      const createdCount = planned.inserts.length
+      if (createdCount) parts.unshift(`${createdCount} unidade(s) nova(s)`)
+      return { changes: planned.changes, inserts: planned.inserts, summary: `adicionado pelo Assistente: ${parts.join(' e ') || 'nada'}`, result: planned }
     })
     if (!applied.length) {
-      return { ...empty, planId: plan.id, versionNumber: draft.versionNumber, notFound, status: 'sem_mudanca', message: 'O planejamento já tem esses itens.' }
+      return { ...empty, planId: plan_.id, versionNumber: draft.versionNumber, notFound, status: 'sem_mudanca', message: 'O planejamento já tem esses itens.' }
     }
     return {
-      bimester: scope.bimester, planId: plan.id, versionNumber: draft.versionNumber, applied, notFound, status: 'aplicado',
-      message: `Adicionado ao rascunho (versão ${draft.versionNumber}) do ${scope.bimester}º bimestre. Envie para revisão em Planejamentos para valer nas provas.`,
+      bimester: scope.bimester, planId: plan_.id, versionNumber: draft.versionNumber, applied, notFound, status: 'aplicado',
+      message: `${applied.some((entry) => entry.created) ? 'Unidade criada e adicionada' : 'Adicionado'} ao rascunho (versão ${draft.versionNumber}) do ${scope.bimester}º bimestre. Envie para revisão em Planejamentos para valer nas provas.`,
     }
   } catch (error) {
     if (!(error instanceof PlanningError)) throw error
-    return { ...empty, planId: plan.id, status: 'bloqueado', message: error.message }
+    return { ...empty, planId: plan_.id, status: 'bloqueado', message: error.message }
   }
 }
 
@@ -172,8 +207,8 @@ export async function applyAdvisorSuggestions(viewer: Viewer, input: ApplyInput)
 
   const results: BimesterApplyResult[] = []
   for (const [bimester, items] of [...byBimester.entries()].sort((a, b) => a[0] - b[0])) {
-    const { items: _items, ...scope } = input
-    results.push(await applyToBimester(viewer, { ...scope, bimester }, area, items))
+    const { items: _items, createPlanIfMissing, ...scope } = input
+    results.push(await applyToBimester(viewer, { ...scope, bimester }, area, items, createPlanIfMissing === true))
   }
   return { results }
 }

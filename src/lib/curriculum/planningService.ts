@@ -202,7 +202,13 @@ export async function saveDraft(viewer: Viewer, versionId: number, units: PlanUn
 export async function patchDraftUnitFields<T>(
   viewer: Viewer,
   versionId: number,
-  compute: (units: Array<{ id: number; title: string; enemSkills: string | null; objectives: string | null }>) => { changes: Array<{ unitId: number; enemSkills?: string | null; objectives?: string | null }>; summary: string; result: T },
+  compute: (units: Array<{ id: number; title: string; enemSkills: string | null; objectives: string | null }>) => {
+    changes: Array<{ unitId: number; enemSkills?: string | null; objectives?: string | null }>
+    /** Unidades novas, acrescentadas ao fim do rascunho (sem habilidades BNCC; o professor completa em Planejamentos). */
+    inserts?: Array<{ title: string; content?: string | null; objectives?: string | null; enemSkills?: string | null }>
+    summary: string
+    result: T
+  },
 ): Promise<T> {
   return db.transaction(async (tx) => {
     const [version] = await tx.select().from(curriculumPlanVersions).where(eq(curriculumPlanVersions.id, versionId)).for('update')
@@ -214,7 +220,7 @@ export async function patchDraftUnitFields<T>(
     const plan = await tx.query.curriculumPlans.findFirst({ where: eq(curriculumPlans.id, version.planId) })
     const units = await tx.select({ id: curriculumPlanUnits.id, title: curriculumPlanUnits.title, enemSkills: curriculumPlanUnits.enemSkills, objectives: curriculumPlanUnits.objectives })
       .from(curriculumPlanUnits).where(eq(curriculumPlanUnits.versionId, versionId)).orderBy(asc(curriculumPlanUnits.position)).for('update')
-    const { changes, summary, result } = compute(units)
+    const { changes, inserts = [], summary, result } = compute(units)
     const ids = new Set(units.map((unit) => unit.id))
     for (const change of changes) {
       if (!ids.has(change.unitId)) throw new PlanningError('Unidade fora desta versão.', 400)
@@ -228,9 +234,16 @@ export async function patchDraftUnitFields<T>(
       if (change.objectives !== undefined) patch.objectives = change.objectives?.trim() || null
       if (Object.keys(patch).length) await tx.update(curriculumPlanUnits).set(patch).where(eq(curriculumPlanUnits.id, change.unitId))
     }
-    if (changes.length) {
+    if (inserts.length) {
+      const { units: normalized, errors } = normalizePlanUnits(inserts.map((unit) => ({ ...unit, skills: [] })), plan?.subject)
+      if (errors.length) throw new PlanningError('Unidade inválida.', 422, errors)
+      const [last] = await tx.select({ position: curriculumPlanUnits.position }).from(curriculumPlanUnits).where(eq(curriculumPlanUnits.versionId, versionId)).orderBy(desc(curriculumPlanUnits.position)).limit(1)
+      const start = (last?.position ?? -1) + 1
+      await tx.insert(curriculumPlanUnits).values(normalized.map((unit, index) => ({ versionId, position: start + index, title: unit.title, content: unit.content, objectives: unit.objectives, enemSkills: unit.enemSkills })))
+    }
+    if (changes.length || inserts.length) {
       await tx.update(curriculumPlanVersions).set({ updatedAt: new Date() }).where(eq(curriculumPlanVersions.id, versionId))
-      await recordDecision(tx, { entityType: 'versao', entityId: versionId, planId: version.planId, action: 'conteudo_salvo', summary: `Versão ${version.versionNumber}: ${summary}`, details: { unitsChanged: changes.length }, actorId: viewer.id })
+      await recordDecision(tx, { entityType: 'versao', entityId: versionId, planId: version.planId, action: 'conteudo_salvo', summary: `Versão ${version.versionNumber}: ${summary}`, details: { unitsChanged: changes.length, unitsCreated: inserts.length }, actorId: viewer.id })
     }
     return result
   })

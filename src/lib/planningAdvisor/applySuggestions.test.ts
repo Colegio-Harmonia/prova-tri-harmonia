@@ -25,7 +25,7 @@ describe('matchUnitIndex', () => {
   })
   it('não escolhe quando o título não existe ou é ambíguo', () => {
     expect(matchUnitIndex(units, 'Logaritmos')).toBe(-1)
-    expect(matchUnitIndex(units, 'Revisão')).toBe(-1)
+    expect(matchUnitIndex(units, 'Revisão')).toBe(-2)
   })
 })
 
@@ -60,5 +60,25 @@ describe('planChanges', () => {
   it('sem área do ENEM, ignora códigos e ainda aceita objetivos', () => {
     const planned = planChanges(units, [{ bimester: 1, title: 'Arcos', codes: ['C4:H15'], objectives: ['Explicar o radiano'] }], null)
     expect(planned.changes).toEqual([{ unitId: 10, objectives: 'Explicar o radiano.' }])
+  })
+})
+
+describe('planChanges — unidade que ainda não existe', () => {
+  const units = [{ id: 10, title: 'Arcos', enemSkills: null, objectives: null }, { id: 11, title: 'Revisão', enemSkills: null, objectives: null }, { id: 12, title: 'revisão', enemSkills: null, objectives: null }]
+  it('cria a unidade com o que foi escolhido, juntando pedidos do mesmo título', () => {
+    const planned = planChanges(units, [
+      { bimester: 2, title: 'Vetores e transformações lineares', codes: ['C5:H19', 'C9:H99'], createIfMissing: { content: 'Vetores • Matrizes' } },
+      { bimester: 2, title: 'vetores e  transformações lineares', objectives: ['Aplicar operações com vetores'], createIfMissing: { content: 'outro' } },
+    ], 'matematica')
+    expect(planned.inserts).toEqual([{ title: 'Vetores e transformações lineares', content: 'Vetores • Matrizes', enemSkills: 'C5:H19', objectives: 'Aplicar operações com vetores.' }])
+    expect(planned.changes).toEqual([])
+    expect(planned.applied).toEqual([
+      { title: 'Vetores e transformações lineares', codes: ['C5:H19'], objectives: [], created: true },
+      { title: 'Vetores e transformações lineares', codes: [], objectives: ['Aplicar operações com vetores'], created: true },
+    ])
+  })
+  it('não cria sem autorização nem quando o título é ambíguo no planejamento', () => {
+    expect(planChanges(units, [{ bimester: 2, title: 'Vetores', codes: ['C5:H19'] }], 'matematica')).toMatchObject({ inserts: [], notFound: ['Vetores'] })
+    expect(planChanges(units, [{ bimester: 2, title: 'Revisão', codes: ['C5:H19'], createIfMissing: {} }], 'matematica')).toMatchObject({ inserts: [], notFound: ['Revisão'] })
   })
 })
