@@ -12,6 +12,7 @@ import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import type { CorrectionAnswer } from '@/types/correction'
 import type { Segment } from '@/types/exam'
 import type { MasteryEvidenceItem, MasteryScope, PlannedMasterySkill } from './studentMastery'
+import { matchesEncrypted } from '@/lib/security/studentIdentity'
 
 export type EvidenceWithContext = MasteryEvidenceItem & {
   /** Identificador estável do aluno: id do Classroom quando existe, senão o nome. */
@@ -57,8 +58,8 @@ export function evidenceConditions(viewer: Viewer, params: URLSearchParams): SQL
   if (bimester) conditions.push(eq(generatedExams.bimester, Number(bimester)))
   if (classroomCourseId) conditions.push(eq(generatedExams.classroomCourseId, classroomCourseId))
   if (examId) conditions.push(eq(generatedExams.id, Number(examId)))
-  if (classroomStudentId) conditions.push(eq(examCorrections.classroomStudentId, classroomStudentId))
-  else if (studentName) conditions.push(eq(examCorrections.studentName, studentName))
+  if (classroomStudentId) conditions.push(matchesEncrypted(examCorrections.classroomStudentId, examCorrections.classroomStudentHash, classroomStudentId))
+  else if (studentName) conditions.push(matchesEncrypted(examCorrections.studentName, examCorrections.studentNameHash, studentName))
   return conditions
 }
 

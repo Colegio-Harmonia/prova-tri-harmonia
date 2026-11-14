@@ -7,6 +7,7 @@ import { isStaffSuperuser } from '@/lib/auth/roles'
 import { isInsufficientScopeError, listMyCourses, listStudentsInCourse } from '@/lib/classroom/classroomClient'
 import { totalGrade } from '@/lib/corrections/totalGrade'
 import type { CorrectionAnswer } from '@/types/correction'
+import { matchesEncrypted } from '@/lib/security/studentIdentity'
 
 export async function GET(_request: Request, { params }: { params: Promise<{ courseId: string; studentId: string }> }) {
   const { courseId, studentId } = await params
@@ -22,7 +23,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ cou
     const exams = await db.select({ id: generatedExams.id, subject: generatedExams.subject, gradeYear: generatedExams.gradeYear, bimester: generatedExams.bimester, status: generatedExams.status, createdAt: generatedExams.createdAt, appliedAt: generatedExams.appliedAt })
       .from(generatedExams).where(and(eq(generatedExams.examKind, 'prova'), eq(generatedExams.classroomCourseId, courseId), ...(!isStaffSuperuser(currentUser.role) ? [eq(generatedExams.assignedTo, currentUser.id)] : [])))
     const corrections = exams.length ? await db.select({ examId: examCorrections.examId, status: examCorrections.status, attendanceStatus: examCorrections.attendanceStatus, answers: examCorrections.answers, updatedAt: examCorrections.updatedAt })
-      .from(examCorrections).where(and(inArray(examCorrections.examId, exams.map((exam) => exam.id)), eq(examCorrections.classroomStudentId, studentId))) : []
+      .from(examCorrections).where(and(inArray(examCorrections.examId, exams.map((exam) => exam.id)), matchesEncrypted(examCorrections.classroomStudentId, examCorrections.classroomStudentHash, studentId))) : []
     const byExam = new Map(corrections.map((correction) => [correction.examId, correction]))
     const deliveredExams = exams.map((exam) => {
       const correction = byExam.get(exam.id)

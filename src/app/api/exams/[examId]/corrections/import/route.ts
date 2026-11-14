@@ -7,6 +7,7 @@ import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { buildEmptyAnswers } from '@/lib/corrections/buildEmptyAnswers'
 import { loadExamAndAuthorize, CORRECTABLE_STATUSES } from '@/lib/corrections/authorize'
 import { listStudentsInCourse, isInsufficientScopeError } from '@/lib/classroom/classroomClient'
+import { byStudentName, hashOrNull } from '@/lib/security/studentIdentity'
 
 // Importa o roster inteiro da turma vinculada à prova de uma vez, em vez
 // de cadastrar aluno por aluno — idempotente: alunos já importados antes
@@ -65,17 +66,17 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
     toImport.map((s) => ({
       examId,
       classroomStudentId: s.classroomStudentId,
+      classroomStudentHash: hashOrNull(s.classroomStudentId),
       studentName: s.name,
+      studentNameHash: hashOrNull(s.name),
       studentEmail: s.email,
       answers,
       createdBy: currentUser.id,
     })),
   )
 
-  const corrections = await db.query.examCorrections.findMany({
-    where: eq(examCorrections.examId, examId),
-    orderBy: (t, { asc }) => [asc(t.studentName)],
-  })
+  const corrections = (await db.query.examCorrections.findMany({ where: eq(examCorrections.examId, examId) }))
+    .sort(byStudentName((correction) => correction.studentName))
 
   return NextResponse.json({ imported: toImport.length, corrections })
 }

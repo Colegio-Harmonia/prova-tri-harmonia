@@ -6,6 +6,7 @@ import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { isInsufficientScopeError, listStudentsInCourse } from '@/lib/classroom/classroomClient'
 import { buildEmptyAnswers } from '@/lib/corrections/buildEmptyAnswers'
 import { CURRENT_SHEET_LAYOUT, planSheetPages } from './sheetLayout'
+import { byStudentName, hashOrNull } from '@/lib/security/studentIdentity'
 
 export const SNAPSHOTABLE_SHEET_STATUSES = ['aprovado', 'impresso'] as const
 
@@ -98,7 +99,9 @@ export async function snapshotSheetAssignments({
       await tx.insert(examCorrections).values(studentsWithoutCorrection.map((student) => ({
         examId,
         classroomStudentId: student.classroomStudentId,
+        classroomStudentHash: hashOrNull(student.classroomStudentId),
         studentName: student.name,
+        studentNameHash: hashOrNull(student.name),
         studentEmail: student.email,
         answers: emptyAnswers,
         createdBy: currentUserId,
@@ -111,10 +114,8 @@ export async function snapshotSheetAssignments({
     const correctionAfterInsertByStudentId = new Map(
       correctionsAfterInsert.filter((correction) => correction.classroomStudentId).map((correction) => [correction.classroomStudentId!, correction]),
     )
-    const assignments = await tx.query.examSheetAssignments.findMany({
-      where: eq(examSheetAssignments.examId, examId),
-      orderBy: [asc(examSheetAssignments.studentNameSnapshot)],
-    })
+    const assignments = (await tx.query.examSheetAssignments.findMany({ where: eq(examSheetAssignments.examId, examId) }))
+      .sort(byStudentName((assignment) => assignment.studentNameSnapshot))
     const activeStudentIds = new Set(
       assignments.filter((assignment) => assignment.status === 'pronta' || assignment.status === 'emitida').map((assignment) => assignment.classroomStudentId),
     )
@@ -123,11 +124,12 @@ export async function snapshotSheetAssignments({
     if (studentsWithoutAssignment.length > 0) {
       await tx.insert(examSheetAssignments).values(studentsWithoutAssignment.map((student) => {
         const correction = correctionAfterInsertByStudentId.get(student.classroomStudentId)
-        if (!correction) throw new Error(`Correção ausente para o aluno ${student.classroomStudentId}`)
+        if (!correction) throw new Error('Correção ausente para um aluno do roster.')
         return {
           examId,
           examCorrectionId: correction.id,
           classroomStudentId: student.classroomStudentId,
+          classroomStudentHash: hashOrNull(student.classroomStudentId),
           studentNameSnapshot: student.name,
           studentEmailSnapshot: student.email,
           publicId: createPublicId(),
@@ -139,10 +141,8 @@ export async function snapshotSheetAssignments({
     }
 
     const allAssignments = studentsWithoutAssignment.length > 0
-      ? await tx.query.examSheetAssignments.findMany({
-          where: eq(examSheetAssignments.examId, examId),
-          orderBy: [asc(examSheetAssignments.studentNameSnapshot)],
-        })
+      ? (await tx.query.examSheetAssignments.findMany({ where: eq(examSheetAssignments.examId, examId) }))
+          .sort(byStudentName((assignment) => assignment.studentNameSnapshot))
       : assignments
 
     return { created: studentsWithoutAssignment.length, assignments: allAssignments }

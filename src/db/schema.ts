@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm'
+import { encryptedJson, encryptedText } from './encryptedColumn'
 import { pgTable, serial, text, boolean, timestamp, integer, jsonb, varchar, smallint, real, uniqueIndex, index, type AnyPgColumn } from 'drizzle-orm/pg-core'
 
 export const users = pgTable('users', {
@@ -192,7 +193,8 @@ export const aiModelProfiles = pgTable('ai_model_profiles', {
 // aplicado -> parcialmente_corrigida/corrigido. Os estados antigos ficam
 // aceitos para ler históricos durante a migração, sem alterar documentos,
 // cartões-resposta ou scans já existentes.
-export const EXAM_STATUSES = ['rascunho', 'atribuido', 'em_andamento', 'revisao_concluida', 'em_revisao', 'aprovado', 'impresso', 'aplicado', 'parcialmente_corrigida', 'corrigido'] as const
+export { EXAM_STATUSES } from '@/config/examStatuses'
+import { EXAM_STATUSES } from '@/config/examStatuses'
 
 // Rótulo pedagógico da prova. A escala de correção NÃO vem deste rótulo:
 // TRI INEP é decidida pela presença de itens reais do banco ENEM e pela
@@ -316,17 +318,23 @@ export const activityClassroomSyncs = pgTable('activity_classroom_syncs', {
 export const activityClassroomResults = pgTable('activity_classroom_results', {
   id: serial('id').primaryKey(),
   examId: integer('exam_id').references(() => generatedExams.id, { onDelete: 'cascade' }).notNull(),
-  classroomStudentId: text('classroom_student_id').notNull(),
+  // Dados pessoais do aluno: cifrados (ver encryptedColumn.ts). `*_hash` é o
+  // índice cego usado para achar o aluno e garantir unicidade.
+  classroomStudentId: encryptedText('classroom_student_id').notNull(),
+  classroomStudentHash: text('classroom_student_hash'),
   classroomSubmissionId: text('classroom_submission_id').notNull(),
-  studentName: text('student_name').notNull(),
-  studentEmail: text('student_email'),
+  studentName: encryptedText('student_name').notNull(),
+  studentEmail: encryptedText('student_email'),
   submissionState: text('submission_state'),
   assignedGrade: real('assigned_grade'),
   assignedRubricGrades: jsonb('assigned_rubric_grades'),
   importedAt: timestamp('imported_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at'),
 }, (table) => ({
+  // Índice antigo, sobre o texto: com a coluna cifrada nunca colide; fica só
+  // por compatibilidade com linhas ainda em texto puro. A unicidade real é a do hash.
   examStudentUnique: uniqueIndex('activity_classroom_results_exam_student_unique').on(table.examId, table.classroomStudentId),
+  examStudentHashUnique: uniqueIndex('activity_classroom_results_exam_student_hash_unique').on(table.examId, table.classroomStudentHash),
   examImportedIndex: index('activity_classroom_results_exam_imported_idx').on(table.examId, table.importedAt),
 }))
 
@@ -343,9 +351,12 @@ export const activityClassroomResults = pgTable('activity_classroom_results', {
 export const examCorrections = pgTable('exam_corrections', {
   id: serial('id').primaryKey(),
   examId: integer('exam_id').references(() => generatedExams.id).notNull(),
-  classroomStudentId: text('classroom_student_id'),
-  studentName: text('student_name').notNull(),
-  studentEmail: text('student_email'),
+  classroomStudentId: encryptedText('classroom_student_id'),
+  classroomStudentHash: text('classroom_student_hash'),
+  studentName: encryptedText('student_name').notNull(),
+  // Índice cego do nome: alunos lançados à mão (sem Classroom) são localizados por ele.
+  studentNameHash: text('student_name_hash'),
+  studentEmail: encryptedText('student_email'),
   answers: jsonb('answers').notNull(),
   status: text('status', { enum: ['pendente', 'revisado'] }).notNull().default('pendente'),
   // Presença é separada do ciclo de correção: uma ausência encerra a
@@ -365,7 +376,10 @@ export const examCorrections = pgTable('exam_corrections', {
   // job 'pontuar_prova' quando a correção fica 'revisado', na escala do
   // scoring_method da prova. Shape em src/lib/scoring/scoringPolicy.ts.
   scoreResult: jsonb('score_result'),
-})
+}, (table) => ({
+  studentHashIndex: index('exam_corrections_student_hash_idx').on(table.classroomStudentHash),
+  studentNameHashIndex: index('exam_corrections_student_name_hash_idx').on(table.studentNameHash),
+}))
 
 // Uma atribuição congela quem receberá uma folha antes da aplicação. Ela é
 // separada de `examCorrections` porque a correção aprovada só existe depois
@@ -379,9 +393,10 @@ export const examSheetAssignments = pgTable('exam_sheet_assignments', {
   id: serial('id').primaryKey(),
   examId: integer('exam_id').references(() => generatedExams.id).notNull(),
   examCorrectionId: integer('exam_correction_id').references(() => examCorrections.id).notNull(),
-  classroomStudentId: text('classroom_student_id').notNull(),
-  studentNameSnapshot: text('student_name_snapshot').notNull(),
-  studentEmailSnapshot: text('student_email_snapshot'),
+  classroomStudentId: encryptedText('classroom_student_id').notNull(),
+  classroomStudentHash: text('classroom_student_hash'),
+  studentNameSnapshot: encryptedText('student_name_snapshot').notNull(),
+  studentEmailSnapshot: encryptedText('student_email_snapshot'),
   // Identificador aleatório, sem PII e sem ser o ID sequencial da prova ou
   // da correção. A assinatura do QR será derivada dele no momento da emissão.
   publicId: text('public_id').notNull(),
@@ -404,8 +419,12 @@ export const examSheetAssignments = pgTable('exam_sheet_assignments', {
 }, (table) => ({
   publicIdUnique: uniqueIndex('exam_sheet_assignments_public_id_unique').on(table.publicId),
   tokenDigestUnique: uniqueIndex('exam_sheet_assignments_token_digest_unique').on(table.tokenDigest),
+  // Idem activity_classroom_results: o índice sobre o texto fica por compatibilidade; vale o do hash.
   activeStudentAssignmentUnique: uniqueIndex('exam_sheet_assignments_active_student_unique')
     .on(table.examId, table.classroomStudentId)
+    .where(sql`${table.status} IN ('pronta', 'emitida')`),
+  activeStudentHashAssignmentUnique: uniqueIndex('exam_sheet_assignments_active_student_hash_unique')
+    .on(table.examId, table.classroomStudentHash)
     .where(sql`${table.status} IN ('pronta', 'emitida')`),
   correctionIndex: index('exam_sheet_assignments_correction_idx').on(table.examCorrectionId),
   examStatusIndex: index('exam_sheet_assignments_exam_status_idx').on(table.examId, table.status),
@@ -551,7 +570,8 @@ export const enemSaeImports = pgTable('enem_sae_imports', {
   academicYear: integer('academic_year').notNull(),
   gradeYear: smallint('grade_year').notNull().default(3),
   bimester: smallint('bimester').notNull(),
-  analysis: jsonb('analysis').notNull(),
+  // Traz o nome de cada aluno com seu resultado: o JSON inteiro é cifrado.
+  analysis: encryptedJson('analysis').notNull(),
   importedBy: integer('imported_by').references(() => users.id).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -896,7 +916,8 @@ export const adaptedExams = pgTable('adapted_exams', {
   // { "tea": "1.0", "tdah": "1.0" } — versão da biblioteca aplicada, pra
   // auditoria (o conteúdo das bibliotecas evolui no git).
   libraryVersions: jsonb('library_versions').notNull(),
-  targetStudentLabel: text('target_student_label'),
+  // Rótulo do aluno com laudo: dado sensível, cifrado.
+  targetStudentLabel: encryptedText('target_student_label'),
   // Mesmo formato do generation_payload, com os campos adaptados por
   // questão (adaptedStatement etc.) — preenchido pelo job.
   adaptedPayload: jsonb('adapted_payload'),

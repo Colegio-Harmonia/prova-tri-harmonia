@@ -3,7 +3,8 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { SEGMENT_LABELS, SEGMENT_GRADES } from '@/config/subjects'
-import { EXAM_STATUSES, type ExamKind } from '@/db/schema'
+import { EXAM_STATUSES } from '@/config/examStatuses'
+import type { ExamKind } from '@/db/schema'
 import type { Segment } from '@/types/exam'
 
 type ExamRow = {

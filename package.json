@@ -62,6 +62,7 @@
     "classify-imported-enem-sample": "tsx scripts/classify-imported-enem-sample.ts",
     "validate-pedagogical-engine": "tsx scripts/validate-pedagogical-engine.ts",
     "seed-pedagogical-taxonomies": "tsx scripts/seed-pedagogical-taxonomies.ts",
+    "encrypt-student-data": "tsx scripts/encrypt-student-data.ts",
     "seed-templates": "tsx scripts/seed-templates.ts"
   },
   "dependencies": {

@@ -157,7 +157,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
         await db.update(examCorrections).set({ gradeReturnedAt: new Date() }).where(eq(examCorrections.id, correction.id))
         granted++
       } catch (err) {
-        console.error(`[return-grades] falha ao lançar nota de ${correction.studentName}:`, err)
+        // Sem nome de aluno em log: o log não é cifrado.
+        console.error(`[return-grades] falha ao lançar nota da correção ${correction.id}:`, err)
         errors.push({ correctionId: correction.id, studentName: correction.studentName, message: 'Erro ao lançar essa nota específica no Classroom.' })
       }
     }

@@ -9,6 +9,7 @@ import { buildEmptyAnswers } from '@/lib/corrections/buildEmptyAnswers'
 import { loadExamAndAuthorize, CORRECTABLE_STATUSES } from '@/lib/corrections/authorize'
 import { getExamCompletionSummary } from '@/lib/corrections/examCompletion'
 import { normalizeCorrectionAnswers } from '@/lib/corrections/normalizeCorrectionAnswers'
+import { byStudentName, hashOrNull } from '@/lib/security/studentIdentity'
 
 export async function GET(_req: NextRequest, props: { params: Promise<{ examId: string }> }) {
   const params = await props.params;
@@ -21,10 +22,9 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ examId: 
   const result = await loadExamAndAuthorize(examId, session.user.email)
   if ('error' in result) return result.error
 
-  const corrections = await db.query.examCorrections.findMany({
-    where: eq(examCorrections.examId, examId),
-    orderBy: (t, { asc }) => [asc(t.studentName)],
-  })
+  // Nome é coluna cifrada: a ordem alfabética é feita aqui, não no banco.
+  const corrections = (await db.query.examCorrections.findMany({ where: eq(examCorrections.examId, examId) }))
+    .sort(byStudentName((correction) => correction.studentName))
 
   const completion = await getExamCompletionSummary(examId)
   const safeCorrections = corrections.map((correction) => ({
@@ -66,6 +66,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
     .values({
       examId,
       studentName: parsed.data.studentName,
+      studentNameHash: hashOrNull(parsed.data.studentName),
       studentEmail: parsed.data.studentEmail ?? null,
       answers,
       createdBy: currentUser.id,
