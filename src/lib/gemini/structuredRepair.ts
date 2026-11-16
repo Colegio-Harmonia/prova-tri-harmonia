@@ -81,6 +81,8 @@ function completionOptionsFor(context: string): { temperature: number; reasoning
   if (/generation\/stage3/.test(context)) return { temperature: 0.72 }
   if (/generation\/stage[45]/.test(context)) return { temperature: 0.25 }
   if (/question-quality-test|exam-quality-audit/.test(context)) return { temperature: 0.15 }
+  // Pré-requisito curricular é classificação, não redação: resposta estável.
+  if (context === 'curriculum/prerequisites') return { temperature: 0.2 }
   return { temperature: 0.5 }
 }
 

@@ -85,6 +85,7 @@
     "d3-scale": "^4.0.2",
     "d3-shape": "^3.2.0",
     "drizzle-orm": "^0.45.2",
+    "echarts": "^5.5.1",
     "framer-motion": "^12.42.2",
     "function-plot": "^1.25.4",
     "googleapis": "^173.0.0",

@@ -13,6 +13,8 @@ import dynamic from 'next/dynamic'
 // para não pesar no bundle inicial do relatório.
 const TrajectorySection = dynamic(() => import('@/components/trajectory/TrajectorySection'), { ssr: false, loading: () => <p className="text-sm text-content-secondary">Carregando trajetória…</p> })
 const MasterySection = dynamic(() => import('./MasterySection'), { ssr: false, loading: () => <p className="text-sm text-content-secondary">Carregando domínio por habilidade…</p> })
+// Teia (Sinapse): ECharts só baixa quando a aba abre.
+const SkillNetworkSection = dynamic(() => import('./SkillNetworkSection'), { ssr: false, loading: () => <p className="text-sm text-content-secondary">Carregando teia…</p> })
 
 type AssessmentRow = { examId: number; subject: string; period: string; grade: number; evaluatedItems: number; pendingItems: number }
 
@@ -153,6 +155,13 @@ export default function StudentReport() {
           </div>
           {profile.sustainedDok && <p className="mt-4 text-sm text-content-secondary">Profundidade sustentada: {profile.sustainedDok.level}, {profile.sustainedDok.accuracyPercent}% em {profile.sustainedDok.itemCount} itens.</p>}
         </section>
+      </ReportPanel>
+
+      <ReportPanel id="teia" active={activeTab}>
+        {/* Monta só com a aba visível: o gráfico precisa da largura real do quadro. */}
+        {activeTab === 'teia'
+          ? <SkillNetworkSection query={trajectoryQuery} studentName={profile.studentName} classroomCourseId={searchParams.get('classroomCourseId') ?? undefined} />
+          : <p className="hidden text-sm text-content-secondary print:block">A teia de habilidades é interativa: abra a aba Teia na tela para consultá-la.</p>}
       </ReportPanel>
 
       <ReportPanel id="evolucao" active={activeTab}>

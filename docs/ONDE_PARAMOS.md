@@ -5,6 +5,60 @@
 > Última atualização: 13/11/2026 — negrito Markdown na Prova Adaptada; antes, produção regularizada com o main e publicada pelo script oficial. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
 > [`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md).
 
+## Pré-requisitos curriculares com sugestão da IA — 16/11/2026
+
+Continuação da Sinapse, mesmo PR. Nova aba **Planejamento › Pré-requisitos**:
+a IA sugere "A é base para B" escolhendo só entre habilidades da mesma
+disciplina planejadas antes (até duas séries atrás ou bimestre anterior);
+coordenação/direção aprova, rejeita, ajusta a força ou cadastra direto. Só os
+aprovados viram ligação na Teia. Regras em
+[`SINAPSE_TEIA_ALUNO.md`](SINAPSE_TEIA_ALUNO.md).
+
+- **Migration `0056_curriculum_skill_prerequisites.sql`** (aditiva, tabela
+  nova; a 0055 está reservada para a criptografia, PR #65). **Não aplicada em
+  nenhum banco.** Aplicar antes de publicar este código.
+- Código: `prerequisiteSuggestions.ts` (puro), `prerequisiteService.ts`, rotas
+  `/api/curriculum/prerequisites` (+ `/[id]`, `/suggest`),
+  `planejamento/prerequisites-panel.tsx`; a Teia lê os aprovados
+  (`skillNetwork.ts`, tipo `prerequisito`).
+- Testes: 7 da sugestão, 6 de integração com Postgres real (PGlite, aplicando
+  a 0056) e 3 novos na Teia. Suíte 1082, TypeScript, lint, regressão e build
+  OK; orçamento das rotas medidas sem mudança.
+- Conferido no navegador com respostas simuladas: aprovar, rejeitar, mudar
+  força sem aprovar, sugerir, erro do cadastro manual e a Teia com
+  pré-requisito vindo do ano anterior. Nessa conferência apareceu e foi
+  corrigido um ciclo de recarga infinito no painel. **Sem chamada real à IA e
+  sem dado real.**
+
+## Sinapse: aba "Teia" no relatório individual — 16/11/2026
+
+Pedido do usuário: ver o que o aluno domina, onde está a raiz da dificuldade e
+o que corre risco adiante, num grafo no estilo do exemplo `graph-label-overlap`
+do ECharts. Detalhes e regras em [`SINAPSE_TEIA_ALUNO.md`](SINAPSE_TEIA_ALUNO.md).
+
+- **Onde:** `/desempenho/relatorio`, aba **Teia** (entre Habilidades e Evolução).
+- **Nós:** habilidades BNCC por bimestre, do domínio individual que já existia
+  (`calculateStudentMastery`), agora com **todos os bimestres planejados** do ano
+  nas disciplinas avaliadas. Assim aparece o que ainda vem.
+- **Ligações (só dado real):** *retomada* do mesmo código num bimestre seguinte e
+  *correlação observada* entre colegas do mesmo recorte (resíduo além do nível
+  geral do aluno, ≥ 6 alunos em comum, r ≥ 0,4). Pré-requisito curricular
+  declarado **não existe** no sistema e não foi inventado.
+- **Risco:** OU-ruidoso das fontes fracas que chegam a uma habilidade ainda não
+  avaliada. Evidência insuficiente não propaga.
+- Motor puro em `src/lib/curriculum/skillNetwork.ts` (7 testes), API
+  `GET /api/curriculum/skill-network` (mesmo escopo de acesso de
+  `masteryData.ts`), tela `SkillNetworkSection.tsx`. Dependência nova
+  `echarts@5.5.1`, carregada sob demanda num chunk só (`src/lib/charts/echartsGraph.ts`).
+
+Validação: suíte (1066 testes), TypeScript, lint, regressão e build. Orçamento de
+bundle: `/desempenho` e `/desempenho/relatorio` passam do limite **também no
+`main` sem esta mudança** neste build local (132,95 e 125,37 KiB); com a mudança
+ficam menores (132,71 e 125,27). Limites não alterados. Conferido no navegador
+com dados de exemplo pelo motor real (desktop, celular, tema escuro); **não
+conferido com dados reais nem em produção** (congelamento de provas até ~28/11).
+Sem migration.
+
 ## Assistente: bimestre e criação de unidade; aba "Bloom e verbos" — 14/11/2026
 
 Pedidos do usuário, a partir de um caso real (Matemática do 3º ano EM, cuja

@@ -13,8 +13,12 @@ const ROUTE_BUDGETS_KIB: Record<string, number> = {
   // baixado); o chunk novo entra no runtime do webpack (+16 bytes em toda rota), por isso
   // /desempenho/relatorio, que não tinha folga, sobe 0,1 KiB. Ver TD-018.
   // 03/10/2026 (2): matriz Bloom x DOK também virou chunk sob demanda, no mesmo chunk do SOLO.
-  '/(app)/desempenho/page': 132.7,
-  '/(app)/desempenho/relatorio/page': 125.1,
+  // 16/11/2026: Teia (ECharts) e painel de pré-requisitos viraram chunks sob demanda; o runtime
+  // do webpack cresce alguns bytes em toda rota e /desempenho, já no limite exato no main,
+  // passou por bytes. Mesmo caso do TD-018: +0,1 KiB em /desempenho. No relatório, +0,2 KiB
+  // (medido na CI: 125,1 -> 125,3): runtime + registro da aba Teia e do seu import sob demanda.
+  '/(app)/desempenho/page': 132.8,
+  '/(app)/desempenho/relatorio/page': 125.3,
   '/(app)/desempenho/simulado-enem/page': 240,
   '/(app)/desempenho/simulado-enem/sae/page': 240,
   '/(app)/gerar/page': 120,

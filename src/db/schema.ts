@@ -656,6 +656,38 @@ export const curriculumPlanSkills = pgTable('curriculum_plan_skills', {
   codeIdx: index('curriculum_plan_skills_code_idx').on(table.code),
 }))
 
+// Pré-requisito curricular entre habilidades BNCC ("prerequisiteCode é base
+// para skillCode"), migration 0056. A IA sugere só entre códigos já planejados
+// antes; coordenação/direção aprovam ou rejeitam. Só `aprovada` alimenta a
+// Teia do aluno (src/lib/curriculum/skillNetwork.ts).
+export const PREREQUISITE_STATUSES = ['sugerida', 'aprovada', 'rejeitada'] as const
+export const PREREQUISITE_SOURCES = ['ia', 'coordenacao'] as const
+export const PREREQUISITE_STRENGTHS = ['essencial', 'importante', 'apoio'] as const
+
+export const curriculumSkillPrerequisites = pgTable('curriculum_skill_prerequisites', {
+  id: serial('id').primaryKey(),
+  subject: text('subject').notNull(),
+  prerequisiteCode: text('prerequisite_code').notNull(),
+  prerequisiteSegment: text('prerequisite_segment').notNull(),
+  prerequisiteGradeYear: integer('prerequisite_grade_year').notNull(),
+  skillCode: text('skill_code').notNull(),
+  skillSegment: text('skill_segment').notNull(),
+  skillGradeYear: integer('skill_grade_year').notNull(),
+  status: text('status', { enum: PREREQUISITE_STATUSES }).notNull().default('sugerida'),
+  source: text('source', { enum: PREREQUISITE_SOURCES }).notNull(),
+  strength: text('strength', { enum: PREREQUISITE_STRENGTHS }).notNull(),
+  rationale: text('rationale').notNull(),
+  suggestedBy: integer('suggested_by').references(() => users.id),
+  suggestedAt: timestamp('suggested_at').defaultNow().notNull(),
+  reviewedBy: integer('reviewed_by').references(() => users.id),
+  reviewedAt: timestamp('reviewed_at'),
+  reviewNote: text('review_note'),
+}, (table) => ({
+  pairUnique: uniqueIndex('curriculum_skill_prerequisites_pair_unique').on(table.prerequisiteCode, table.skillCode),
+  skillIdx: index('curriculum_skill_prerequisites_skill_idx').on(table.skillCode),
+  statusIdx: index('curriculum_skill_prerequisites_status_idx').on(table.status),
+}))
+
 export const curriculumPlanAssignments = pgTable('curriculum_plan_assignments', {
   id: serial('id').primaryKey(),
   planId: integer('plan_id').references(() => curriculumPlans.id, { onDelete: 'cascade' }).notNull(),
