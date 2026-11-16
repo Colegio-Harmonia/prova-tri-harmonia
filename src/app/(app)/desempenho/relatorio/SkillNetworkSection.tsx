@@ -51,14 +51,21 @@ const pct = (value: number | null) => (value === null ? '—' : `${Math.round(va
 
 type Positions = Record<string, { x: number; y: number }>
 
-function timelinePositions(nodes: NetworkNode[]): { positions: Positions; columns: Array<{ key: number; label: string; x: number }> } {
+// Linha do tempo em pixels do próprio quadro (largura × altura disponíveis): a
+// escala sai igual nos dois eixos e as colunas usam a largura toda, mesmo com
+// dezenas de habilidades por bimestre.
+function timelinePositions(nodes: NetworkNode[], width = 190 * 4, height = 64 * 8): { positions: Positions; columns: Array<{ key: number; label: string; x: number }> } {
   const keys = [...new Set(nodes.map((node) => node.academicYear * 10 + node.bimester))].sort((a, b) => a - b)
   const years = new Set(nodes.map((node) => node.academicYear)).size
   const positions: Positions = {}
+  const maxRows = Math.max(1, ...keys.map((key) => nodes.filter((node) => node.academicYear * 10 + node.bimester === key).length))
+  const xStep = keys.length > 1 ? width / (keys.length - 1) : 0
+  const yStep = maxRows > 1 ? height / (maxRows - 1) : 0
   const columns = keys.map((key, column) => {
     const inColumn = nodes.filter((node) => node.academicYear * 10 + node.bimester === key).sort((a, b) => a.code.localeCompare(b.code))
-    inColumn.forEach((node, row) => { positions[node.id] = { x: column * 190, y: (row - (inColumn.length - 1) / 2) * 64 } })
-    return { key, label: years > 1 ? `${key % 10}º bim. ${Math.floor(key / 10)}` : `${key % 10}º bimestre`, x: column * 190 }
+    const offset = ((maxRows - inColumn.length) / 2) * yStep
+    inColumn.forEach((node, row) => { positions[node.id] = { x: column * xStep, y: offset + row * yStep } })
+    return { key, label: years > 1 ? `${key % 10}º bim. ${Math.floor(key / 10)}` : `${key % 10}º bimestre`, x: column * xStep }
   })
   return { positions, columns }
 }
@@ -145,7 +152,11 @@ export default function SkillNetworkSection({ query, studentName, classroomCours
       // usa posições fixas encaixadas no quadro com a mesma escala em x e y.
       let positions: Positions
       let columns: Array<{ key: number; label: string; x: number }> = []
-      if (layout === 'tempo') ({ positions, columns } = timelinePositions(view.nodes))
+      if (layout === 'tempo') {
+        const w = chart.getWidth(), h = chart.getHeight()
+        const right = w < 600 ? 90 : 120
+        ;({ positions, columns } = timelinePositions(view.nodes, Math.max(80, w - 56 - right), Math.max(80, h - ((w < 900 ? 90 : 60) + 26) - 24)))
+      }
       else {
         const cacheKey = activeContext!
         if (!webPositions.current.has(cacheKey)) {
@@ -247,6 +258,9 @@ export default function SkillNetworkSection({ query, studentName, classroomCours
   if (!data) return <p className="text-sm text-content-secondary">Montando a teia…</p>
   if (!view || !view.nodes.length) return <p className="rounded border border-border bg-surface p-5 text-sm text-content-secondary">Ainda não há habilidades BNCC avaliadas ou planejadas para montar a teia deste aluno.</p>
 
+  // Altura cresce com a coluna mais cheia da linha do tempo (cerca de 22 px por habilidade).
+  const fullestColumn = Math.max(1, ...[...new Set(view.nodes.map((node) => node.academicYear * 10 + node.bimester))].map((key) => view.nodes.filter((node) => node.academicYear * 10 + node.bimester === key).length))
+  const chartHeight = layout === 'tempo' ? Math.min(1600, Math.max(560, fullestColumn * 22 + 160)) : 560
   const atRisk = view.nodes.filter((node) => node.state === 'risco_alto' || node.state === 'risco_moderado').sort((a, b) => (b.risk ?? 0) - (a.risk ?? 0))
   const learned = view.edges.filter((edge) => edge.kind === 'correlacao').length
   const recurrences = view.edges.filter((edge) => edge.kind === 'retomada').length
@@ -285,7 +299,7 @@ export default function SkillNetworkSection({ query, studentName, classroomCours
     <div className="space-y-4">
       {/* Em tela estreita o gráfico rola dentro do próprio quadro, sem empurrar a página. */}
       <div className="min-w-0 overflow-x-auto rounded border border-border bg-surface">
-        <div ref={containerRef} className="h-[560px] w-full" style={{ minWidth: layout === 'tempo' ? new Set(view.nodes.map((node) => node.academicYear * 10 + node.bimester)).size * 150 + 100 : 520 }} role="img" aria-label={`Teia de habilidades de ${studentName}. As listas abaixo trazem o mesmo conteúdo em texto.`} />
+        <div ref={containerRef} className="w-full" style={{ height: chartHeight, minWidth: layout === 'tempo' ? new Set(view.nodes.map((node) => node.academicYear * 10 + node.bimester)).size * 150 + 100 : 520 }} role="img" aria-label={`Teia de habilidades de ${studentName}. As listas abaixo trazem o mesmo conteúdo em texto.`} />
       </div>
       <aside className="space-y-4 rounded border border-border bg-surface p-5" aria-live="polite">
         {selectedNode ? <>
