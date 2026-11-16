@@ -72,6 +72,29 @@ describe('buildSkillNetwork', () => {
     expect(network.summary.correlationEdgeCount).toBe(0)
   })
 
+  it('pré-requisito aprovado liga a base mais recente à habilidade e propaga o risco', () => {
+    const rows = [row('EF06MA07', 1, 30, 'em_desenvolvimento'), row('EF06MA07', 2, 50, 'em_desenvolvimento'), row('EF07MA10', 3, null, 'sem_evidencia'), row('EF07MA10', 1, 90, 'dominio')]
+    const network = buildSkillNetwork(rows, [], [{ prerequisiteCode: 'ef06ma07', skillCode: 'EF07MA10', weight: 0.9 }])
+    const prerequisites = network.edges.filter((edge) => edge.kind === 'prerequisito')
+    // Para o 3º bimestre, a base mais recente é a do 2º; para o 1º, a do 1º (mesmo bimestre vale).
+    expect(prerequisites.map((edge) => `${edge.source.split(':').slice(-2).join('@')}>${edge.target.split(':').slice(-2).join('@')}`).sort()).toEqual(['1@EF06MA07>1@EF07MA10', '2@EF06MA07>3@EF07MA10'])
+    expect(network.summary.prerequisiteEdgeCount).toBe(2)
+    const future = network.nodes.find((node) => node.id === id('EF07MA10', 3))!
+    // fraqueza (80-50)/80 = 0,375 × 0,9 = 0,34 → moderado
+    expect(future.state).toBe('risco_moderado')
+    expect(future.riskSources).toContainEqual({ id: id('EF06MA07', 2), contribution: 0.34, kind: 'prerequisito' })
+  })
+
+  it('pré-requisito sem a base na teia do aluno não cria ligação', () => {
+    const network = buildSkillNetwork([row('EF07MA10', 2, null, 'sem_evidencia')], [], [{ prerequisiteCode: 'EF06MA07', skillCode: 'EF07MA10', weight: 0.9 }])
+    expect(network.edges).toEqual([])
+  })
+
+  it('pré-requisito no mesmo bimestre também define a raiz', () => {
+    const network = buildSkillNetwork([row('EF07MA08', 1, 30, 'em_desenvolvimento'), row('EF07MA10', 1, 40, 'em_desenvolvimento')], [], [{ prerequisiteCode: 'EF07MA08', skillCode: 'EF07MA10', weight: 0.9 }])
+    expect(network.roots.map((root) => root.id)).toEqual([id('EF07MA08', 1)])
+  })
+
   it('raiz é o déficit sem déficit anterior ligado a ele', () => {
     const network = buildSkillNetwork([
       row('EF07MA08', 1, 30, 'em_desenvolvimento'),

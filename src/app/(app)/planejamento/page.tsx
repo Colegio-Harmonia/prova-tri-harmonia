@@ -7,6 +7,7 @@ import PlanningAdvisor from './planning-advisor'
 import PlanningImport from './planning-import'
 import PlanningIndicators from './planning-indicators'
 import PlanningList from './planning-list'
+import PrerequisitesPanel from './prerequisites-panel'
 
 // Planejamento pedagógico (Bloco 7): a Prova TRI como fonte oficial do
 // planejamento. Professores veem só os planejamentos atribuídos a eles.
@@ -15,7 +16,7 @@ export default async function PlanningPage(props: { searchParams: Promise<{ aba?
   if (!session?.user) redirect('/login')
   const isManager = isStaffSuperuser(session.user.role ?? '')
   const { aba } = await props.searchParams
-  const tab = isManager && aba === 'importar' ? 'importar' : aba === 'indicadores' ? 'indicadores' : aba === 'assistente' ? 'assistente' : aba === 'bloom' ? 'bloom' : 'lista'
+  const tab = isManager && aba === 'importar' ? 'importar' : aba === 'indicadores' ? 'indicadores' : aba === 'assistente' ? 'assistente' : aba === 'bloom' ? 'bloom' : aba === 'prerequisitos' ? 'prerequisitos' : 'lista'
   const tabClass = (active: boolean) => `min-h-10 border-b-2 px-4 py-2 text-sm font-medium ${active ? 'border-harmonia-green text-content-primary' : 'border-transparent text-content-secondary hover:text-content-primary'}`
   return <div className="space-y-5">
     <div>
@@ -27,8 +28,9 @@ export default async function PlanningPage(props: { searchParams: Promise<{ aba?
       <Link href="/planejamento?aba=indicadores" aria-current={tab === 'indicadores' ? 'page' : undefined} className={tabClass(tab === 'indicadores')}>Indicadores</Link>
       <Link href="/planejamento?aba=assistente" aria-current={tab === 'assistente' ? 'page' : undefined} className={tabClass(tab === 'assistente')}>Assistente</Link>
       <Link href="/planejamento?aba=bloom" aria-current={tab === 'bloom' ? 'page' : undefined} className={tabClass(tab === 'bloom')}>Bloom e verbos</Link>
+      <Link href="/planejamento?aba=prerequisitos" aria-current={tab === 'prerequisitos' ? 'page' : undefined} className={tabClass(tab === 'prerequisitos')}>Pré-requisitos</Link>
       {isManager && <Link href="/planejamento?aba=importar" aria-current={tab === 'importar' ? 'page' : undefined} className={tabClass(tab === 'importar')}>Importar planilha</Link>}
     </nav>
-    {tab === 'importar' ? <PlanningImport /> : tab === 'assistente' ? <PlanningAdvisor isManager={isManager} /> : tab === 'bloom' ? <BloomGuide /> : tab === 'indicadores' ? <PlanningIndicators /> : <PlanningList isManager={isManager} />}
+    {tab === 'importar' ? <PlanningImport /> : tab === 'assistente' ? <PlanningAdvisor isManager={isManager} /> : tab === 'bloom' ? <BloomGuide /> : tab === 'prerequisitos' ? <PrerequisitesPanel isManager={isManager} /> : tab === 'indicadores' ? <PlanningIndicators /> : <PlanningList isManager={isManager} />}
   </div>
 }

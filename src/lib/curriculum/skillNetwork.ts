@@ -11,8 +11,10 @@
 //   confundir "aluno bom vai bem em tudo" com ligação entre conteúdos. Exige
 //   amostra mínima de alunos em comum.
 //
-// Pré-requisito curricular declarado (A é base para B) ainda não existe no
-// sistema e não é inventado aqui.
+// - **Pré-requisito aprovado**: "A é base para B", sugerido pela IA ou
+//   cadastrado e sempre aprovado pela coordenação
+//   (`curriculum_skill_prerequisites`). Liga a ocorrência mais recente de A
+//   (até o bimestre de B) a B, inclusive de série anterior.
 //
 // O risco de uma habilidade ainda sem evidência é um OU-ruidoso das fontes
 // fracas que chegam até ela, pesado pela força de cada ligação. Habilidade com
@@ -36,7 +38,10 @@ export const NETWORK_RULES = {
 } as const
 
 export type NetworkNodeState = MasteryLevel | 'risco_alto' | 'risco_moderado'
-export type NetworkEdgeKind = 'retomada' | 'correlacao'
+export type NetworkEdgeKind = 'retomada' | 'correlacao' | 'prerequisito'
+
+/** Pré-requisito aprovado, com o peso da força (essencial 0,9 · importante 0,7 · apoio 0,5). */
+export type PrerequisiteLink = { prerequisiteCode: string; skillCode: string; weight: number }
 
 export type NetworkEdge = {
   source: string
@@ -67,7 +72,7 @@ export type SkillNetwork = {
   nodes: NetworkNode[]
   edges: NetworkEdge[]
   roots: NetworkRoot[]
-  summary: { peerStudentCount: number; correlationEdgeCount: number; recurrenceEdgeCount: number; assessedNodeCount: number; atRiskNodeCount: number }
+  summary: { peerStudentCount: number; correlationEdgeCount: number; recurrenceEdgeCount: number; prerequisiteEdgeCount: number; assessedNodeCount: number; atRiskNodeCount: number }
 }
 
 /** Evidência de qualquer aluno do recorte (mesmo formato de `loadEvidence`). */
@@ -195,6 +200,32 @@ export function recurrenceEdges(nodes: NodeScope[]): NetworkEdge[] {
   return edges
 }
 
+/** Liga cada habilidade à ocorrência mais recente do seu pré-requisito aprovado, na mesma disciplina. */
+export function prerequisiteEdges(nodes: NodeScope[], links: PrerequisiteLink[]): NetworkEdge[] {
+  const byCode = new Map<string, NodeScope[]>()
+  for (const node of nodes) {
+    const key = `${subjectKey(node.subject)}:${node.code.toUpperCase()}`
+    byCode.set(key, [...(byCode.get(key) ?? []), node])
+  }
+  const edges: NetworkEdge[] = []
+  const seen = new Set<string>()
+  for (const link of links) {
+    const skillCode = link.skillCode.toUpperCase(), baseCode = link.prerequisiteCode.toUpperCase()
+    for (const target of nodes.filter((node) => node.code.toUpperCase() === skillCode)) {
+      const source = (byCode.get(`${subjectKey(target.subject)}:${baseCode}`) ?? [])
+        .filter((node) => order(node) <= order(target))
+        .sort((a, b) => order(b) - order(a))[0]
+      if (!source) continue
+      const edge = { source: networkNodeId(source), target: networkNodeId(target) }
+      const key = `${edge.source}>${edge.target}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      edges.push({ ...edge, kind: 'prerequisito', weight: link.weight, sharedStudents: null, directed: true })
+    }
+  }
+  return edges
+}
+
 function stateFor(row: StudentMasteryRow, risk: number | null): NetworkNodeState {
   if (row.level !== 'sem_evidencia' || risk === null) return row.level
   if (risk >= NETWORK_RULES.highRisk) return 'risco_alto'
@@ -202,14 +233,15 @@ function stateFor(row: StudentMasteryRow, risk: number | null): NetworkNodeState
   return 'sem_evidencia'
 }
 
-export function buildSkillNetwork(rows: StudentMasteryRow[], peers: PeerEvidence[]): SkillNetwork {
+export function buildSkillNetwork(rows: StudentMasteryRow[], peers: PeerEvidence[], prerequisites: PrerequisiteLink[] = []): SkillNetwork {
   const scoped = rows.map((row) => ({ row, id: networkNodeId(row) }))
   const nodesById = new Map(scoped.map(({ row, id }) => [id, row as NodeScope]))
   const nodeIds = new Set(nodesById.keys())
 
   const correlation = correlationEdges(nodeIds, peers, nodesById)
   const recurrence = recurrenceEdges([...nodesById.values()])
-  const edges = [...recurrence, ...correlation.edges]
+  const prerequisite = prerequisiteEdges([...nodesById.values()], prerequisites)
+  const edges = [...prerequisite, ...recurrence, ...correlation.edges]
 
   // Quem alimenta quem: ligação temporal vai do anterior ao posterior; a do
   // mesmo bimestre vale nos dois sentidos.
@@ -266,7 +298,8 @@ export function buildSkillNetwork(rows: StudentMasteryRow[], peers: PeerEvidence
   const attention: NetworkNodeState[] = ['em_desenvolvimento', 'risco_alto', 'risco_moderado']
   const roots = nodes
     .filter((node) => node.state === 'em_desenvolvimento')
-    .filter((node) => !(incoming.get(node.id) ?? []).some((edge) => nodeState.get(edge.source) === 'em_desenvolvimento' && order(nodesById.get(edge.source)!) < order(node)))
+    // Pré-requisito explica a dificuldade mesmo no mesmo bimestre; as demais ligações só quando vêm antes.
+    .filter((node) => !(incoming.get(node.id) ?? []).some((edge) => nodeState.get(edge.source) === 'em_desenvolvimento' && (edge.kind === 'prerequisito' || order(nodesById.get(edge.source)!) < order(node))))
     .map((node) => ({ id: node.id, affected: [...reachOf(node.id)].filter((id) => attention.includes(nodeState.get(id)!)).length }))
     .sort((a, b) => b.affected - a.affected)
 
@@ -278,6 +311,7 @@ export function buildSkillNetwork(rows: StudentMasteryRow[], peers: PeerEvidence
       peerStudentCount: correlation.peerStudentCount,
       correlationEdgeCount: correlation.edges.length,
       recurrenceEdgeCount: recurrence.length,
+      prerequisiteEdgeCount: prerequisite.length,
       assessedNodeCount: nodes.filter((node) => node.itemCount > 0).length,
       atRiskNodeCount: nodes.filter((node) => node.state === 'risco_alto' || node.state === 'risco_moderado').length,
     },

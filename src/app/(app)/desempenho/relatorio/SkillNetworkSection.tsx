@@ -15,7 +15,7 @@ type NetworkResponse = {
   nodes: NetworkNode[]
   edges: NetworkEdge[]
   roots: NetworkRoot[]
-  summary: { peerStudentCount: number; correlationEdgeCount: number; recurrenceEdgeCount: number; assessedNodeCount: number; atRiskNodeCount: number }
+  summary: { peerStudentCount: number; correlationEdgeCount: number; recurrenceEdgeCount: number; prerequisiteEdgeCount: number; assessedNodeCount: number; atRiskNodeCount: number }
   rules: { network: { minSharedStudents: number; minCorrelation: number } }
 }
 
@@ -33,6 +33,7 @@ const STATES: Array<{ id: NetworkNodeState; label: string; token: string }> = [
 ]
 const STATE_INDEX = Object.fromEntries(STATES.map((state, index) => [state.id, index])) as Record<NetworkNodeState, number>
 const stateLabel = (state: NetworkNodeState) => STATES[STATE_INDEX[state]].label
+const EDGE_LABEL: Record<NetworkEdge['kind'], string> = { prerequisito: 'pré-requisito', retomada: 'retomada', correlacao: 'correlação' }
 
 function cssColor(token: string) {
   const value = getComputedStyle(document.documentElement).getPropertyValue(token).trim()
@@ -52,11 +53,12 @@ type Positions = Record<string, { x: number; y: number }>
 
 function timelinePositions(nodes: NetworkNode[]): { positions: Positions; columns: Array<{ key: number; label: string; x: number }> } {
   const keys = [...new Set(nodes.map((node) => node.academicYear * 10 + node.bimester))].sort((a, b) => a - b)
+  const years = new Set(nodes.map((node) => node.academicYear)).size
   const positions: Positions = {}
   const columns = keys.map((key, column) => {
     const inColumn = nodes.filter((node) => node.academicYear * 10 + node.bimester === key).sort((a, b) => a.code.localeCompare(b.code))
     inColumn.forEach((node, row) => { positions[node.id] = { x: column * 190, y: (row - (inColumn.length - 1) / 2) * 64 } })
-    return { key, label: `${key % 10}º bimestre`, x: column * 190 }
+    return { key, label: years > 1 ? `${key % 10}º bim. ${Math.floor(key / 10)}` : `${key % 10}º bimestre`, x: column * 190 }
   })
   return { positions, columns }
 }
@@ -101,7 +103,11 @@ export default function SkillNetworkSection({ query, studentName, classroomCours
 
   const view = useMemo(() => {
     if (!data || !activeContext) return null
-    const nodes = data.nodes.filter((node) => contextOf(node) === activeContext)
+    const own = data.nodes.filter((node) => contextOf(node) === activeContext)
+    const ownIds = new Set(own.map((node) => node.id))
+    // Pré-requisito de série anterior entra no recorte para mostrar de onde vem a dificuldade.
+    const external = new Set(data.edges.filter((edge) => edge.kind === 'prerequisito' && ownIds.has(edge.target) && !ownIds.has(edge.source)).map((edge) => edge.source))
+    const nodes = [...own, ...data.nodes.filter((node) => external.has(node.id))]
     const ids = new Set(nodes.map((node) => node.id))
     const edges = data.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target))
     const roots = data.roots.filter((root) => ids.has(root.id))
@@ -205,7 +211,7 @@ export default function SkillNetworkSection({ query, studentName, classroomCours
             const source = view.byId.get(edge.source)
             const carries = (source?.weakness ?? 0) * edge.weight > 0.15
             return { source: edge.source, target: edge.target, symbol: edge.directed ? ['none', 'arrow'] : ['none', 'none'],
-              lineStyle: { width: carries ? 1.5 + edge.weight * 2.5 : 0.8 + edge.weight * 1.2, opacity: carries ? 0.85 : 0.4, type: edge.kind === 'correlacao' ? 'dashed' : 'solid' } }
+              lineStyle: { width: carries ? 1.5 + edge.weight * 2.5 : 0.8 + edge.weight * 1.2, opacity: carries ? 0.85 : 0.4, type: edge.kind === 'correlacao' ? 'dashed' : edge.kind === 'retomada' ? 'dotted' : 'solid' } }
           }),
           edgeSymbolSize: [0, 7],
           lineStyle: { color: 'source', curveness: 0.3 },
@@ -243,7 +249,8 @@ export default function SkillNetworkSection({ query, studentName, classroomCours
 
   const atRisk = view.nodes.filter((node) => node.state === 'risco_alto' || node.state === 'risco_moderado').sort((a, b) => (b.risk ?? 0) - (a.risk ?? 0))
   const learned = view.edges.filter((edge) => edge.kind === 'correlacao').length
-  const recurrences = view.edges.length - learned
+  const recurrences = view.edges.filter((edge) => edge.kind === 'retomada').length
+  const prerequisites = view.edges.filter((edge) => edge.kind === 'prerequisito').length
   const chip = (id: string, extra?: string) => {
     const node = view.byId.get(id)
     if (!node) return null
@@ -271,7 +278,7 @@ export default function SkillNetworkSection({ query, studentName, classroomCours
           </div>
         </div>
       </div>
-      <p className="mt-3 text-xs text-content-muted">{view.nodes.length} habilidades · {view.nodes.filter((node) => node.itemCount > 0).length} avaliadas · {recurrences} retomadas · {learned} ligações aprendidas de {data.summary.peerStudentCount} alunos do recorte · contorno tracejado = ainda não avaliada · linha tracejada = ligação aprendida</p>
+      <p className="mt-3 text-xs text-content-muted">{view.nodes.length} habilidades · {view.nodes.filter((node) => node.itemCount > 0).length} avaliadas · {prerequisites} pré-requisitos aprovados · {recurrences} retomadas · {learned} ligações aprendidas de {data.summary.peerStudentCount} alunos do recorte · contorno tracejado = ainda não avaliada · linha cheia = pré-requisito · pontilhada = retomada · tracejada = ligação aprendida</p>
     </section>
 
     {/* O relatório é estreito (max-w-3xl): gráfico na largura toda e o detalhe logo abaixo. */}
@@ -291,9 +298,9 @@ export default function SkillNetworkSection({ query, studentName, classroomCours
           {selectedNode.itemCount > 0
             ? <dl className="grid grid-cols-2 gap-2 text-sm"><dt className="text-content-secondary">Aproveitamento</dt><dd className="text-content-primary">{selectedNode.masteryPercent ?? '—'}%{selectedNode.level === 'evidencia_insuficiente' ? ' (preliminar)' : ''}</dd><dt className="text-content-secondary">Itens / avaliações</dt><dd className="text-content-primary">{selectedNode.itemCount} / {selectedNode.assessmentCount}</dd></dl>
             : <div className="text-sm"><p className="text-content-secondary">Ainda não avaliada. Risco herdado: <span className="font-semibold text-content-primary">{pct(selectedNode.risk)}</span></p>
-              {selectedNode.riskSources.length > 0 ? <div className="mt-2 flex flex-wrap gap-1.5">{selectedNode.riskSources.map((source) => chip(source.id, source.kind === 'retomada' ? 'retomada' : 'correlação'))}</div> : <p className="mt-1 text-xs text-content-muted">Nenhuma ligação traz dificuldade até aqui.</p>}</div>}
-          {incoming.length > 0 && <div><p className="text-xs font-medium uppercase tracking-wide text-content-muted">Vem de</p><div className="mt-2 flex flex-wrap gap-1.5">{incoming.map((edge) => chip(other(edge), edge.kind === 'retomada' ? 'retomada' : `r=${edge.weight}`))}</div></div>}
-          {outgoing.length > 0 && <div><p className="text-xs font-medium uppercase tracking-wide text-content-muted">Leva a</p><div className="mt-2 flex flex-wrap gap-1.5">{outgoing.map((edge) => chip(other(edge), edge.kind === 'retomada' ? 'retomada' : `r=${edge.weight}`))}</div></div>}
+              {selectedNode.riskSources.length > 0 ? <div className="mt-2 flex flex-wrap gap-1.5">{selectedNode.riskSources.map((source) => chip(source.id, EDGE_LABEL[source.kind]))}</div> : <p className="mt-1 text-xs text-content-muted">Nenhuma ligação traz dificuldade até aqui.</p>}</div>}
+          {incoming.length > 0 && <div><p className="text-xs font-medium uppercase tracking-wide text-content-muted">Vem de</p><div className="mt-2 flex flex-wrap gap-1.5">{incoming.map((edge) => chip(other(edge), edge.kind === 'correlacao' ? `r=${edge.weight}` : EDGE_LABEL[edge.kind]))}</div></div>}
+          {outgoing.length > 0 && <div><p className="text-xs font-medium uppercase tracking-wide text-content-muted">Leva a</p><div className="mt-2 flex flex-wrap gap-1.5">{outgoing.map((edge) => chip(other(edge), edge.kind === 'correlacao' ? `r=${edge.weight}` : EDGE_LABEL[edge.kind]))}</div></div>}
           {selectedNode.state === 'em_desenvolvimento' && <Link href={recoveryUrl(selectedNode, studentName, classroomCourseId)} className="inline-flex min-h-9 items-center rounded border border-action-primary px-3 py-1.5 text-xs font-semibold text-action-primary hover:bg-action-primary/10">Criar atividade de recuperação</Link>}
         </> : <p className="text-sm text-content-secondary">Clique numa habilidade da teia para ver o detalhe.</p>}
       </aside>
@@ -317,6 +324,6 @@ export default function SkillNetworkSection({ query, studentName, classroomCours
           : <p className="mt-3 text-sm text-content-secondary">Nenhuma ligação leva dificuldade para o que ainda não foi avaliado.</p>}
       </section>
     </div>
-    <p className="text-xs text-content-muted">Leitura de apoio, não diagnóstico. Ligação aprendida exige {data.rules.network.minSharedStudents} alunos em comum e correlação de pelo menos {data.rules.network.minCorrelation} já descontado o nível geral de cada aluno. Pré-requisitos curriculares declarados ainda não fazem parte da teia.</p>
+    <p className="text-xs text-content-muted">Leitura de apoio, não diagnóstico. Ligação aprendida exige {data.rules.network.minSharedStudents} alunos em comum e correlação de pelo menos {data.rules.network.minCorrelation} já descontado o nível geral de cada aluno. Pré-requisitos entram só depois de aprovados pela coordenação em Planejamento › Pré-requisitos.</p>
   </div>
 }

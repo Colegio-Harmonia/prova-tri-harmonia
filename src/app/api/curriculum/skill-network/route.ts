@@ -5,6 +5,7 @@ import { db } from '@/db/client'
 import { generatedExams, users } from '@/db/schema'
 import { enrichBnccDescriptions } from '@/lib/curriculum/bnccDescriptions'
 import { canonicalSubject, evidenceConditions, loadEvidence, loadPlannedSkills } from '@/lib/curriculum/masteryData'
+import { approvedPrerequisitesFor } from '@/lib/curriculum/prerequisiteService'
 import { buildSkillNetwork, NETWORK_RULES } from '@/lib/curriculum/skillNetwork'
 import { calculateStudentMastery, MASTERY_RULES, type MasteryScope } from '@/lib/curriculum/studentMastery'
 
@@ -44,5 +45,7 @@ export async function GET(req: NextRequest) {
     peers = (await loadEvidence(conditions)).evidence.filter((item) => contexts.has(contextKey(item)))
   }
 
-  return NextResponse.json({ ...buildSkillNetwork(rows, peers), rules: { network: NETWORK_RULES, mastery: MASTERY_RULES } })
+  // Só pré-requisitos aprovados pela coordenação entram na teia.
+  const prerequisites = await approvedPrerequisitesFor(rows.map((row) => row.code))
+  return NextResponse.json({ ...buildSkillNetwork(rows, peers, prerequisites), rules: { network: NETWORK_RULES, mastery: MASTERY_RULES } })
 }

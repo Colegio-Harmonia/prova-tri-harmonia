@@ -5,6 +5,31 @@
 > Última atualização: 13/11/2026 — negrito Markdown na Prova Adaptada; antes, produção regularizada com o main e publicada pelo script oficial. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
 > [`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md).
 
+## Pré-requisitos curriculares com sugestão da IA — 16/11/2026
+
+Continuação da Sinapse, mesmo PR. Nova aba **Planejamento › Pré-requisitos**:
+a IA sugere "A é base para B" escolhendo só entre habilidades da mesma
+disciplina planejadas antes (até duas séries atrás ou bimestre anterior);
+coordenação/direção aprova, rejeita, ajusta a força ou cadastra direto. Só os
+aprovados viram ligação na Teia. Regras em
+[`SINAPSE_TEIA_ALUNO.md`](SINAPSE_TEIA_ALUNO.md).
+
+- **Migration `0056_curriculum_skill_prerequisites.sql`** (aditiva, tabela
+  nova; a 0055 está reservada para a criptografia, PR #65). **Não aplicada em
+  nenhum banco.** Aplicar antes de publicar este código.
+- Código: `prerequisiteSuggestions.ts` (puro), `prerequisiteService.ts`, rotas
+  `/api/curriculum/prerequisites` (+ `/[id]`, `/suggest`),
+  `planejamento/prerequisites-panel.tsx`; a Teia lê os aprovados
+  (`skillNetwork.ts`, tipo `prerequisito`).
+- Testes: 7 da sugestão, 6 de integração com Postgres real (PGlite, aplicando
+  a 0056) e 3 novos na Teia. Suíte 1082, TypeScript, lint, regressão e build
+  OK; orçamento das rotas medidas sem mudança.
+- Conferido no navegador com respostas simuladas: aprovar, rejeitar, mudar
+  força sem aprovar, sugerir, erro do cadastro manual e a Teia com
+  pré-requisito vindo do ano anterior. Nessa conferência apareceu e foi
+  corrigido um ciclo de recarga infinito no painel. **Sem chamada real à IA e
+  sem dado real.**
+
 ## Sinapse: aba "Teia" no relatório individual — 16/11/2026
 
 Pedido do usuário: ver o que o aluno domina, onde está a raiz da dificuldade e
