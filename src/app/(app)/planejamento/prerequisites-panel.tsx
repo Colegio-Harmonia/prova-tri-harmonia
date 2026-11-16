@@ -1,8 +1,9 @@
 'use client'
 
 // Pré-requisitos curriculares ("A é base para B"). A IA sugere escolhendo só
-// entre habilidades já planejadas antes; a coordenação/direção aprova ou
-// rejeita. Só os aprovados entram na Teia do relatório do aluno.
+// entre habilidades já planejadas antes, no ano letivo vigente, que tenham
+// vínculo na organização oficial da BNCC com a alvo; a coordenação/direção
+// aprova ou rejeita. Só os aprovados entram na Teia do relatório do aluno.
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 
@@ -28,6 +29,17 @@ const STATUS_CLASS: Record<Status, string> = {
 const grade = (segment: string, gradeYear: number) => (segment === 'ensino-medio' ? `${gradeYear}ª série EM` : `${gradeYear}º ano`)
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
 const optionKey = (option: Option) => `${option.segment}|${option.gradeYear}|${option.subject}`
+const SEGMENT_LABEL: Record<string, string> = { 'anos-iniciais': 'Anos iniciais', 'anos-finais': 'Anos finais', 'ensino-medio': 'Ensino Médio' }
+const SEGMENT_ORDER = ['anos-iniciais', 'anos-finais', 'ensino-medio']
+const OFFICIAL_PREFIX = 'Base oficial BNCC: '
+/** Separa o vínculo oficial (gravado no início da justificativa) do texto da IA. */
+function splitRationale(rationale: string): { basis: string | null; text: string } {
+  if (!rationale.startsWith(OFFICIAL_PREFIX)) return { basis: null, text: rationale }
+  const rest = rationale.slice(OFFICIAL_PREFIX.length)
+  const end = rest.indexOf('. ')
+  return end < 0 ? { basis: rest, text: '' } : { basis: rest.slice(0, end), text: rest.slice(end + 2) }
+}
+type Ignored = { code: string; bimester: number; reason: string }
 
 export default function PrerequisitesPanel({ isManager }: { isManager: boolean }) {
   const [options, setOptions] = useState<Option[]>([])
@@ -35,6 +47,8 @@ export default function PrerequisitesPanel({ isManager }: { isManager: boolean }
   const [status, setStatus] = useState<Status | 'todas'>('sugerida')
   const [rows, setRows] = useState<Prerequisite[] | null>(null)
   const [descriptions, setDescriptions] = useState<Record<string, string>>({})
+  const [academicYear, setAcademicYear] = useState<number | null>(null)
+  const [ignored, setIgnored] = useState<Ignored[]>([])
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [suggesting, setSuggesting] = useState(false)
@@ -43,6 +57,19 @@ export default function PrerequisitesPanel({ isManager }: { isManager: boolean }
   const [form, setForm] = useState({ prerequisiteCode: '', skillCode: '', strength: 'importante' as Strength, rationale: '' })
 
   const current = useMemo(() => options.find((option) => optionKey(option) === selected) ?? null, [options, selected])
+  const segments = useMemo(() => SEGMENT_ORDER.filter((segment) => options.some((option) => option.segment === segment)), [options])
+  const grades = useMemo(() => [...new Set(options.filter((option) => option.segment === current?.segment).map((option) => option.gradeYear))].sort((a, b) => a - b), [options, current])
+  const subjects = useMemo(() => options.filter((option) => option.segment === current?.segment && option.gradeYear === current?.gradeYear).map((option) => option.subject).sort((a, b) => a.localeCompare(b, 'pt-BR')), [options, current])
+  // Troca um filtro mantendo os outros quando existir a combinação; senão cai na primeira disponível.
+  function pick(next: Partial<Option>) {
+    const want = { segment: current?.segment, gradeYear: current?.gradeYear, subject: current?.subject, ...next }
+    const exact = options.find((option) => option.segment === want.segment && option.gradeYear === want.gradeYear && option.subject === want.subject)
+    const sameGrade = options.find((option) => option.segment === want.segment && option.gradeYear === want.gradeYear)
+    const sameSegment = options.filter((option) => option.segment === want.segment).sort((a, b) => a.gradeYear - b.gradeYear)
+    const sameSubject = sameSegment.find((option) => option.subject === want.subject)
+    const chosen = exact ?? (next.segment ? sameSubject ?? sameSegment[0] : sameGrade)
+    if (chosen) setSelected(optionKey(chosen))
+  }
 
   // Depende só de valores simples (texto da seleção e situação): depender do
   // objeto `current` recriava a função a cada carga e entrava em ciclo.
@@ -57,7 +84,10 @@ export default function PrerequisitesPanel({ isManager }: { isManager: boolean }
     setOptions(body.options ?? [])
     setRows(body.prerequisites ?? [])
     setDescriptions(body.descriptions ?? {})
-    if (!selected && body.options?.length) setSelected(optionKey(body.options[0]))
+    setAcademicYear(body.academicYear ?? null)
+    setIgnored(body.ignored ?? [])
+    const available: Option[] = body.options ?? []
+    if ((!selected || !available.some((option) => optionKey(option) === selected)) && available.length) setSelected(optionKey(available[0]))
   }, [status, selected])
 
   useEffect(() => { load() }, [load])
@@ -71,7 +101,7 @@ export default function PrerequisitesPanel({ isManager }: { isManager: boolean }
     if (!response.ok) { setError(body.error ?? 'Não foi possível obter as sugestões.'); return }
     setMessage(body.targets === 0
       ? (body.alreadyMapped ? `Todas as habilidades desta série já têm pré-requisitos registrados (${body.alreadyMapped}). Nada foi enviado à IA.` : 'Não há habilidades planejadas antes desta série para servir de base. Nada foi enviado à IA.')
-      : `${plural(body.created, 'sugestão nova', 'sugestões novas')} para ${plural(body.targets, 'habilidade', 'habilidades')}.${body.discarded ? ` ${plural(body.discarded, 'resposta da IA foi descartada', 'respostas da IA foram descartadas')} por citar código fora da lista ou sem justificativa.` : ''}${body.alreadyMapped ? ` ${plural(body.alreadyMapped, 'habilidade já tinha registro e foi pulada', 'habilidades já tinham registro e foram puladas')}.` : ''}`)
+      : `${plural(body.created, 'sugestão nova', 'sugestões novas')} para ${plural(body.targets, 'habilidade', 'habilidades')}.${body.discarded ? ` ${plural(body.discarded, 'resposta da IA foi descartada', 'respostas da IA foram descartadas')} por citar código fora da lista, sem vínculo oficial na BNCC ou sem justificativa.` : ''}${body.alreadyMapped ? ` ${plural(body.alreadyMapped, 'habilidade já tinha registro e foi pulada', 'habilidades já tinham registro e foram puladas')}.` : ''}`)
     setStatus('sugerida')
     load()
   }
@@ -109,11 +139,22 @@ export default function PrerequisitesPanel({ isManager }: { isManager: boolean }
   return <div className="space-y-4">
     <section className="rounded border border-border bg-surface p-5">
       <h2 className="font-semibold text-content-primary">Pré-requisitos entre habilidades</h2>
-      <p className="mt-1 max-w-3xl text-sm text-content-secondary">Indica quais habilidades são base para outras. A IA só sugere entre habilidades planejadas antes (até duas séries atrás ou bimestre anterior da mesma série). Nada entra na Teia do aluno sem aprovação da coordenação ou da direção.</p>
+      <p className="mt-1 max-w-3xl text-sm text-content-secondary">Indica quais habilidades são base para outras. A IA só sugere entre habilidades planejadas antes{academicYear ? ` em ${academicYear}` : ''} (até duas séries atrás ou bimestre anterior da mesma série) e que tenham vínculo na organização oficial da BNCC com a habilidade (mesmo objeto de conhecimento, prática, unidade temática, eixo, competência ou campo). A BNCC não publica pré-requisitos: esse vínculo é a âncora oficial, e a dependência é proposta pela IA. Nada entra na Teia do aluno sem aprovação da coordenação ou da direção.</p>
+      {academicYear && <p className="mt-2 text-xs text-content-muted">Ano letivo vigente: {academicYear}. Ele só muda quando o 4º bimestre de {academicYear} for encerrado.</p>}
       <div className="mt-4 flex flex-wrap items-end gap-3">
-        <label className="text-sm text-content-secondary">Série e disciplina
-          <select value={selected} onChange={(event) => setSelected(event.target.value)} className="mt-1 block min-h-10 rounded border border-border bg-surface px-2 text-sm text-content-primary">
-            {options.map((option) => <option key={optionKey(option)} value={optionKey(option)}>{option.subject} · {grade(option.segment, option.gradeYear)}</option>)}
+        <label className="text-sm text-content-secondary">Segmento
+          <select value={current?.segment ?? ''} onChange={(event) => pick({ segment: event.target.value })} className="mt-1 block min-h-10 rounded border border-border bg-surface px-2 text-sm text-content-primary">
+            {segments.map((segment) => <option key={segment} value={segment}>{SEGMENT_LABEL[segment] ?? segment}</option>)}
+          </select>
+        </label>
+        <label className="text-sm text-content-secondary">Série
+          <select value={current?.gradeYear ?? ''} onChange={(event) => pick({ gradeYear: Number(event.target.value) })} className="mt-1 block min-h-10 rounded border border-border bg-surface px-2 text-sm text-content-primary">
+            {grades.map((value) => <option key={value} value={value}>{grade(current?.segment ?? '', value)}</option>)}
+          </select>
+        </label>
+        <label className="text-sm text-content-secondary">Disciplina
+          <select value={current?.subject ?? ''} onChange={(event) => pick({ subject: event.target.value })} className="mt-1 block min-h-10 rounded border border-border bg-surface px-2 text-sm text-content-primary">
+            {subjects.map((subject) => <option key={subject} value={subject}>{subject}</option>)}
           </select>
         </label>
         <label className="text-sm text-content-secondary">Situação
@@ -125,6 +166,8 @@ export default function PrerequisitesPanel({ isManager }: { isManager: boolean }
           {suggesting ? 'Consultando a IA… (pode levar 1 a 2 minutos)' : 'Sugerir com IA para esta série'}</button>}
       </div>
       {!options.length && rows !== null && <p className="mt-3 text-sm text-content-secondary">Ainda não há planejamento cadastrado para montar o mapa de pré-requisitos.</p>}
+      {ignored.length > 0 && <p role="status" className="mt-3 rounded bg-status-warning-surface p-3 text-sm text-status-warning-content">
+        {plural(ignored.length, 'código do planejamento desta série não é', 'códigos do planejamento desta série não são')} de {current?.subject} na BNCC e {ignored.length === 1 ? 'ficou' : 'ficaram'} fora das sugestões: {ignored.map((item) => `${item.code} (${item.bimester}º bim.)`).join(', ')}. Corrija o planejamento.</p>}
       {message && <p role="status" className="mt-3 rounded bg-status-info-surface p-3 text-sm text-status-info-content">{message}</p>}
       {error && <p role="alert" className="mt-3 rounded bg-status-danger-surface p-3 text-sm text-status-danger-content">{error}</p>}
     </section>
@@ -145,7 +188,10 @@ export default function PrerequisitesPanel({ isManager }: { isManager: boolean }
                 <span className={`ml-2 inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_CLASS[row.status]}`}>{STATUS_LABEL[row.status]}</span>
                 <span className="ml-2 text-xs text-content-muted">{row.source === 'ia' ? 'sugerido pela IA' : 'cadastrado pela coordenação'}{row.reviewerName ? ` · revisado por ${row.reviewerName}` : ''}</span></p>
               {describe(row.prerequisiteCode)}
-              <p className="mt-1 text-content-secondary">{row.rationale}</p>
+              {(() => { const { basis, text } = splitRationale(row.rationale); return <>
+                {basis && <p className="mt-1 text-xs font-medium text-content-secondary">Vínculo oficial BNCC: {basis}</p>}
+                {text && <p className="mt-1 text-content-secondary">{text}</p>}
+              </> })()}
               {row.reviewNote && <p className="mt-1 text-xs text-content-muted">Nota da revisão: {row.reviewNote}</p>}
             </div>
             <div className="flex flex-wrap items-center gap-2">

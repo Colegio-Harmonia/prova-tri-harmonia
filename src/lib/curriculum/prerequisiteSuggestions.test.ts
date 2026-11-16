@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildPrerequisitePrompt, buildSuggestionGroups, levelOf, sanitizePrerequisites, suggestPrerequisitesForGroups, type CatalogSkill } from './prerequisiteSuggestions'
+import { buildPrerequisitePrompt, buildSuggestionGroups, candidatesForTarget, composeRationale, levelOf, sanitizePrerequisites, suggestPrerequisitesForGroups, type CatalogSkill } from './prerequisiteSuggestions'
 
 const skill = (code: string, gradeYear: number, bimester: number, segment = 'anos-finais'): CatalogSkill => ({ code, description: `Descrição de ${code}`, segment, gradeYear, subject: 'Matemática', bimester })
 
@@ -53,7 +53,7 @@ describe('sanitizePrerequisites', () => {
       { codigo: 'EF07MA08', forca: 'apoio', justificativa: 'curta' },
       { codigo: 'EF06MA07', forca: 'apoio', justificativa: why },
     ] }, { codigo: 'EF09MA01', prerequisitos: [{ codigo: 'EF06MA07', forca: 'apoio', justificativa: why }] }] }, group)
-    expect(result.suggestions).toEqual([{ prerequisite: group.candidates[0], skill: group.targets[0], strength: 'essencial', rationale: why }])
+    expect(result.suggestions).toEqual([{ prerequisite: group.candidates[0], skill: group.targets[0], strength: 'essencial', rationale: why, officialBasis: 'mesma unidade temática: Números' }])
     expect(result.discardedCount).toBe(6)
   })
 })
@@ -64,7 +64,7 @@ describe('suggestPrerequisitesForGroups', () => {
     const prompts: string[] = []
     const result = await suggestPrerequisitesForGroups('Matemática', groups, async (prompt) => {
       prompts.push(prompt)
-      return prompt.includes('EF07MA10 (7º ano, 2º bim.)')
+      return prompt.includes('EF07MA10 (7º ano, 2º bim.;')
         ? { habilidades: [{ codigo: 'EF07MA10', prerequisitos: [{ codigo: 'EF07MA08', forca: 'importante', justificativa: 'Retoma a resolução de problemas com números racionais do bimestre anterior.' }] }] }
         : { habilidades: [] }
     })
@@ -75,7 +75,41 @@ describe('suggestPrerequisitesForGroups', () => {
 
   it('o prompt deixa claro que só vale código da lista', () => {
     const prompt = buildPrerequisitePrompt('Matemática', [skill('EF07MA10', 7, 2)], [skill('EF06MA07', 6, 1)])
-    expect(prompt).toContain('Use SOMENTE códigos da lista de CANDIDATOS')
-    expect(prompt).toContain('EF06MA07 (6º ano, 1º bim.): Descrição de EF06MA07')
+    expect(prompt).toContain('Use SOMENTE códigos da lista de CANDIDATOS PERMITIDOS')
+    expect(prompt).toContain('EF06MA07 (6º ano, 1º bim.; BNCC: ')
+    expect(prompt).toContain('Números): Descrição de EF06MA07')
+    expect(prompt).toContain('EF07MA10: EF06MA07')
+  })
+})
+
+describe('vínculo oficial da BNCC', () => {
+  const lp = (code: string, gradeYear: number, bimester: number): CatalogSkill => ({ code, description: null, segment: 'anos-iniciais', gradeYear, subject: 'Língua Portuguesa', bimester })
+  const why = 'Inferir sentido de palavras ajuda a interpretar letras de música.'
+
+  it('descarta par sem vínculo na organização oficial', () => {
+    // EF15AR13 é de Arte (Música); EF35LP05 é Leitura/escuta: nada em comum na BNCC.
+    const result = sanitizePrerequisites({ habilidades: [{ codigo: 'EF15AR13', prerequisitos: [{ codigo: 'EF35LP05', forca: 'apoio', justificativa: why }] }] }, { targets: [lp('EF15AR13', 5, 4)], candidates: [lp('EF35LP05', 4, 1)] })
+    expect(result.suggestions).toEqual([])
+    expect(result.discardedCount).toBe(1)
+  })
+
+  it('só lista como permitido o candidato com vínculo e explica o vínculo', () => {
+    const target = lp('EF15LP01', 4, 1)
+    expect(candidatesForTarget(target, [lp('EF12LP02', 2, 1), lp('EF15AR13', 2, 1)]).map((skill) => skill.code)).toEqual(['EF12LP02'])
+    const prompt = buildPrerequisitePrompt('Língua Portuguesa', [target], [lp('EF12LP02', 2, 1)])
+    expect(prompt).toContain('EF15LP01: EF12LP02')
+  })
+
+  it('grava o vínculo oficial antes da justificativa da IA', () => {
+    expect(composeRationale({ rationale: why, officialBasis: 'mesmo objeto de conhecimento: Estratégia de leitura' })).toBe(`Base oficial BNCC: Mesmo objeto de conhecimento: Estratégia de leitura. ${why}`)
+    expect(composeRationale({ rationale: why, officialBasis: null })).toBe(why)
+  })
+
+  it('não chama a IA para lote sem nenhum candidato com vínculo', async () => {
+    const groups = [{ bimester: 4, targets: [lp('EF15AR13', 5, 4)], candidates: [lp('EF35LP05', 4, 1)] }]
+    let calls = 0
+    const result = await suggestPrerequisitesForGroups('Língua Portuguesa', groups, async () => { calls++; return { habilidades: [] } })
+    expect(calls).toBe(0)
+    expect(result.callCount).toBe(0)
   })
 })

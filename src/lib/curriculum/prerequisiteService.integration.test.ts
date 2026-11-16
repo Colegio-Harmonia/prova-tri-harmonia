@@ -27,8 +27,11 @@ describe.skipIf(!pgliteInstalled())('pré-requisitos curriculares (Postgres real
       await planning.saveDraft(coord as never, versionId, [{ title: `Unidade ${gradeYear}.${bimester}`, skills: codes.map((code) => ({ code })) }])
     }
     await plan(6, 1, ['EF06MA07'])
-    await plan(7, 1, ['EF07MA08'])
+    await plan(7, 1, ['EF07MA08', 'EF15AR13'])
     await plan(7, 2, ['EF07MA10'])
+    // Planejamento de 2027 (ano futuro) não pode entrar no catálogo de 2026.
+    const { versionId } = await planning.createPlan(coord as never, { academicYear: 2027, segment: 'anos-finais', gradeYear: 7, subject: 'Matemática', bimester: 4 })
+    await planning.saveDraft(coord as never, versionId, [{ title: 'Teste 2027', skills: [{ code: 'EF07MA01' }] }])
   }, 60_000)
 
   it('a migration cria a tabela com as travas de integridade', async () => {
@@ -43,14 +46,16 @@ describe.skipIf(!pgliteInstalled())('pré-requisitos curriculares (Postgres real
 
   it('grava só sugestão válida, não repete a série já mapeada e preserva rejeição', async () => {
     const generate = vi.fn(async (prompt: string) => ({ habilidades: [
-      ...(prompt.includes('EF07MA08 (7º ano, 1º bim.): ') && prompt.includes('HABILIDADES-ALVO:\nEF07MA08') ? [{ codigo: 'EF07MA08', prerequisitos: [{ codigo: 'EF06MA07', forca: 'essencial', justificativa: why }] }] : []),
+      ...(prompt.includes('EF07MA08 (7º ano, 1º bim.; ') && prompt.includes('HABILIDADES-ALVO:\nEF07MA08') ? [{ codigo: 'EF07MA08', prerequisitos: [{ codigo: 'EF06MA07', forca: 'essencial', justificativa: why }] }] : []),
       ...(prompt.includes('HABILIDADES-ALVO:\nEF07MA10') ? [{ codigo: 'EF07MA10', prerequisitos: [{ codigo: 'EF07MA08', forca: 'importante', justificativa: why }, { codigo: 'EF05MA99', forca: 'apoio', justificativa: why }] }] : []),
     ] }))
     const first = await service.suggestPrerequisites({ viewer: coord, segment: 'anos-finais', gradeYear: 7, subject: 'Matemática', generate })
-    expect(first).toMatchObject({ created: 2, discarded: 1, targets: 2, aiCalls: 2 })
+    expect(first).toMatchObject({ created: 2, discarded: 1, targets: 2, aiCalls: 2, academicYear: 2026, ignoredCodes: ['EF15AR13'] })
+    expect(generate.mock.calls.map(([prompt]) => prompt).join('\n')).not.toMatch(/EF15AR13|EF07MA01/)
 
     const listed = await service.listPrerequisites({ subject: 'Matemática', gradeYear: 7, status: 'sugerida' })
     expect(listed.map((row) => `${row.prerequisiteCode}->${row.skillCode}:${row.strength}`)).toEqual(['EF06MA07->EF07MA08:essencial', 'EF07MA08->EF07MA10:importante'])
+    expect(listed[0].rationale).toBe(`Base oficial BNCC: Mesma unidade temática: Números. ${why}`)
 
     const rejected = listed.find((row) => row.skillCode === 'EF07MA10')!
     await service.reviewPrerequisite({ viewer: coord, id: rejected.id, status: 'rejeitada', note: 'Não depende disso.' })
@@ -77,7 +82,7 @@ describe.skipIf(!pgliteInstalled())('pré-requisitos curriculares (Postgres real
   })
 
   it('opções vêm dos planejamentos existentes', async () => {
-    expect(await service.listPlanningOptions()).toEqual([
+    expect(await service.listPlanningOptions(2026)).toEqual([
       { segment: 'anos-finais', gradeYear: 6, subject: 'Matemática' },
       { segment: 'anos-finais', gradeYear: 7, subject: 'Matemática' },
     ])
