@@ -7,6 +7,7 @@ import { useRef, type KeyboardEvent, type ReactNode } from 'react'
 export const REPORT_TABS = [
   { id: 'resumo', label: 'Resumo' },
   { id: 'habilidades', label: 'Habilidades' },
+  { id: 'teia', label: 'Teia' },
   { id: 'evolucao', label: 'Evolução' },
   { id: 'avaliacoes', label: 'Avaliações' },
 ] as const

@@ -44,7 +44,7 @@ const baseMasteryColumns = [
   masteryColumnHelper.accessor('planned', { header: 'Planejada', cell: ({ getValue }) => getValue() ? 'Sim' : 'Não' }),
 ]
 
-function recoveryUrl(row: StudentMasteryRow, studentName: string, classroomCourseId?: string) {
+export function recoveryUrl(row: Pick<StudentMasteryRow, 'segment' | 'gradeYear' | 'subject' | 'academicYear' | 'bimester' | 'code'>, studentName: string, classroomCourseId?: string) {
   const params = new URLSearchParams({ origem: 'relatorio', segment: row.segment, gradeYear: String(row.gradeYear), subject: row.subject, academicYear: String(row.academicYear), bimester: String(row.bimester), skill: row.code, questionCount: '5', student: studentName })
   if (classroomCourseId) params.set('classroomCourseId', classroomCourseId)
   return `/atividades?${params.toString()}`
