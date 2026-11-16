@@ -2,11 +2,16 @@
 //
 // A IA não inventa código: para cada habilidade-alvo ela só pode escolher entre
 // as habilidades da MESMA disciplina planejadas ANTES (séries anteriores, ou a
-// mesma série em bimestre anterior). Qualquer código fora dessa lista, repetido
-// ou sem justificativa é descartado aqui. Nada é aprovado automaticamente: o
+// mesma série em bimestre anterior) que tenham vínculo na organização oficial
+// da BNCC com a alvo (mesmo objeto de conhecimento, prática, unidade temática,
+// eixo, competência ou campo). A BNCC não publica pré-requisitos: esse vínculo
+// é a âncora oficial, e a IA só decide se há dependência e qual a força.
+// Qualquer código fora dessa lista, sem vínculo oficial, repetido ou sem
+// justificativa é descartado aqui. Nada é aprovado automaticamente: o
 // resultado vira sugestão para a coordenação revisar.
 
 import { z } from 'zod'
+import { bnccStructureLabel, structuralLink } from './bnccStructure'
 
 export const PREREQUISITE_RULES = {
   /** Pré-requisitos aceitos por habilidade-alvo. */
@@ -42,6 +47,20 @@ export type PrerequisiteSuggestion = {
   skill: CatalogSkill
   strength: PrerequisiteStrength
   rationale: string
+  /** Vínculo na organização oficial da BNCC; null quando um dos códigos não está no dataset. */
+  officialBasis: string | null
+}
+
+/** Texto gravado na sugestão: o vínculo oficial primeiro, depois a justificativa da IA. */
+export function composeRationale(suggestion: Pick<PrerequisiteSuggestion, 'rationale' | 'officialBasis'>) {
+  if (!suggestion.officialBasis) return suggestion.rationale
+  const basis = suggestion.officialBasis.charAt(0).toUpperCase() + suggestion.officialBasis.slice(1)
+  return `Base oficial BNCC: ${basis}. ${suggestion.rationale}`
+}
+
+/** Candidatos que têm vínculo oficial (ou não verificável) com a alvo. */
+export function candidatesForTarget(target: CatalogSkill, candidates: CatalogSkill[]) {
+  return candidates.filter((candidate) => structuralLink(candidate.code, target.code).status !== 'unrelated')
 }
 
 /** Posição da série na escolaridade: 1º-9º do Fundamental, 10-12 no Ensino Médio. */
@@ -129,7 +148,14 @@ export const prerequisitesResultSchema = z.object({
 export type RawPrerequisites = z.infer<typeof prerequisitesResultSchema>
 
 export function buildPrerequisitePrompt(subject: string, targets: CatalogSkill[], candidates: CatalogSkill[]): string {
-  const line = (skill: CatalogSkill) => `${skill.code} (${gradeLabel(skill.segment, skill.gradeYear)}, ${skill.bimester}º bim.): ${clip(skill.description, 220) || '(descrição não informada)'}`
+  const line = (skill: CatalogSkill) => {
+    const structure = bnccStructureLabel(skill.code)
+    return `${skill.code} (${gradeLabel(skill.segment, skill.gradeYear)}, ${skill.bimester}º bim.${structure ? `; BNCC: ${structure}` : ''}): ${clip(skill.description, 220) || '(descrição não informada)'}`
+  }
+  const allowed = targets.map((target) => {
+    const codes = candidatesForTarget(target, candidates).map((candidate) => candidate.code)
+    return `${target.code}: ${codes.length ? codes.join(', ') : '(nenhum: devolva lista vazia)'}`
+  })
   return `Você apoia a coordenação pedagógica a mapear PRÉ-REQUISITOS entre habilidades da BNCC.
 
 DISCIPLINA: ${subject}
@@ -140,10 +166,13 @@ ${targets.map(line).join('\n')}
 CANDIDATOS (habilidades planejadas ANTES das alvos):
 ${candidates.map(line).join('\n')}
 
+CANDIDATOS PERMITIDOS POR ALVO (têm vínculo na organização oficial da BNCC com a alvo):
+${allowed.join('\n')}
+
 TAREFA: para cada habilidade-alvo, indique quais candidatos são pré-requisito dela, isto é, aprendizagens que o aluno precisa ter consolidado para conseguir desenvolver a alvo.
 
 REGRAS OBRIGATÓRIAS:
-- Use SOMENTE códigos da lista de CANDIDATOS, copiados exatamente. Nunca invente código nem use uma habilidade-alvo como pré-requisito.
+- Use SOMENTE códigos da lista de CANDIDATOS PERMITIDOS daquela alvo, copiados exatamente. Nunca invente código nem use uma habilidade-alvo como pré-requisito.
 - No máximo ${PREREQUISITE_RULES.maxPerSkill} pré-requisitos por alvo, só os mais diretos. Pode ser nenhum: devolva lista vazia quando nenhum candidato for base de fato.
 - Pré-requisito é dependência de aprendizagem, não apenas tema parecido ou mesma unidade.
 - "forca": "essencial" (sem ela a alvo não se desenvolve), "importante" (dificulta bastante) ou "apoio" (ajuda, mas não impede).
@@ -151,7 +180,7 @@ REGRAS OBRIGATÓRIAS:
 - Devolva um item para CADA habilidade-alvo recebida, usando o mesmo "codigo".`
 }
 
-/** Gate determinístico: só passa código da lista, força válida, justificativa útil, sem repetição. */
+/** Gate determinístico: só passa código da lista com vínculo oficial, força válida, justificativa útil, sem repetição. */
 export function sanitizePrerequisites(raw: RawPrerequisites, group: Pick<SuggestionGroup, 'targets' | 'candidates'>): { suggestions: PrerequisiteSuggestion[]; discardedCount: number } {
   const targets = new Map(group.targets.map((skill) => [skill.code, skill]))
   const candidates = new Map(group.candidates.map((skill) => [skill.code, skill]))
@@ -166,8 +195,9 @@ export function sanitizePrerequisites(raw: RawPrerequisites, group: Pick<Suggest
       const strength = entry.forca.trim().toLowerCase() as PrerequisiteStrength
       const rationale = squash(entry.justificativa)
       const duplicate = prerequisite && list.some((existing) => existing.prerequisite.code === prerequisite.code)
-      if (!prerequisite || duplicate || !STRENGTHS.includes(strength) || rationale.length < PREREQUISITE_RULES.minRationaleChars || rationale.length > PREREQUISITE_RULES.maxRationaleChars || list.length >= PREREQUISITE_RULES.maxPerSkill) { discardedCount++; continue }
-      list.push({ prerequisite, skill, strength, rationale })
+      const link = prerequisite ? structuralLink(prerequisite.code, skill.code) : null
+      if (!prerequisite || !link || link.status === 'unrelated' || duplicate || !STRENGTHS.includes(strength) || rationale.length < PREREQUISITE_RULES.minRationaleChars || rationale.length > PREREQUISITE_RULES.maxRationaleChars || list.length >= PREREQUISITE_RULES.maxPerSkill) { discardedCount++; continue }
+      list.push({ prerequisite, skill, strength, rationale, officialBasis: link.status === 'linked' ? link.reason : null })
     }
     accepted.set(skill.code, list)
   }
@@ -184,9 +214,12 @@ export async function suggestPrerequisitesForGroups(subject: string, groups: Sug
   for (const group of groups) {
     for (let start = 0; start < group.targets.length; start += PREREQUISITE_RULES.targetsPerCall) {
       const batch = group.targets.slice(start, start + PREREQUISITE_RULES.targetsPerCall)
+      // Só entram no prompt candidatos com vínculo oficial com alguma alvo do lote.
+      const candidates = group.candidates.filter((candidate) => batch.some((target) => structuralLink(candidate.code, target.code).status !== 'unrelated'))
+      if (!candidates.length) continue
       callCount++
-      const parsed = prerequisitesResultSchema.parse(await generate(buildPrerequisitePrompt(subject, batch, group.candidates)))
-      const result = sanitizePrerequisites(parsed, { targets: batch, candidates: group.candidates })
+      const parsed = prerequisitesResultSchema.parse(await generate(buildPrerequisitePrompt(subject, batch, candidates)))
+      const result = sanitizePrerequisites(parsed, { targets: batch, candidates })
       suggestions.push(...result.suggestions)
       discardedCount += result.discardedCount
     }

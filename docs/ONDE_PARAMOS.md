@@ -5,6 +5,40 @@
 > Última atualização: 13/11/2026 — negrito Markdown na Prova Adaptada; antes, produção regularizada com o main e publicada pelo script oficial. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
 > [`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md).
 
+## Pré-requisitos: ano vigente, disciplina do código e vínculo oficial BNCC — 16/11/2026
+
+Problema real em produção: em LP 5º ano a IA sugeriu pré-requisitos para
+EF15AR13 (Arte) com justificativas forçadas ("letras de música"). Causa: um
+planejamento de teste de **2027** (id 108, só códigos EF15AR*) e o catálogo
+usava "o ano letivo mais recente por série", então 2027 substituía todo o 2026.
+Os planejamentos de teste de 2027 (6, 7, 8, 108) foram apagados no banco de
+produção a pedido do usuário (backup em `/home/eduardo/backups/` no servidor).
+Regra do usuário: **o planejamento é a fonte de tudo; a planilha é só backup;
+2026 vale até encerrar 2026.**
+
+- **Ano vigente** (`pickCurrentAcademicYear`/`currentAcademicYear` em
+  `prerequisiteService.ts`): o mais antigo que ainda tem 4º bimestre aberto.
+  Encerrar o 4º bimestre é o que encerra o ano. Planejamento de ano futuro não
+  muda nada. Catálogo e opções da aba usam só o ano vigente.
+- **Disciplina do código** (`bnccStructure.ts`, dataset local `@bncc/dados`):
+  código de outra disciplina no planejamento (ex.: EF15AR13 em Português) fica
+  fora da sugestão e aparece num aviso na tela para corrigir o planejamento.
+- **Vínculo oficial BNCC:** a BNCC não publica pré-requisitos (nem a API do
+  bncc.dev; as "correlações" do BNCCverso são inferidas). Por isso a IA só pode
+  ligar habilidades que compartilham objeto de conhecimento, prática de
+  linguagem, unidade temática, eixo, competência específica ou campo de
+  atuação ("Todos os campos" não conta). O gate determinístico descarta o
+  resto; o vínculo é gravado no início da justificativa ("Base oficial BNCC:
+  …") e a tela mostra separado.
+- **Tela:** filtros separados de Segmento, Série e Disciplina; ano vigente
+  visível.
+- **Não muda:** sugestões já gravadas (as antigas continuam até a coordenação
+  rejeitar), schema (sem migration).
+- Testes: `bnccStructure.test.ts`, `currentAcademicYear.test.ts`, novos casos
+  em `prerequisiteSuggestions.test.ts` e na integração PGlite. Suíte 1101,
+  TypeScript, lint e regressão OK. **Tela não conferida no navegador e sem
+  chamada real à IA.**
+
 ## Pré-requisitos curriculares com sugestão da IA — 16/11/2026
 
 Continuação da Sinapse, mesmo PR. Nova aba **Planejamento › Pré-requisitos**:
