@@ -38,3 +38,19 @@ describe('cognitiveObjectives', () => {
     expect(cognitiveObjectives(unit([]))).toEqual(['Avaliar o uso de combustíveis.'])
   })
 })
+
+describe('pickTargetSkills com foco da recuperação', () => {
+  const unit = {
+    rowIndex: 0, tituloCapitulo: 'Cap', conteudo: '', bimestre: '1', objetivos: [], objetivosColumnMissing: false,
+    habilidades: { status: 'mapeado', skills: [{ code: 'EF07MA01', description: 'A' }, { code: 'EF07MA02', description: 'B' }, { code: 'EF07MA03', description: 'C' }] },
+  } as unknown as Parameters<typeof pickTargetSkills>[0]['unit']
+
+  it('roda só entre as habilidades fracas do capítulo', () => {
+    const picked = [0, 1, 2, 3].map((slotIndexInUnit) => pickTargetSkills({ unit, slotIndexInUnit, focusCodes: ['ef07ma03', 'EF07MA01'] })[0]!.code)
+    expect(picked).toEqual(['EF07MA01', 'EF07MA03', 'EF07MA01', 'EF07MA03'])
+  })
+
+  it('sem nenhuma fraca no capítulo, volta ao rodízio normal', () => {
+    expect(pickTargetSkills({ unit, slotIndexInUnit: 1, focusCodes: ['EF07MA99'] })[0]!.code).toBe('EF07MA02')
+  })
+})

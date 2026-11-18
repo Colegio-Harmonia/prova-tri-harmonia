@@ -66,6 +66,8 @@ export type CurricularUnit = {
 
 export type CurriculumSelection = {
   planReference?: { planId: number; versionId: number; versionNumber: number }
+  /** Presente quando a seleção junta vários planejamentos (recuperação por semestre/ano). */
+  planReferences?: Array<{ planId: number; versionId: number; versionNumber: number }>
   segment: Segment
   gradeYear: number
   subject: string

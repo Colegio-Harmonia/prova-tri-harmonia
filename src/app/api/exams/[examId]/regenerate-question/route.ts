@@ -9,7 +9,7 @@ import { db } from '@/db/client'
 import { generatedExams, generationJobs } from '@/db/schema'
 import { auth } from '@/auth/auth'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
-import { planIdFromExamPayload, planVersionIdFromExamPayload } from '@/lib/curriculum/planCurriculum'
+import { planVersionIdFromExamPayload, planScopeFromExamPayload } from '@/lib/curriculum/planCurriculum'
 import {
   type ExamGenerationResult,
   type ExamQuestion,
@@ -251,7 +251,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
       academicYear: exam.academicYear,
       subject: exam.subject,
       bimester: exam.bimester ?? undefined,
-      curriculumPlanId: planIdFromExamPayload(exam.generationPayload),
+      ...planScopeFromExamPayload(exam.generationPayload),
       curriculumPlanVersionId: planVersionIdFromExamPayload(exam.generationPayload),
     })
     const replacement: ReplacementRequest | undefined = parsed.data.replacement

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { auth } from '@/auth/auth'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { authorizeExamAccess } from '@/lib/exams/authorizeExamAccess'
-import { planIdFromExamPayload } from '@/lib/curriculum/planCurriculum'
+import { planScopeFromExamPayload } from '@/lib/curriculum/planCurriculum'
 import { getOfficialBnccSkill } from '@/lib/curriculum/officialBncc'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
 import { enqueueAdicionarQuestaoJob } from '@/lib/queue/enqueue'
@@ -34,7 +34,7 @@ async function loadContext(examId: number, email: string) {
     academicYear: exam.academicYear,
     subject: exam.subject,
     bimester: exam.bimester ?? undefined,
-    curriculumPlanId: planIdFromExamPayload(exam.generationPayload),
+    ...planScopeFromExamPayload(exam.generationPayload),
   })
   return { exam, curriculum, currentUser: access.currentUser } as const
 }

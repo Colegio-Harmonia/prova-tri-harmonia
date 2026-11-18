@@ -27,6 +27,8 @@ const openSchema = z.object({
   bimester: z.number().int().min(1).max(4).nullable(),
   semester: z.number().int().min(1).max(2).nullable().optional(),
   questionCount: z.number().int().min(RECOVERY_RULES.minQuestions).max(RECOVERY_RULES.maxQuestions).optional(),
+  questionSource: z.enum(['acervo', 'ia']).optional(),
+  objectivePercentage: z.number().int().min(0).max(100).optional(),
 })
 
 export async function POST(req: NextRequest) {

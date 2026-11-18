@@ -6,7 +6,7 @@ import { db } from '@/db/client'
 import { generatedExams, generationJobs } from '@/db/schema'
 import { auth } from '@/auth/auth'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
-import { planIdFromExamPayload, planVersionIdFromExamPayload } from '@/lib/curriculum/planCurriculum'
+import { planVersionIdFromExamPayload, planScopeFromExamPayload } from '@/lib/curriculum/planCurriculum'
 import { computeQuestionSplit } from '@/lib/gemini/promptBuilder'
 import type { ExamGenerationResult, ExamQuestion } from '@/lib/gemini/examSchema'
 import { attachImagesToExam, RequiredQuestionImageError } from '@/lib/images/questionImageService'
@@ -213,7 +213,7 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
         academicYear: exam.academicYear,
         subject: exam.subject,
         bimester: exam.bimester ?? undefined,
-        curriculumPlanId: planIdFromExamPayload(exam.generationPayload),
+        ...planScopeFromExamPayload(exam.generationPayload),
       curriculumPlanVersionId: planVersionIdFromExamPayload(exam.generationPayload),
       })
       const result = await regenerateWholeExam({
@@ -243,7 +243,7 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
         academicYear: exam.academicYear,
         subject: exam.subject,
         bimester: exam.bimester ?? undefined,
-        curriculumPlanId: planIdFromExamPayload(exam.generationPayload),
+        ...planScopeFromExamPayload(exam.generationPayload),
       curriculumPlanVersionId: planVersionIdFromExamPayload(exam.generationPayload),
       })
       curriculum = activeCurriculum
@@ -315,7 +315,7 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
         academicYear: exam.academicYear,
         subject: exam.subject,
         bimester: exam.bimester ?? undefined,
-        curriculumPlanId: planIdFromExamPayload(exam.generationPayload),
+        ...planScopeFromExamPayload(exam.generationPayload),
       curriculumPlanVersionId: planVersionIdFromExamPayload(exam.generationPayload),
       })
     }
@@ -365,7 +365,7 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
         objectiveCount: allQuestions.filter((q) => q.type === 'objetiva').length,
         discursiveCount: allQuestions.filter((q) => q.type === 'descritiva').length,
         alternativesCount,
-        ...(planIdFromExamPayload(exam.generationPayload) ? { curriculumPlanId: planIdFromExamPayload(exam.generationPayload) } : {}),
+        ...planScopeFromExamPayload(exam.generationPayload),
         ...(planVersionIdFromExamPayload(exam.generationPayload) ? { curriculumPlanVersionId: planVersionIdFromExamPayload(exam.generationPayload) } : {}),
         qualityTest: {
           version: QUALITY_REPORT_VERSION,

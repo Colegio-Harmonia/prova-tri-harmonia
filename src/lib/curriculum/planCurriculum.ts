@@ -35,6 +35,56 @@ export function planIdFromExamPayload(payload: unknown): number | undefined {
   return typeof id === 'number' && Number.isInteger(id) && id > 0 ? id : undefined
 }
 
+/** Planejamentos que uma prova multi-planejamento (recuperação por semestre/ano) usou. */
+export function planIdsFromExamPayload(payload: unknown): number[] | undefined {
+  const ids = (payload as { metadata?: { curriculumPlanIds?: unknown } } | null | undefined)?.metadata?.curriculumPlanIds
+  if (!Array.isArray(ids)) return undefined
+  const valid = ids.filter((id): id is number => typeof id === 'number' && Number.isInteger(id) && id > 0)
+  return valid.length > 1 ? valid : undefined
+}
+
+/**
+ * Parâmetros de currículo para reabrir uma prova já gerada (troca de questão,
+ * regenerar, questão adicional). Prova com vários planejamentos reabre todos.
+ */
+export function planScopeFromExamPayload(payload: unknown): { curriculumPlanId?: number; curriculumPlanIds?: number[] } {
+  const ids = planIdsFromExamPayload(payload)
+  if (ids) return { curriculumPlanIds: ids }
+  const id = planIdFromExamPayload(payload)
+  return id ? { curriculumPlanId: id } : {}
+}
+
+/** Distância entre os rowIndex de planejamentos diferentes numa seleção combinada. */
+export const MULTI_PLAN_ROW_OFFSET = 1000
+
+/**
+ * Junta os capítulos de vários planejamentos (um por bimestre) numa seleção
+ * só. O rowIndex de cada unidade ganha o deslocamento do planejamento na
+ * ordem recebida (bimestre crescente), para não colidir e continuar estável.
+ */
+export function mergeCurriculumSelections(selections: CurriculumSelection[]): CurriculumSelection {
+  if (!selections.length) throw new CurriculumPlanError('Nenhum planejamento informado.')
+  if (selections.length === 1) return selections[0]!
+  const [first] = selections
+  return {
+    ...first!,
+    bimester: undefined,
+    tabName: selections.map((selection) => selection.tabName).join(' + '),
+    planReferences: selections.flatMap((selection) => selection.planReference ? [selection.planReference] : []),
+    units: selections.flatMap((selection, index) => selection.units.map((unit) => ({ ...unit, rowIndex: index * MULTI_PLAN_ROW_OFFSET + unit.rowIndex }))),
+    unmappedWarnings: selections.flatMap((selection) => selection.unmappedWarnings),
+  }
+}
+
+export async function getCurriculumFromPlans(planIds: number[], scope: Omit<CurriculumScope, 'bimester' | 'curriculumPlanVersionId'>): Promise<CurriculumSelection> {
+  const plans = await db.select({ id: curriculumPlans.id, bimester: curriculumPlans.bimester }).from(curriculumPlans).where(inArray(curriculumPlans.id, planIds))
+  if (plans.length !== new Set(planIds).size) throw new CurriculumPlanError('Algum planejamento do período não foi encontrado.')
+  const ordered = [...plans].sort((a, b) => a.bimester - b.bimester || a.id - b.id)
+  const selections = []
+  for (const plan of ordered) selections.push(await getCurriculumFromPlan(plan.id, { ...scope, bimester: plan.bimester }))
+  return mergeCurriculumSelections(selections)
+}
+
 export function planVersionIdFromExamPayload(payload: unknown): number | undefined {
   const id = (payload as { metadata?: { curriculumPlanVersionId?: unknown } } | null)?.metadata?.curriculumPlanVersionId
   return typeof id === 'number' && Number.isInteger(id) && id > 0 ? id : undefined

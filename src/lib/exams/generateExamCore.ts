@@ -109,6 +109,9 @@ export type GenerateExamCoreParams = {
   // matriz BNCC), mas gravada com exam_kind 'recuperacao' para ficar fora das
   // listas de atividades e entrar no lote de recuperação (src/lib/recovery/).
   storedExamKind?: Extract<ExamKind, 'recuperacao'>
+  // Recuperação: as questões de cada capítulo cobram só estas habilidades
+  // (as fracas do aluno); capítulo sem nenhuma delas usa o rodízio normal.
+  focusBnccCodes?: string[]
   bnccCodes?: string[]
   bnccPlan?: ActivityBnccPlanItem[]
   classroomCourseId?: string | null
@@ -119,6 +122,8 @@ export type GenerateExamCoreParams = {
   curriculumPlanVersionId?: number
   contentPlanIncludesEnem?: boolean
   curriculumPlanId?: number
+  /** Vários planejamentos de bimestre juntos (recuperação por semestre/ano). */
+  curriculumPlanIds?: number[]
   /** Presente somente quando a geração vem da fila; habilita retomada por item. */
   generationJobId?: number
 }
@@ -127,12 +132,13 @@ export type GenerateExamCoreParams = {
 // no job). TabResolutionError e SheetNotConfiguredError propagam direto —
 // a rota já os trata por instanceof, e a mensagem deles é auto-explicativa.
 /**
- * exam_kind gravado. A prova de recuperação é gerada como atividade (mesma
- * matriz BNCC) e gravada como 'recuperacao'. Os dois inserts (motor
- * whole-exam e motor por questão) passam por aqui.
+ * exam_kind gravado. A prova de recuperação é gerada pelo fluxo da prova
+ * formal (composição + matriz por capítulo) e gravada como 'recuperacao'.
+ * Lotes antigos geravam pelo motor de atividades; os dois casos trocam o
+ * tipo. Os dois inserts (motor whole-exam e motor por questão) passam aqui.
  */
 export function persistedExamKind(examKind: Extract<ExamKind, 'prova' | 'atividade'>, storedExamKind?: Extract<ExamKind, 'recuperacao'>): ExamKind {
-  return examKind === 'atividade' && storedExamKind ? storedExamKind : examKind
+  return storedExamKind ?? examKind
 }
 
 export class ExamGenerationInputError extends Error {}
@@ -195,6 +201,7 @@ async function generateAndPersistWholeExam(params: {
       unit,
       slotIndexInUnit: offset,
       forcedCodes: activitySlot ? [activitySlot.code] : undefined,
+      focusCodes: params.input.focusBnccCodes,
     })
     const targetSkills = targets.map((skill) => {
       const official = getOfficialBnccSkill(skill.code)
@@ -317,6 +324,7 @@ async function generateAndPersistWholeExam(params: {
       discursiveCount,
       alternativesCount,
       ...(input.curriculumPlanId ? { curriculumPlanId: input.curriculumPlanId } : {}),
+      ...(input.curriculumPlanIds && input.curriculumPlanIds.length > 1 ? { curriculumPlanIds: input.curriculumPlanIds } : {}),
       ...(curriculum.planReference ? { curriculumPlanVersionId: curriculum.planReference.versionId } : {}),
       difficultyClassification: {
         version: 'jev-difficulty-v1',
@@ -438,9 +446,12 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
   if (!creator) throw new ExamGenerationInputError('Usuário solicitante não encontrado.')
   // Professor sempre recebe a própria prova. Coordenação precisa informar o
   // professor responsável antes que a geração entre no fluxo formal.
-  const formalAssigneeId = examKind === 'prova' ? (isStaffSuperuser(creator.role) ? params.assignedTo : createdBy) : undefined
+  // A prova de recuperação não entra na atribuição formal: o lote é dela e o
+  // responsável é quem gerou (a coordenação aprova o lote inteiro).
+  const isRecovery = params.storedExamKind === 'recuperacao'
+  const formalAssigneeId = examKind === 'prova' ? (isRecovery ? createdBy : isStaffSuperuser(creator.role) ? params.assignedTo : createdBy) : undefined
   if (examKind === 'prova' && !formalAssigneeId) throw new ExamGenerationInputError('Selecione o professor responsável pela prova antes de gerar.')
-  if (formalAssigneeId) {
+  if (formalAssigneeId && !isRecovery) {
     const assignee = await db.query.users.findFirst({ where: (table, { eq }) => eq(table.id, formalAssigneeId), columns: { id: true, active: true, role: true } })
     if (!assignee?.active || assignee.role !== 'professor') throw new ExamGenerationInputError('O responsável selecionado precisa ser um professor ativo.')
   }
@@ -455,7 +466,7 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
   if (params.questionCount + params.enemBankQuestionIds.length <= 0) {
     throw new ExamGenerationInputError('A prova precisa ter pelo menos uma questão gerada ou selecionada do banco ENEM.')
   }
-  if (examKind === 'prova' && params.questionCount > 0 && !params.curriculumPlanId) {
+  if (examKind === 'prova' && params.questionCount > 0 && !params.curriculumPlanId && !params.curriculumPlanIds?.length) {
     throw new ExamGenerationInputError('A geração de provas exige um planejamento aprovado da aba Planejamentos. A planilha não é usada como origem nesta etapa.')
   }
 
@@ -870,6 +881,7 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
               unit,
               slotIndexInUnit: slots.filter((other) => other.unitRowIndex === slot.unitRowIndex && other.number < slot.number).length,
               forcedCodes: activityBnccSlots[slot.number - 1] ? [activityBnccSlots[slot.number - 1]!.code] : undefined,
+              focusCodes: params.focusBnccCodes,
               descriptions: new Map(unit.habilidades.status === 'mapeado'
                 ? unit.habilidades.skills.flatMap((skill) => {
                   const official = getOfficialBnccSkill(skill.code)
@@ -1640,6 +1652,7 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
       discursiveCount: allQuestions.filter((q) => q.type === 'descritiva').length,
         alternativesCount,
         ...(params.curriculumPlanId ? { curriculumPlanId: params.curriculumPlanId } : {}),
+        ...(params.curriculumPlanIds && params.curriculumPlanIds.length > 1 ? { curriculumPlanIds: params.curriculumPlanIds } : {}),
         ...(isPartial ? { generationProgress: {
           complete: false,
           requestedQuestionCount,
