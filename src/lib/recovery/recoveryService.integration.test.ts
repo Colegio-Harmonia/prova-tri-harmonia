@@ -11,7 +11,9 @@ const generateExamDocs = vi.fn(async () => ({
 }))
 vi.mock('@/lib/docs/generateExamDocs', () => ({ generateExamDocs }))
 
-describe.skipIf(!pgliteInstalled())('prova de recuperação (Postgres real)', () => {
+// Gerar o PDF do cartão passa de 5 s no runner da CI com cobertura ligada
+// (mesma observação de sheetPdf.test.ts).
+describe.skipIf(!pgliteInstalled())('prova de recuperação (Postgres real)', { timeout: 30_000 }, () => {
   let pg: import('@electric-sql/pglite').PGlite
   let service: typeof import('./recoveryService')
   const coord = { id: 1, role: 'coordenacao' }
