@@ -14,7 +14,7 @@ import type { EquivalenceReport } from '@/lib/adaptation/equivalenceValidator'
 import type { ClaimedJob } from './claim'
 import { adicionarQuestaoJobPayloadSchema, adaptarProvaJobPayloadSchema, gerarAtividadeJobPayloadSchema, gerarImagensProvaJobPayloadSchema, gerarProvaJobPayloadSchema, gerarReforcoEnemJobPayloadSchema, pontuarProvaJobPayloadSchema, processarScanJobPayloadSchema, transcreverScanJobPayloadSchema } from './types'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
-import { planIdFromExamPayload, planVersionIdFromExamPayload } from '@/lib/curriculum/planCurriculum'
+import { planVersionIdFromExamPayload, planScopeFromExamPayload } from '@/lib/curriculum/planCurriculum'
 import { getOfficialBnccSkill } from '@/lib/curriculum/officialBncc'
 import { generateQuestionWithUnifiedFlow } from '@/lib/exams/unifiedQuestionGeneration'
 import { questionQualityFingerprint, runQuestionQualityTest } from '@/lib/exams/questionQualityTest'
@@ -122,7 +122,7 @@ async function executeAdicionarQuestao(job: ClaimedJob): Promise<JobExecutionRes
       academicYear: exam.academicYear,
       subject: exam.subject,
       bimester: exam.bimester ?? undefined,
-      curriculumPlanId: planIdFromExamPayload(exam.generationPayload),
+      ...planScopeFromExamPayload(exam.generationPayload),
       curriculumPlanVersionId: planVersionIdFromExamPayload(exam.generationPayload),
     })
     const unit = curriculum.units.find((candidate) => candidate.rowIndex === parsed.data.unitRowIndex)
@@ -493,9 +493,21 @@ async function executeGerarProva(job: ClaimedJob): Promise<JobExecutionResult> {
       curriculumPlanVersionId: payload.curriculumPlanVersionId,
       contentPlanIncludesEnem: payload.contentPlanIncludesEnem,
       generationJobId: job.id,
+      ...(payload.curriculumPlanIds ? { curriculumPlanIds: payload.curriculumPlanIds } : {}),
+      ...(payload.recoveryStudentId ? { storedExamKind: 'recuperacao' as const, focusBnccCodes: payload.focusBnccCodes } : {}),
     },
     job.requestedBy,
   )
+
+  if (payload.recoveryStudentId) {
+    await linkRecoveryExam(payload.recoveryStudentId, job.id, result.examId)
+    return {
+      resultExamId: result.examId,
+      resultRef: { warnings: result.warnings, issues: result.issues, recoveryStudentId: payload.recoveryStudentId },
+      label: `Recuperação ${payload.subject} — ${payload.gradeYear}º ano${payload.classLabel ? ` (${payload.classLabel})` : ''}`,
+      notifyRequester: false,
+    }
+  }
 
   return {
     resultExamId: result.examId,

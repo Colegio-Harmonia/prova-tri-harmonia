@@ -33,6 +33,12 @@ export const gerarProvaJobPayloadSchema = z
     curriculumPlanId: z.number().int().positive().optional(),
     curriculumPlanVersionId: z.number().int().positive().optional(),
     contentPlanIncludesEnem: z.boolean().optional(),
+    // Prova de recuperação individual (src/lib/recovery/): planejamentos do
+    // período (semestre/ano juntam vários), habilidades fracas do aluno e o
+    // vínculo com recovery_students.
+    curriculumPlanIds: z.array(z.number().int().positive()).min(1).max(8).optional(),
+    focusBnccCodes: z.array(z.string().min(3).max(40)).min(1).max(60).optional(),
+    recoveryStudentId: z.number().int().positive().optional(),
   })
   .refine((v) => v.questionCount + v.enemBankQuestionIds.length >= 10 && v.questionCount + v.enemBankQuestionIds.length <= 30, {
     message: 'O total de questões (acervo ou IA + banco ENEM) precisa ficar entre 10 e 30.',

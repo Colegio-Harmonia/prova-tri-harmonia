@@ -7,7 +7,7 @@ import { db } from '@/db/client'
 import { generatedExams } from '@/db/schema'
 import { authorizeExamAccess } from '@/lib/exams/authorizeExamAccess'
 import { getCurriculumForExam } from '@/lib/sheets/curriculumService'
-import { planIdFromExamPayload } from '@/lib/curriculum/planCurriculum'
+import { planScopeFromExamPayload } from '@/lib/curriculum/planCurriculum'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
 import { qualityApprovalBlocks } from '@/lib/exams/questionQualityTest'
 import { recomputeQualityReport, qualityReportNeedsRecompute } from '@/lib/exams/qualityReport'
@@ -41,7 +41,7 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
       academicYear: exam.academicYear,
       subject: exam.subject,
       bimester: exam.bimester ?? undefined,
-      curriculumPlanId: planIdFromExamPayload(exam.generationPayload),
+      ...planScopeFromExamPayload(exam.generationPayload),
     })
     const payload = { ...previous, questions: await classifyMissingQuestionBncc(await classifyImportedQuestionBloom(previous.questions, exam), exam) }
     if (payload.metadata.generationEngine === 'whole-exam-v1') {

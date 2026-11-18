@@ -15,16 +15,21 @@ export function pickTargetSkills(params: {
   unit: CurricularUnit
   slotIndexInUnit: number
   forcedCodes?: string[]
+  /** Recuperação: restringe o rodízio a estes códigos quando o capítulo tem algum deles. */
+  focusCodes?: string[]
   descriptions?: ReadonlyMap<string, string>
 }): TargetSkill[] {
-  const mapped = params.unit.habilidades.status === 'mapeado' ? params.unit.habilidades.skills : []
+  const allMapped = params.unit.habilidades.status === 'mapeado' ? params.unit.habilidades.skills : []
+  const focus = new Set((params.focusCodes ?? []).map((code) => code.trim().toUpperCase()))
+  const focused = focus.size ? allMapped.filter((skill) => focus.has(skill.code.toUpperCase())) : []
+  const mapped = focused.length ? focused : allMapped
   const describe = (skill: { code: string; description: string | null }): TargetSkill => ({
     code: skill.code.toUpperCase(),
     description: skill.description?.trim() || params.descriptions?.get(skill.code.toUpperCase()) || null,
   })
   const forced = (params.forcedCodes ?? []).map((code) => code.trim().toUpperCase()).filter(Boolean)
   if (forced.length) {
-    return forced.map((code) => describe(mapped.find((skill) => skill.code.toUpperCase() === code) ?? { code, description: null }))
+    return forced.map((code) => describe(allMapped.find((skill) => skill.code.toUpperCase() === code) ?? { code, description: null }))
   }
   if (!mapped.length) return []
   return [describe(mapped[Math.max(0, params.slotIndexInUnit) % mapped.length]!)]

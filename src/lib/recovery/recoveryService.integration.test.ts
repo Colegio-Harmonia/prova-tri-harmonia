@@ -10,6 +10,7 @@ const generateExamDocs = vi.fn(async () => ({
   driveFolderId: 'folder', prova: { docId: 'prova-doc', url: 'https://docs/prova' }, gabarito: { docId: 'gab-doc', url: 'https://docs/gab' }, mapa: { docId: 'mapa-doc', url: 'https://docs/mapa' },
 }))
 vi.mock('@/lib/docs/generateExamDocs', () => ({ generateExamDocs }))
+vi.mock('@/lib/curriculum/bnccDescriptions', () => ({ enrichBnccDescriptions: async <T,>(skills: T[]) => skills }))
 
 // Gerar o PDF do cartão passa de 5 s no runner da CI com cobertura ligada
 // (mesma observação de sheetPdf.test.ts).
@@ -38,6 +39,16 @@ describe.skipIf(!pgliteInstalled())('prova de recuperação (Postgres real)', { 
       JSON.stringify([answer(1, true), answer(2, false), answer(3, false), answer(4, false), answer(5, false)]),
       JSON.stringify([1, 2, 3, 4, 5].map((n) => answer(n, true))),
     ])
+    // Planejamento aprovado: 1º bim. com dois capítulos, 2º bim. retomando EF07MA01.
+    const planning = await import('@/lib/curriculum/planningService')
+    const approvedPlan = async (bimester: number, units: Array<{ title: string; skills: Array<{ code: string }> }>) => {
+      const { versionId } = await planning.createPlan(coord as never, { academicYear: 2026, segment: 'anos-finais', gradeYear: 7, subject: 'Matemática', bimester })
+      await planning.saveDraft(coord as never, versionId, units)
+      await planning.transitionVersion(coord as never, versionId, 'em_revisao')
+      await planning.transitionVersion(coord as never, versionId, 'aprovado', 'OK')
+    }
+    await approvedPlan(1, [{ title: 'Números', skills: [{ code: 'EF07MA01' }, { code: 'EF07MA05' }] }, { title: 'Frações', skills: [{ code: 'EF07MA02' }] }])
+    await approvedPlan(2, [{ title: 'Retomada', skills: [{ code: 'EF07MA01' }] }])
     service = await import('./recoveryService')
   }, 60_000)
 
@@ -49,7 +60,7 @@ describe.skipIf(!pgliteInstalled())('prova de recuperação (Postgres real)', { 
 
   it('abre um lote por turma/disciplina/período e só para quem tem prova da disciplina na turma', async () => {
     const round = await service.openRound({ classroomCourseId: 'C1', classLabel: '7º A', subject: 'Matemática', bimester: 1 }, teacher)
-    expect(round).toMatchObject({ segment: 'anos-finais', gradeYear: 7, academicYear: 2026, questionCount: 10, status: 'aberto' })
+    expect(round).toMatchObject({ segment: 'anos-finais', gradeYear: 7, academicYear: 2026, questionCount: 12, questionSource: 'acervo', objectivePercentage: 70, status: 'aberto' })
     roundId = round.id
     expect((await service.openRound({ classroomCourseId: 'C1', classLabel: '7º A', subject: 'Matemática', bimester: 1 }, teacher)).id).toBe(roundId)
     expect((await service.openRound({ classroomCourseId: 'C1', classLabel: '7º A', subject: 'Matemática', bimester: null }, teacher)).id).not.toBe(roundId)
@@ -58,24 +69,51 @@ describe.skipIf(!pgliteInstalled())('prova de recuperação (Postgres real)', { 
     expect(semester).toMatchObject({ bimester: null, semester: 1 })
     expect((await service.openRound({ classroomCourseId: 'C1', classLabel: '7º A', subject: 'Matemática', bimester: null, semester: 1 }, teacher)).id).toBe(semester.id)
     expect((await service.diagnoseStudents(semester, teacher)).get('S1')?.weak.map((skill) => skill.code)).toEqual(['EF07MA01'])
+    // Semestre junta os planejamentos do 1º e do 2º bimestre (rowIndex deslocado).
+    const semesterCurriculum = await service.roundCurriculum(semester)
+    expect(semesterCurriculum.planIds).toHaveLength(2)
+    expect(semesterCurriculum.chapters.map((chapter) => [chapter.rowIndex, chapter.title])).toEqual([[0, 'Números'], [1, 'Frações'], [1000, 'Retomada']])
     await expect(pg.query(`insert into recovery_rounds (classroom_course_id, class_label, academic_year, segment, grade_year, subject, bimester, semester, created_by) values ('X', 'X', 2026, 'anos-finais', 7, 'Matemática', 1, 1, 1)`)).rejects.toThrow()
     await expect(service.openRound({ classroomCourseId: 'C1', classLabel: '7º A', subject: 'Matemática', bimester: 1 }, otherTeacher)).rejects.toMatchObject({ status: 422 })
     await expect(service.getRound(roundId, otherTeacher)).rejects.toMatchObject({ status: 403 })
   })
 
-  it('marca alunos: quem tem habilidade abaixo de 60% vai para a fila com a matriz BNCC', async () => {
+  it('marca alunos: monta a matriz por capítulo; a geração só começa na conferência', async () => {
     const round = await service.getRound(roundId, teacher)
     const outcome = await service.flagStudents(round, [{ classroomStudentId: 'S1', name: 'Ana', email: null }, { classroomStudentId: 'S2', name: 'Bruno', email: null }], teacher)
-    expect(outcome).toEqual({ queued: 1, withoutSkills: 1, alreadyFlagged: 0 })
-    const detail = await service.roundDetail(round)
-    const ana = detail.students.find((student) => student.classroomStudentId === 'S1')!
-    expect(ana).toMatchObject({ status: 'gerando', generation: 'na_fila', bnccPlan: [{ code: 'EF07MA01', questionCount: 10 }] })
+    expect(outcome).toEqual({ planned: 1, withoutSkills: 1, alreadyFlagged: 0 })
+    let detail = await service.roundDetail(round)
+    let ana = detail.students.find((student) => student.classroomStudentId === 'S1')!
+    // EF07MA01 só está no capítulo "Números" (rowIndex 0) do 1º bimestre.
+    expect(ana).toMatchObject({ status: 'planejado', generation: null, jobId: null, contentPlan: [{ unitRowIndex: 0, questionCount: 12 }] })
     expect(ana.weakSkills).toEqual([expect.objectContaining({ code: 'EF07MA01', masteryPercent: 25, itemCount: 4 })])
     expect(ana.insufficientSkills.map((skill) => skill.code)).toEqual(['EF07MA02'])
-    expect(detail.students.find((student) => student.classroomStudentId === 'S2')).toMatchObject({ status: 'sem_habilidades', bnccPlan: [] })
-    const job = await pg.query<{ job_type: string; payload: { recoveryStudentId: number; pedagogicalIntent: string; bnccPlan: unknown } }>(`select job_type, payload from generation_jobs where id = $1`, [ana.jobId])
-    expect(job.rows[0]).toMatchObject({ job_type: 'gerar_atividade', payload: { recoveryStudentId: ana.id, pedagogicalIntent: 'recuperacao', bnccPlan: [{ code: 'EF07MA01', questionCount: 10 }] } })
+    expect(detail.students.find((student) => student.classroomStudentId === 'S2')).toMatchObject({ status: 'sem_habilidades', contentPlan: [] })
     expect((await service.flagStudents(round, [{ classroomStudentId: 'S1', name: 'Ana', email: null }], teacher)).alreadyFlagged).toBe(1)
+
+    // Conferência: a matriz precisa somar o total do lote e usar capítulos do período.
+    await expect(service.updateStudentPlan(round, ana.id, [{ unitRowIndex: 0, questionCount: 5, priority: 'alta', visualAid: 'auto' }])).rejects.toMatchObject({ status: 422 })
+    await expect(service.updateStudentPlan(round, ana.id, [{ unitRowIndex: 7, questionCount: 12, priority: 'alta', visualAid: 'auto' }])).rejects.toMatchObject({ status: 422 })
+    await service.updateStudentPlan(round, ana.id, [{ unitRowIndex: 0, questionCount: 9, priority: 'alta', visualAid: 'auto' }, { unitRowIndex: 1, questionCount: 3, priority: 'alta', visualAid: 'auto' }])
+
+    // Composição: mudar o total refaz a matriz sugerida de quem está na conferência.
+    expect(await service.updateComposition(round, { questionSource: 'ia', objectivePercentage: 50, questionCount: 15 })).toEqual({ replanned: 1 })
+    const updated = await service.getRound(roundId, teacher)
+    expect(updated).toMatchObject({ questionSource: 'ia', objectivePercentage: 50, questionCount: 15 })
+    detail = await service.roundDetail(updated)
+    ana = detail.students.find((student) => student.classroomStudentId === 'S1')!
+    expect(ana.contentPlan).toEqual([expect.objectContaining({ unitRowIndex: 0, questionCount: 15 })])
+
+    // Gerar: um job da prova formal por aluno, pelo Planejamento, com foco nas fracas.
+    expect(await service.generatePlanned(updated, teacher)).toEqual({ queued: 1 })
+    ana = (await service.roundDetail(updated)).students.find((student) => student.classroomStudentId === 'S1')!
+    expect(ana).toMatchObject({ status: 'gerando', generation: 'na_fila' })
+    const job = await pg.query<{ job_type: string; payload: Record<string, unknown> }>(`select job_type, payload from generation_jobs where id = $1`, [ana.jobId])
+    expect(job.rows[0]).toMatchObject({ job_type: 'gerar_prova', payload: {
+      recoveryStudentId: ana.id, focusBnccCodes: ['EF07MA01'], questionSource: 'ia', objectivePercentage: 50, questionCount: 15, bimester: 1,
+      curriculumPlanId: expect.any(Number), contentPlan: [expect.objectContaining({ unitRowIndex: 0, questionCount: 15 })],
+    } })
+    await expect(service.generatePlanned(updated, teacher)).rejects.toMatchObject({ status: 409 })
   })
 
   it('só liga a prova do job vigente; job antigo arquiva a própria prova', async () => {

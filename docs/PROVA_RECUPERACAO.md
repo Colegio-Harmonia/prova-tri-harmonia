@@ -15,22 +15,35 @@ proficiência, e as provas saem numa fila de impressão por sala.
 
 ## Fluxo
 
-1. **Turmas › [turma] › Prova de recuperação**: escolher disciplina, período e
-   questões por aluno (3 a 20, padrão 10) e abrir o lote. Há um lote por
-   turma + disciplina + período; abrir de novo retoma o mesmo.
-2. **Marcar alunos** (`/recuperacao/[id]`): a tela lista o roster do Classroom
-   com as habilidades abaixo de 60% de cada aluno. Ao marcar, cada aluno com
-   habilidade fraca vai para a fila de geração; quem não tem fica como "sem
-   habilidade abaixo de 60%" e não ganha prova.
-3. **Revisar**: cada prova abre na tela de revisão de sempre, onde dá para
-   trocar questão por questão. "Gerar de novo" refaz a prova do aluno com a
-   mesma matriz e arquiva a anterior; "Remover" tira o aluno do lote.
-4. **Enviar para a coordenação**: só com todas as provas prontas (nenhuma na
-   fila ou com erro).
-5. **Aprovar lote** (coordenação/direção): gera prova, gabarito e mapa de cada
-   aluno no Google Docs. A aprovação é idempotente: se o Google falhar no meio,
-   aprovar de novo gera só o que faltou. "Devolver ao professor" reabre.
-6. **Fila de impressão** (`/recuperacao`, aba Fila): lotes aprovados agrupados
+Desde 18/11/2026 (pedido do usuário: "a tela de Composição da prova, Matriz da
+avaliação, é muito importante") a recuperação segue o fluxo validado da tela
+**Gerar prova**: Composição → Matriz por capítulo → Conferência, gerando pelo
+**Planejamento aprovado** (nunca pela planilha). Decisões: uma composição por
+lote e uma matriz por aluno; dentro de cada capítulo, as questões cobram **só**
+as habilidades fracas do aluno.
+
+1. **Turmas › [turma] › Prova de recuperação**: disciplina e período. Há um
+   lote por turma + disciplina + período; abrir de novo retoma o mesmo.
+2. **Composição** (`/recuperacao/[id]`), igual à da Gerar prova: origem
+   (Importar do acervo ou Gerar com IA), total de questões por aluno (10 a 30)
+   e Formato das questões (barra alternativas × dissertativas). Vale para o
+   lote inteiro; mudar o total refaz a matriz sugerida de quem ainda está na
+   conferência.
+3. **Marcar alunos**: o roster do Classroom com as habilidades abaixo de 60% de
+   cada aluno. Marcar monta a **matriz por capítulo** do aluno (status
+   `planejado`); nada vai para a fila ainda. Quem não tem habilidade fraca em
+   nenhum capítulo do período fica "sem habilidades".
+4. **Conferência**: a "Distribuição planejada por capítulo" de cada aluno, com
+   a mesma barra arrastável, mostrando as habilidades fracas que cada capítulo
+   trabalha. A soma precisa dar o total do lote. "Restaurar sugestão" volta à
+   matriz automática. **Gerar provas** enfileira um job `gerar_prova` por aluno.
+5. **Revisar**: cada prova abre na tela de revisão de sempre (troca de questão
+   por questão). "Gerar de novo" arquiva a prova e devolve o aluno à
+   conferência; "Remover" tira o aluno do lote.
+6. **Enviar para a coordenação**: só com todas as provas prontas.
+7. **Aprovar lote** (coordenação/direção): gera prova, gabarito e mapa de cada
+   aluno no Google Docs. Idempotente: aprovar de novo gera só o que faltou.
+8. **Fila de impressão** (`/recuperacao`, aba Fila): lotes aprovados agrupados
    por sala. "Baixar provas" monta o PDF único e marca o lote (e as provas)
    como impresso. Cada prova vem seguida do **cartão-resposta com QR** do
    aluno (pedido no teste de 18/11/2026), sem carimbo por cima, em folha nova.
@@ -50,15 +63,25 @@ proficiência, e as provas saem numa fila de impressão por sala.
   leitura só por habilidade (`evidenceForPeriod`, `periodBimesters`). Na
   geração, o semestre usa o planejamento de todos os bimestres, restrito às
   habilidades fracas do aluno.
-- Distribuição das questões (`distributeRecoveryQuestions`): no mínimo uma por
-  habilidade; o restante proporcional à distância até 60% (maior resto). Com
-  mais habilidades que questões, ficam as de menor aproveitamento. A soma é
-  sempre a quantidade do lote.
-- A prova é gerada pelo motor de **atividades** (job `gerar_atividade`, matriz
-  `bnccPlan`, intenção `recuperacao`) e gravada como
-  `generated_exams.exam_kind = 'recuperacao'`. Por isso não segue a regra
-  12–15 / 60-40 das provas formais. O vínculo é `recoveryStudentId` no payload
-  do job; o worker só liga a prova se o job ainda for o vigente do aluno.
+- Matriz sugerida (`buildRecoveryContentPlan`): entram os capítulos do
+  período que trabalham alguma habilidade fraca; o peso do capítulo é a soma
+  dos déficits (distância até 60%) das fracas que ele tem, e uma habilidade
+  presente em dois capítulos divide o peso. No mínimo uma questão por
+  capítulo, o resto proporcional (maior resto). Fracas que nenhum capítulo do
+  período planeja não entram.
+- Planejamento do período (`roundCurriculum`): os planejamentos aprovados dos
+  bimestres do período. Semestre e ano juntam vários
+  (`getCurriculumFromPlans`, rowIndex deslocado em 1000 por planejamento) e a
+  prova grava `metadata.curriculumPlanIds`; troca de questão, regenerar,
+  questão adicional e reteste reabrem todos (`planScopeFromExamPayload`).
+- Geração: job `gerar_prova` (motor whole-exam da prova formal) com
+  `contentPlan`, `questionSource`, `objectivePercentage`, `focusBnccCodes`
+  (as fracas: `pickTargetSkills` restringe o rodízio do capítulo a elas) e
+  `recoveryStudentId`. Gravada como `exam_kind = 'recuperacao'`, sem
+  atribuição formal (responsável = quem gerou). O worker só liga a prova se o
+  job ainda for o vigente do aluno.
+- Lotes gerados antes de 18/11 (motor de atividades, `bncc_plan`) continuam
+  sendo ligados pelo worker; "Gerar de novo" os traz para o fluxo novo.
 
 ## LGPD
 
@@ -70,8 +93,10 @@ número ímpar de páginas), para impressão frente e verso.
 
 ## Arquivos
 
-- Migration `drizzle/0057_recovery_exams.sql` (aditiva: `recovery_rounds`,
-  `recovery_students`). **Não aplicada em nenhum banco.**
+- Migrations (aditivas, aplicar em ordem): `0057_recovery_exams.sql`
+  (tabelas), `0058_recovery_semester.sql` (semestre), `0059_recovery_composition.sql`
+  (composição do lote, matriz por aluno, status `planejado`). Reversão no
+  cabeçalho de cada arquivo.
 - Regras puras: `src/lib/recovery/recoveryPlan.ts`; serviço:
   `recoveryService.ts`; PDF da sala: `roomPdf.ts`.
 - API: `/api/recovery` (+ `/[roundId]`, `/students`, `/students/[studentId]`,
@@ -97,9 +122,8 @@ número ímpar de páginas), para impressão frente e verso.
   só um gravava `recuperacao`. Os dois agora passam por `persistedExamKind`,
   com teste que falha se surgir um terceiro insert sem a regra.
 - A fila mostra "Recuperação · <disciplina>" para esses jobs.
-- O lote ainda não deixa escolher objetivas × descritivas: a proporção sai do
-  motor de atividades (a prova de teste teve 6 objetivas e 9 descritivas).
-  O motor já aceita `objectivePercentage`; falta o campo no lote.
+- (Resolvido no mesmo dia) objetivas × descritivas: o lote ganhou a
+  Composição da Gerar prova (0059).
 
 ## Publicação e rollback
 

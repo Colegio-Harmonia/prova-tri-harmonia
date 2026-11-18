@@ -15,10 +15,11 @@ describe('exam_kind gravado pela geração', () => {
     expect(uses.length).toBe(inserts.length)
   })
 
-  it('recuperação só troca o tipo quando a geração é de atividade', async () => {
+  it('a recuperação troca o tipo pelo fluxo formal e pelo de atividades (lotes antigos)', async () => {
     const { persistedExamKind } = await import('./generateExamCore')
+    expect(persistedExamKind('prova', 'recuperacao')).toBe('recuperacao')
     expect(persistedExamKind('atividade', 'recuperacao')).toBe('recuperacao')
     expect(persistedExamKind('atividade')).toBe('atividade')
-    expect(persistedExamKind('prova', 'recuperacao')).toBe('prova')
+    expect(persistedExamKind('prova')).toBe('prova')
   })
 })

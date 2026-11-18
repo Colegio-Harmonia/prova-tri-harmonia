@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { calculateStudentMastery, type MasteryEvidenceItem, type PlannedMasterySkill } from '@/lib/curriculum/studentMastery'
-import { distributeRecoveryQuestions, evidenceForPeriod, periodBimesters, periodLabel, plannedForPeriod, selectRecoverySkills } from './recoveryPlan'
+import { buildRecoveryContentPlan, distributeRecoveryQuestions, evidenceForPeriod, periodBimesters, periodLabel, plannedForPeriod, selectRecoverySkills, validateRecoveryContentPlan } from './recoveryPlan'
 
 const scope = { academicYear: 2026, segment: 'anos-finais', gradeYear: 7, subject: 'Matemática' }
 
@@ -75,5 +75,37 @@ describe('distributeRecoveryQuestions', () => {
 
   it('sem habilidade fraca não planeja nada', () => {
     expect(distributeRecoveryQuestions([], 10)).toEqual([])
+  })
+})
+
+describe('buildRecoveryContentPlan', () => {
+  const weak = [
+    { code: 'EF07MA01', description: null, masteryPercent: 10, itemCount: 4 },
+    { code: 'EF07MA02', description: null, masteryPercent: 50, itemCount: 4 },
+    { code: 'EF07MA09', description: null, masteryPercent: 30, itemCount: 4 },
+  ]
+  const units = [
+    { rowIndex: 0, codes: ['EF07MA01', 'EF07MA05'] },
+    { rowIndex: 1, codes: ['EF07MA02'] },
+    { rowIndex: 2, codes: ['EF07MA05'] },
+    { rowIndex: 1000, codes: ['ef07ma01'] },
+  ]
+
+  it('distribui o total pelos capítulos com habilidade fraca, mais para os mais fracos', () => {
+    const { contentPlan, unplannedCodes } = buildRecoveryContentPlan(units, weak, 12)
+    expect(contentPlan.map((item) => item.unitRowIndex)).toEqual([0, 1, 1000])
+    expect(contentPlan.reduce((sum, item) => sum + item.questionCount, 0)).toBe(12)
+    // EF07MA01 (déficit 50) divide entre os capítulos 0 e 1000; EF07MA02 (déficit 10) fica no 1.
+    const byRow = Object.fromEntries(contentPlan.map((item) => [item.unitRowIndex, item.questionCount]))
+    expect(byRow[0]).toBeGreaterThan(byRow[1]!)
+    expect(unplannedCodes).toEqual(['EF07MA09'])
+    expect(validateRecoveryContentPlan(contentPlan, units.map((unit) => unit.rowIndex), 12)).toBeNull()
+  })
+
+  it('valida soma, capítulo desconhecido e repetição', () => {
+    const plan = [{ unitRowIndex: 0, questionCount: 5, priority: 'alta' as const, visualAid: 'auto' as const }]
+    expect(validateRecoveryContentPlan(plan, [0], 12)).toMatch(/soma 5/)
+    expect(validateRecoveryContentPlan([{ ...plan[0]!, unitRowIndex: 9, questionCount: 12 }], [0], 12)).toMatch(/não pertence/)
+    expect(validateRecoveryContentPlan([{ ...plan[0]!, questionCount: 6 }, { ...plan[0]!, questionCount: 6 }], [0], 12)).toMatch(/uma vez/)
   })
 })

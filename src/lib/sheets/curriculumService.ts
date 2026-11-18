@@ -7,7 +7,7 @@ import { db } from '@/db/client'
 import { curriculumEnrichment } from '@/db/schema'
 import { and, eq, or, sql } from 'drizzle-orm'
 import type { CurriculumSelection, Segment } from '@/types/exam'
-import { getCurriculumFromPlan } from '@/lib/curriculum/planCurriculum'
+import { getCurriculumFromPlan, getCurriculumFromPlans } from '@/lib/curriculum/planCurriculum'
 
 export type GetCurriculumParams = {
   segment: Segment
@@ -17,6 +17,8 @@ export type GetCurriculumParams = {
   /** Usa o planejamento interno aprovado em vez da planilha. */
   curriculumPlanVersionId?: number
   curriculumPlanId?: number
+  /** Vários planejamentos de bimestre juntos (recuperação por semestre/ano). */
+  curriculumPlanIds?: number[]
   academicYear?: number
 }
 
@@ -93,6 +95,10 @@ async function attachEnrichment(
  */
 export async function getCurriculumForExam(params: GetCurriculumParams): Promise<CurriculumSelection> {
   const { segment, gradeYear, subject, bimester } = params
+  if (params.curriculumPlanIds && params.curriculumPlanIds.length > 1) {
+    return getCurriculumFromPlans(params.curriculumPlanIds, { segment, gradeYear, subject, academicYear: params.academicYear })
+  }
+  if (params.curriculumPlanIds?.length === 1 && params.curriculumPlanId === undefined) params = { ...params, curriculumPlanId: params.curriculumPlanIds[0] }
   if (params.curriculumPlanId !== undefined) {
     return getCurriculumFromPlan(params.curriculumPlanId, { segment, gradeYear, subject, bimester, academicYear: params.academicYear, curriculumPlanVersionId: params.curriculumPlanVersionId })
   }

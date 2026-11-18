@@ -1048,7 +1048,8 @@ export const generationJobItems = pgTable('generation_job_items', {
 export const RECOVERY_ROUND_STATUSES = ['aberto', 'em_aprovacao', 'aprovado', 'impresso'] as const
 export type RecoveryRoundStatus = (typeof RECOVERY_ROUND_STATUSES)[number]
 // O estado da geração (fila/erro) é lido de generation_jobs, não duplicado aqui.
-export const RECOVERY_STUDENT_STATUSES = ['gerando', 'gerada', 'sem_habilidades', 'removido'] as const
+// planejado: matriz por capítulo pronta, aguardando a Conferência (0059).
+export const RECOVERY_STUDENT_STATUSES = ['planejado', 'gerando', 'gerada', 'sem_habilidades', 'removido'] as const
 export type RecoveryStudentStatus = (typeof RECOVERY_STUDENT_STATUSES)[number]
 
 export const recoveryRounds = pgTable('recovery_rounds', {
@@ -1064,6 +1065,9 @@ export const recoveryRounds = pgTable('recovery_rounds', {
   // bimester; os dois nulos = ano todo.
   semester: integer('semester'),
   questionCount: integer('question_count').notNull().default(10),
+  // Composição do lote, como na tela Gerar prova (0059).
+  questionSource: text('question_source', { enum: ['acervo', 'ia'] }).notNull().default('acervo'),
+  objectivePercentage: integer('objective_percentage').notNull().default(70),
   status: text('status', { enum: RECOVERY_ROUND_STATUSES }).notNull().default('aberto'),
   createdBy: integer('created_by').references(() => users.id).notNull(),
   submittedBy: integer('submitted_by').references(() => users.id),
@@ -1081,6 +1085,7 @@ export const recoveryRounds = pgTable('recovery_rounds', {
 }))
 
 export type RecoverySkill = { code: string; description: string | null; masteryPercent: number | null; itemCount: number }
+export type RecoveryContentPlanItem = { unitRowIndex: number; questionCount: number; priority: 'alta' | 'media' | 'baixa'; visualAid: 'auto' | 'obrigatorio' | 'sem_imagem' }
 
 export const recoveryStudents = pgTable('recovery_students', {
   id: serial('id').primaryKey(),
@@ -1092,6 +1097,8 @@ export const recoveryStudents = pgTable('recovery_students', {
   weakSkills: jsonb('weak_skills').$type<RecoverySkill[]>().notNull().default(sql`'[]'::jsonb`),
   insufficientSkills: jsonb('insufficient_skills').$type<RecoverySkill[]>().notNull().default(sql`'[]'::jsonb`),
   bnccPlan: jsonb('bncc_plan').$type<Array<{ code: string; questionCount: number }>>().notNull().default(sql`'[]'::jsonb`),
+  // Matriz por capítulo do aluno (mesmo formato do contentPlan da Gerar prova).
+  contentPlan: jsonb('content_plan').$type<RecoveryContentPlanItem[]>().notNull().default(sql`'[]'::jsonb`),
   examId: integer('exam_id').references(() => generatedExams.id),
   jobId: integer('job_id').references(() => generationJobs.id),
   flaggedBy: integer('flagged_by').references(() => users.id).notNull(),
