@@ -99,7 +99,25 @@ describe.skipIf(!pgliteInstalled())('prova de recuperação (Postgres real)', ()
     expect(generateExamDocs).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ examKind: 'recuperacao', nameSuffix: 'nº 21' }))
     round = await service.getRound(roundId, coord)
     expect(round.status).toBe('aprovado')
-    expect(await service.printableExams(round)).toEqual([{ studentName: 'Ana', examId: 21, provaDocId: 'prova-doc', gabaritoDocId: 'gab-doc' }])
+    expect(await service.printableExams(round)).toEqual([{ studentName: 'Ana', classroomStudentId: 'S1', studentEmail: null, examId: 21, provaDocId: 'prova-doc', gabaritoDocId: 'gab-doc' }])
+
+    // Cartão-resposta com QR: uma correção e uma ficha só para o aluno da prova,
+    // emitida no primeiro download e reaproveitada (mesmo QR) nos seguintes.
+    await pg.query(`update generated_exams set generation_payload = $1 where id = 21`, [JSON.stringify({ questions: [
+      { number: 1, type: 'objetiva', alternatives: [{ letter: 'A' }, { letter: 'B' }, { letter: 'C' }, { letter: 'D' }], correctLetter: 'B' },
+      { number: 2, type: 'descritiva' },
+    ] })])
+    process.env.SHEET_QR_SIGNING_KEYS = `t1=${Buffer.alloc(32, 7).toString('base64url')}`
+    const sheets = await import('./recoverySheets')
+    const student = { examId: 21, classroomStudentId: 'S1', studentName: 'Ana', studentEmail: null }
+    const first = await sheets.recoverySheetPdf(student, coord.id)
+    expect(first.byteLength).toBeGreaterThan(1000)
+    const afterFirst = await pg.query<{ status: string; public_id: string; page_count: number }>(`select status, public_id, page_count from exam_sheet_assignments where exam_id = 21`)
+    expect(afterFirst.rows).toEqual([expect.objectContaining({ status: 'emitida', page_count: 2 })])
+    await sheets.recoverySheetPdf(student, coord.id)
+    const afterSecond = await pg.query<{ public_id: string }>(`select public_id from exam_sheet_assignments where exam_id = 21`)
+    expect(afterSecond.rows).toEqual([{ public_id: afterFirst.rows[0]!.public_id }])
+    expect((await pg.query(`select count(*)::int as n, min(status) as status from exam_corrections where exam_id = 21`)).rows[0]).toEqual({ n: 1, status: 'pendente' })
 
     const queue = await service.listRounds(coord, { statuses: ['aprovado', 'impresso'] })
     expect(queue.map((item) => item.id)).toEqual([roundId])

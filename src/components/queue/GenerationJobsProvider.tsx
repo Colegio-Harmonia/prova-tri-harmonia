@@ -14,6 +14,7 @@ type JobSnapshot = {
   jobType: string
   status: string
   subject: string | null
+  isRecovery?: boolean
   gradeYear: number | null
   classLabel: string | null
   resultExamId: number | null
@@ -39,7 +40,7 @@ export function useGenerationJobs() {
 
 function jobLabel(job: JobSnapshot): string {
   const fallback = job.jobType === 'gerar_reforco_enem' ? 'Reforço ENEM' : job.jobType === 'gerar_atividade' ? 'Atividade' : 'Prova'
-  const base = `${job.subject ?? fallback}${job.gradeYear ? ` — ${job.gradeYear}º ano` : ''}`
+  const base = `${job.isRecovery ? 'Recuperação · ' : ''}${job.subject ?? fallback}${job.gradeYear ? ` — ${job.gradeYear}º ano` : ''}`
   return job.classLabel ? `${base} (${job.classLabel})` : base
 }
 

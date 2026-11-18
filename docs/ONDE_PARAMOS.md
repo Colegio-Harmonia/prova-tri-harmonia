@@ -20,8 +20,14 @@ ano todo). Detalhes em [`PROVA_RECUPERACAO.md`](PROVA_RECUPERACAO.md).
   `recoveryStudentId`; a prova é gravada com `exam_kind = 'recuperacao'`.
 - Testes: 5 da regra pura, 2 do PDF da sala, 5 de integração com Postgres real
   (PGlite). Suíte 1094, TypeScript, lint, regressão, build e orçamento OK.
-- **Não conferido no navegador, sem chamada real à IA nem ao Google Docs/
-  Classroom, e não publicado** (congelamento de provas até ~28/11).
+- Testado em 18/11 num ambiente separado com cópia da produção (:3012): lote,
+  geração real, aprovação e PDF. O teste achou e corrigiu o `exam_kind`
+  gravado como `atividade` e trouxe o pedido do **cartão-resposta com QR**
+  intercalado no PDF da sala (feito).
+- **Publicado em produção em 18/11/2026 a pedido do usuário**, apesar do
+  congelamento. Rollback (imagem anterior preservada, backup do banco, SQL da
+  0057) em [`PROVA_RECUPERACAO.md`](PROVA_RECUPERACAO.md#publicação-e-rollback).
+- Pendente: escolher objetivas × descritivas no lote.
 
 ## Pré-requisitos curriculares com sugestão da IA — 16/11/2026
 

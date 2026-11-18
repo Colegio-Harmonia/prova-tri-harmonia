@@ -6,8 +6,11 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont } from 'pdf-lib'
 // prova não guardam dado do aluno (mesma regra da prova adaptada, LGPD).
 // Em frente e verso, cada aluno começa numa folha nova (página em branco
 // quando a prova tem número ímpar de páginas), para grampear sem misturar.
+// O cartão-resposta (appendix) vem logo depois da prova, também em folha
+// nova, e NÃO recebe carimbo: ele já traz o nome e qualquer marca por cima
+// atrapalharia a leitura do QR e das bolhas pelo scanner.
 
-export type RoomPdfEntry = { studentName: string; pdf: Uint8Array }
+export type RoomPdfEntry = { studentName: string; pdf: Uint8Array; appendix?: Uint8Array }
 
 function encodable(font: PDFFont, text: string) {
   try {
@@ -37,9 +40,16 @@ export async function buildRoomPdf(entries: RoomPdfEntry[], options: { header: s
       page.drawRectangle({ x: width - textWidth - 30, y: height - 22, width: textWidth + 12, height: 14, color: rgb(1, 1, 1) })
       page.drawText(text, { x: width - textWidth - 24, y: height - 18, size, font, color: rgb(0.15, 0.15, 0.15) })
     })
-    if (duplex && pages.length % 2 === 1) {
-      const last = pages[pages.length - 1]!.getSize()
+    const padToNewSheet = () => {
+      if (!duplex || output.getPageCount() % 2 === 0) return
+      const last = output.getPage(output.getPageCount() - 1).getSize()
       output.addPage([last.width, last.height])
+    }
+    padToNewSheet()
+    if (entry.appendix) {
+      const appendix = await PDFDocument.load(entry.appendix)
+      for (const page of await output.copyPages(appendix, appendix.getPageIndices())) output.addPage(page)
+      padToNewSheet()
     }
   }
   return output.save()

@@ -168,7 +168,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     serverTime: new Date().toISOString(),
     jobs: rows.map((row) => {
-      const payload = row.payload as Partial<GerarProvaJobPayload> & { examId?: number; questionNumber?: number; bnccCode?: string }
+      const payload = row.payload as Partial<GerarProvaJobPayload> & { examId?: number; questionNumber?: number; bnccCode?: string; recoveryStudentId?: number }
       return {
         id: row.id,
         batchId: row.batchId,
@@ -176,6 +176,8 @@ export async function GET(req: NextRequest) {
         status: row.status,
         // Resumo do pedido pra listagem — o payload completo fica no banco.
         subject: payload.subject ?? null,
+        // Prova de recuperação individual roda como job de atividade.
+        isRecovery: Boolean(payload.recoveryStudentId),
         generationEngine: payload.generationEngine ?? null,
         segment: payload.segment ?? null,
         gradeYear: payload.gradeYear ?? null,

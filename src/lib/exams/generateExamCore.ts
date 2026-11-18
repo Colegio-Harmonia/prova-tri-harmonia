@@ -126,6 +126,15 @@ export type GenerateExamCoreParams = {
 // Erros de entrada/recorte curricular (viram 422 na rota, mensagem legível
 // no job). TabResolutionError e SheetNotConfiguredError propagam direto —
 // a rota já os trata por instanceof, e a mensagem deles é auto-explicativa.
+/**
+ * exam_kind gravado. A prova de recuperação é gerada como atividade (mesma
+ * matriz BNCC) e gravada como 'recuperacao'. Os dois inserts (motor
+ * whole-exam e motor por questão) passam por aqui.
+ */
+export function persistedExamKind(examKind: Extract<ExamKind, 'prova' | 'atividade'>, storedExamKind?: Extract<ExamKind, 'recuperacao'>): ExamKind {
+  return examKind === 'atividade' && storedExamKind ? storedExamKind : examKind
+}
+
 export class ExamGenerationInputError extends Error {}
 class FinalQuestionError extends ExamGenerationInputError {}
 
@@ -358,7 +367,7 @@ async function generateAndPersistWholeExam(params: {
       objectiveCount,
       discursiveCount,
       enemBankQuestionIds: input.enemBankQuestionIds.length ? input.enemBankQuestionIds : null,
-      examKind,
+      examKind: persistedExamKind(examKind, input.storedExamKind),
       assessmentKind,
       scoringMethod: scoringMethodForQuestions(allQuestions),
       status: examKind === 'prova' ? 'atribuido' : 'rascunho',
@@ -1672,7 +1681,7 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
       objectiveCount: examWithBank.metadata.objectiveCount,
       discursiveCount: examWithBank.metadata.discursiveCount,
       enemBankQuestionIds: params.enemBankQuestionIds.length ? params.enemBankQuestionIds : null,
-      examKind: examKind === 'atividade' && params.storedExamKind ? params.storedExamKind : examKind,
+      examKind: persistedExamKind(examKind, params.storedExamKind),
       assessmentKind,
       scoringMethod: scoringMethodForQuestions(examWithBank.questions),
       status: examKind === 'prova' && !isPartial ? 'atribuido' : 'rascunho',

@@ -308,7 +308,7 @@ export async function approveRound(round: Round, viewer: Viewer) {
 /** Provas aprovadas do lote, em ordem alfabética, com o Doc de cada documento. */
 export async function printableExams(round: Round) {
   if (round.status !== 'aprovado' && round.status !== 'impresso') throw new RecoveryError('O lote ainda não foi aprovado pela coordenação.', 409)
-  return db.select({ studentName: recoveryStudents.studentName, examId: generatedExams.id, provaDocId: generatedExams.provaDocId, gabaritoDocId: generatedExams.gabaritoDocId })
+  return db.select({ studentName: recoveryStudents.studentName, classroomStudentId: recoveryStudents.classroomStudentId, studentEmail: recoveryStudents.studentEmail, examId: generatedExams.id, provaDocId: generatedExams.provaDocId, gabaritoDocId: generatedExams.gabaritoDocId })
     .from(recoveryStudents)
     .innerJoin(generatedExams, eq(generatedExams.id, recoveryStudents.examId))
     .where(and(eq(recoveryStudents.roundId, round.id), eq(recoveryStudents.status, 'gerada'), isNotNull(generatedExams.provaDocId)))

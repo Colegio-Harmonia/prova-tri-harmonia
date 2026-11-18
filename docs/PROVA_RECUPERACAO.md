@@ -32,7 +32,12 @@ proficiência, e as provas saem numa fila de impressão por sala.
    aprovar de novo gera só o que faltou. "Devolver ao professor" reabre.
 6. **Fila de impressão** (`/recuperacao`, aba Fila): lotes aprovados agrupados
    por sala. "Baixar provas" monta o PDF único e marca o lote (e as provas)
-   como impresso.
+   como impresso. Cada prova vem seguida do **cartão-resposta com QR** do
+   aluno (pedido no teste de 18/11/2026), sem carimbo por cima, em folha nova.
+   O primeiro download cria a correção pendente e emite a ficha
+   (`exam_sheet_assignments`); os seguintes regeneram o mesmo QR a partir do
+   digest, então baixar de novo não invalida o cartão
+   (`src/lib/recovery/recoverySheets.ts`). O gabarito não leva cartão.
 
 ## Regras de cálculo
 
@@ -79,8 +84,62 @@ número ímpar de páginas), para impressão frente e verso.
 - A nota da prova de recuperação **não** volta para o domínio por habilidade
   (o cálculo só lê `exam_kind = 'prova'`). Correção e lançamento de nota da
   recuperação não foram construídos.
-- Sem cartão-resposta com QR na recuperação (a decisão foi PDF simples).
 - A aprovação gera os Docs dentro da própria requisição; um lote grande pode
   levar alguns minutos.
 - Professor sem login Google não vê o roster nem marca alunos (o roster vem do
   Classroom, nunca do navegador).
+
+## Achados do teste com cópia da produção (18/11/2026)
+
+- O motor de atividades tem dois inserts de prova (whole-exam e por questão);
+  só um gravava `recuperacao`. Os dois agora passam por `persistedExamKind`,
+  com teste que falha se surgir um terceiro insert sem a regra.
+- A fila mostra "Recuperação · <disciplina>" para esses jobs.
+- O lote ainda não deixa escolher objetivas × descritivas: a proporção sai do
+  motor de atividades (a prova de teste teve 6 objetivas e 9 descritivas).
+  O motor já aceita `objectivePercentage`; falta o campo no lote.
+
+## Publicação e rollback
+
+Publicado em produção em 18/11/2026, a pedido do usuário, durante o período de
+provas. Estado anterior, para voltar:
+
+| Item | Antes | Depois |
+|---|---|---|
+| Código (`main`) | `181df77` | merge do PR #69 |
+| Imagem Docker | `prova-tri:181df771ead48f4af6e6b593ac891249862fcd0f` (preservada) | `prova-tri:<commit do merge>` |
+| Banco | sem `recovery_rounds`/`recovery_students` | migration 0057 aplicada |
+| Backup do banco | `/home/eduardo/backups/prova_tri-pre-recuperacao-<data>.dump` (pg_dump -Fc antes da 0057) | — |
+
+### Voltar só o código (rápido, sem perder dado)
+
+No servidor, em `/home/eduardo/prova-tri`:
+
+```bash
+export PROVA_TRI_IMAGE=prova-tri:181df771ead48f4af6e6b593ac891249862fcd0f
+docker compose --env-file .env.local up -d --no-build --no-deps --wait --wait-timeout 180 web worker scan-worker ocr-worker
+docker compose --env-file .env.local ps
+```
+
+Isso não mexe no banco. As tabelas da 0057 ficam paradas e o código antigo as
+ignora. Provas com `exam_kind = 'recuperacao'` deixam de aparecer nas listas
+(o código antigo só lista prova/atividade/reforço); para tirá-las de vista de
+vez: `UPDATE generated_exams SET archived_at = now() WHERE exam_kind = 'recuperacao' AND archived_at IS NULL;`.
+Depois, voltar o `main` com um PR de revert do merge (não usar push forçado:
+o script de deploy exige `HEAD == origin/main`).
+
+### Voltar também o banco (só se a 0057 der problema)
+
+Sem perder o resto do banco, só desfazer a 0057:
+
+```sql
+BEGIN;
+DROP TABLE IF EXISTS recovery_students;
+DROP TABLE IF EXISTS recovery_rounds;
+COMMIT;
+```
+
+(Os cartões emitidos e correções pendentes das provas de recuperação ficam em
+`exam_sheet_assignments`/`exam_corrections`, tabelas que já existiam.)
+Restaurar o dump inteiro só em último caso: apaga tudo que foi gravado depois
+do backup (correções, notas, scans do dia).
