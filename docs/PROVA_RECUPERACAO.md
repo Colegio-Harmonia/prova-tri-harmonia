@@ -109,7 +109,7 @@ provas. Estado anterior, para voltar:
 | Código (`main`) | `181df77` | merge do PR #69 |
 | Imagem Docker | `prova-tri:181df771ead48f4af6e6b593ac891249862fcd0f` (preservada) | `prova-tri:<commit do merge>` |
 | Banco | sem `recovery_rounds`/`recovery_students` | migration 0057 aplicada |
-| Backup do banco | `/home/eduardo/backups/prova_tri-pre-recuperacao-<data>.dump` (pg_dump -Fc antes da 0057) | — |
+| Backup do banco | `/home/eduardo/backups/prova_tri-pre-recuperacao-20261118-140118.dump` (pg_dump -Fc antes da 0057, 60 MB) | — |
 
 ### Voltar só o código (rápido, sem perder dado)
 
