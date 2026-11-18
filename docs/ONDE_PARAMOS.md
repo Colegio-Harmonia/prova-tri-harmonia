@@ -2,8 +2,26 @@
 
 > Documento vivo. **Toda sessão (humana, Claude, Codex/GPT) que terminar um
 > bloco de trabalho atualiza este arquivo no mesmo PR do código.**
-> Última atualização: 13/11/2026 — negrito Markdown na Prova Adaptada; antes, produção regularizada com o main e publicada pelo script oficial. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
+> Última atualização: 18/11/2026 — prova de recuperação individualizada (branch, não publicada). Anterior: 13/11/2026 — negrito Markdown na Prova Adaptada; antes, produção regularizada com o main e publicada pelo script oficial. Anterior: 10/11/2026 — recuperação do versionamento; detalhes em
 > [`RECUPERACAO_VERSIONAMENTO.md`](RECUPERACAO_VERSIONAMENTO.md).
+
+## Prova de recuperação individualizada — 18/11/2026
+
+Pedido do usuário: o professor marca quem ficou de recuperação; cada aluno
+ganha uma prova com as habilidades abaixo de 60% (só "em desenvolvimento";
+amostra < 3 questões vira aviso); revisão em lote (professor envia,
+coordenação aprova e gera os Docs); fila de impressão por sala com um PDF único
+de provas e outro de gabaritos. Período escolhido pelo professor (bimestre ou
+ano todo). Detalhes em [`PROVA_RECUPERACAO.md`](PROVA_RECUPERACAO.md).
+
+- **Migration `0057_recovery_exams.sql`** (aditiva, 2 tabelas novas). **Não
+  aplicada em nenhum banco.** Aplicar antes de publicar este código.
+- Geração reaproveita o job `gerar_atividade` (matriz `bnccPlan`) com
+  `recoveryStudentId`; a prova é gravada com `exam_kind = 'recuperacao'`.
+- Testes: 5 da regra pura, 2 do PDF da sala, 5 de integração com Postgres real
+  (PGlite). Suíte 1094, TypeScript, lint, regressão, build e orçamento OK.
+- **Não conferido no navegador, sem chamada real à IA nem ao Google Docs/
+  Classroom, e não publicado** (congelamento de provas até ~28/11).
 
 ## Pré-requisitos curriculares com sugestão da IA — 16/11/2026
 

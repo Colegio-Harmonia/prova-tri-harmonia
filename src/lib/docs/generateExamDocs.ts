@@ -17,6 +17,9 @@ export type GenerateExamDocsParams = {
   // 'reforco_enem' muda títulos e nomes de arquivo (Atividade/Gabarito
   // Comentado/Mapa da Atividade) — a estrutura dos 3 docs é a mesma.
   examKind?: ExamKind
+  // Distingue documentos que teriam o mesmo nome (uma prova de recuperação
+  // por aluno). Nunca recebe dado pessoal do aluno.
+  nameSuffix?: string
 }
 
 export type GenerateExamDocsResult = {
@@ -56,17 +59,18 @@ export async function generateExamDocs(exam: ExamGenerationResult, params: Gener
 
   const isReforco = params.examKind === 'reforco_enem'
   const isActivity = params.examKind === 'atividade'
+  const isRecovery = params.examKind === 'recuperacao'
   const reinforcementMeta = (exam.metadata as { reinforcement?: { enemSkills?: string[] } }).reinforcement
   const enemSkills = reinforcementMeta?.enemSkills ?? []
 
   const namePrefix = isReforco
     ? `${params.subject} - ${params.gradeYear}º ano${enemSkills.length ? ` - ${enemSkills.join(', ')}` : ''}`
-    : `${params.subject} - ${params.gradeYear}º ano${params.bimester ? ` - Bimestre ${params.bimester}` : ''}`
+    : `${params.subject} - ${params.gradeYear}º ano${params.bimester ? ` - Bimestre ${params.bimester}` : ''}${params.nameSuffix ? ` - ${params.nameSuffix}` : ''}`
 
   const [prova, gabarito, mapa] = await Promise.all([
-    copyTemplate(drive, provaTemplateId, `${isReforco ? 'Atividade de Reforço' : isActivity ? 'Atividade' : 'Prova'} - ${namePrefix}`, folderId),
-    copyTemplate(drive, gabaritoTemplateId, `${isReforco ? 'Gabarito comentado' : isActivity ? 'Gabarito da atividade' : 'Gabarito'} - ${namePrefix}`, folderId),
-    copyTemplate(drive, mapaTemplateId, `${isReforco || isActivity ? 'Mapa da atividade' : 'Mapa da prova'} - ${namePrefix}`, folderId),
+    copyTemplate(drive, provaTemplateId, `${isReforco ? 'Atividade de Reforço' : isActivity ? 'Atividade' : isRecovery ? 'Prova de recuperação' : 'Prova'} - ${namePrefix}`, folderId),
+    copyTemplate(drive, gabaritoTemplateId, `${isReforco ? 'Gabarito comentado' : isActivity ? 'Gabarito da atividade' : isRecovery ? 'Gabarito da recuperação' : 'Gabarito'} - ${namePrefix}`, folderId),
+    copyTemplate(drive, mapaTemplateId, `${isReforco || isActivity ? 'Mapa da atividade' : isRecovery ? 'Mapa da recuperação' : 'Mapa da prova'} - ${namePrefix}`, folderId),
   ])
 
   const meta = buildAssessmentMeta({ ...params, enemSkills })

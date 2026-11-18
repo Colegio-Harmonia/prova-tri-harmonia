@@ -203,7 +203,9 @@ export const EXAM_STATUSES = ['rascunho', 'atribuido', 'em_andamento', 'revisao_
 // (EM, banco ENEM, sem nota — os 3 documentos viram Atividade/Gabarito
 // Comentado/Mapa da Atividade). Mesma tabela de propósito: herda revisão,
 // aprovação, docs, autorização e /status sem duplicar pipeline.
-export const EXAM_KINDS = ['prova', 'reforco_enem', 'atividade'] as const
+// 'recuperacao' (18/11/2026): prova individual de um aluno, gerada pelo motor
+// de atividades a partir das habilidades fracas — ver recoveryRounds abaixo.
+export const EXAM_KINDS = ['prova', 'reforco_enem', 'atividade', 'recuperacao'] as const
 export type ExamKind = (typeof EXAM_KINDS)[number]
 
 export const ASSESSMENT_KINDS = ['padrao', 'enem'] as const
@@ -1031,4 +1033,69 @@ export const generationJobItems = pgTable('generation_job_items', {
 }, (table) => ({
   jobSlotUnique: uniqueIndex('generation_job_items_job_slot_unique').on(table.jobId, table.slotNumber),
   jobStatusIdx: index('generation_job_items_job_status_idx').on(table.jobId, table.status),
+}))
+
+// ---------------------------------------------------------------------------
+// Prova de recuperação individualizada (18/11/2026 — migration 0057).
+// Um lote = turma do Classroom + disciplina + período (bimester null = ano
+// todo). Cada aluno marcado ganha uma prova própria (exam_kind
+// 'recuperacao') com as habilidades BNCC abaixo de 60%. Regras em
+// src/lib/recovery/ e docs/PROVA_RECUPERACAO.md.
+// ---------------------------------------------------------------------------
+
+// aberto -> em_aprovacao (professor envia) -> aprovado (coordenação/direção
+// aprova e gera os documentos) -> impresso (download do PDF da sala).
+export const RECOVERY_ROUND_STATUSES = ['aberto', 'em_aprovacao', 'aprovado', 'impresso'] as const
+export type RecoveryRoundStatus = (typeof RECOVERY_ROUND_STATUSES)[number]
+// O estado da geração (fila/erro) é lido de generation_jobs, não duplicado aqui.
+export const RECOVERY_STUDENT_STATUSES = ['gerando', 'gerada', 'sem_habilidades', 'removido'] as const
+export type RecoveryStudentStatus = (typeof RECOVERY_STUDENT_STATUSES)[number]
+
+export const recoveryRounds = pgTable('recovery_rounds', {
+  id: serial('id').primaryKey(),
+  classroomCourseId: text('classroom_course_id').notNull(),
+  classLabel: text('class_label').notNull(),
+  academicYear: integer('academic_year').notNull(),
+  segment: text('segment', { enum: ['anos-iniciais', 'anos-finais', 'ensino-medio'] }).notNull(),
+  gradeYear: integer('grade_year').notNull(),
+  subject: text('subject').notNull(),
+  bimester: integer('bimester'),
+  questionCount: integer('question_count').notNull().default(10),
+  status: text('status', { enum: RECOVERY_ROUND_STATUSES }).notNull().default('aberto'),
+  createdBy: integer('created_by').references(() => users.id).notNull(),
+  submittedBy: integer('submitted_by').references(() => users.id),
+  submittedAt: timestamp('submitted_at'),
+  approvedBy: integer('approved_by').references(() => users.id),
+  approvedAt: timestamp('approved_at'),
+  printedBy: integer('printed_by').references(() => users.id),
+  printedAt: timestamp('printed_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at'),
+}, (table) => ({
+  // O índice real usa NULLS NOT DISTINCT (ver 0057); aqui fica a declaração.
+  scopeUnique: uniqueIndex('recovery_rounds_scope_unique').on(table.classroomCourseId, table.academicYear, table.subject, table.bimester),
+  statusIdx: index('recovery_rounds_status_idx').on(table.status),
+}))
+
+export type RecoverySkill = { code: string; description: string | null; masteryPercent: number | null; itemCount: number }
+
+export const recoveryStudents = pgTable('recovery_students', {
+  id: serial('id').primaryKey(),
+  roundId: integer('round_id').references(() => recoveryRounds.id, { onDelete: 'cascade' }).notNull(),
+  classroomStudentId: text('classroom_student_id').notNull(),
+  studentName: text('student_name').notNull(),
+  studentEmail: text('student_email'),
+  status: text('status', { enum: RECOVERY_STUDENT_STATUSES }).notNull().default('gerando'),
+  weakSkills: jsonb('weak_skills').$type<RecoverySkill[]>().notNull().default(sql`'[]'::jsonb`),
+  insufficientSkills: jsonb('insufficient_skills').$type<RecoverySkill[]>().notNull().default(sql`'[]'::jsonb`),
+  bnccPlan: jsonb('bncc_plan').$type<Array<{ code: string; questionCount: number }>>().notNull().default(sql`'[]'::jsonb`),
+  examId: integer('exam_id').references(() => generatedExams.id),
+  jobId: integer('job_id').references(() => generationJobs.id),
+  flaggedBy: integer('flagged_by').references(() => users.id).notNull(),
+  flaggedAt: timestamp('flagged_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at'),
+}, (table) => ({
+  roundStudentUnique: uniqueIndex('recovery_students_round_student_unique').on(table.roundId, table.classroomStudentId),
+  examIdx: index('recovery_students_exam_idx').on(table.examId),
+  jobIdx: index('recovery_students_job_idx').on(table.jobId),
 }))

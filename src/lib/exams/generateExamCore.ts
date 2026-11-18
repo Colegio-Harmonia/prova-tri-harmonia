@@ -105,6 +105,10 @@ export type GenerateExamCoreParams = {
   // Atividades FI/FII usam o mesmo motor de itens e revisão, mas ficam em
   // uma coleção própria e trazem o recorte BNCC explícito no payload.
   examKind?: Extract<ExamKind, 'prova' | 'atividade'>
+  // Prova de recuperação individual: gerada exatamente como atividade (mesma
+  // matriz BNCC), mas gravada com exam_kind 'recuperacao' para ficar fora das
+  // listas de atividades e entrar no lote de recuperação (src/lib/recovery/).
+  storedExamKind?: Extract<ExamKind, 'recuperacao'>
   bnccCodes?: string[]
   bnccPlan?: ActivityBnccPlanItem[]
   classroomCourseId?: string | null
@@ -1668,7 +1672,7 @@ export async function generateExamCore(params: GenerateExamCoreParams, createdBy
       objectiveCount: examWithBank.metadata.objectiveCount,
       discursiveCount: examWithBank.metadata.discursiveCount,
       enemBankQuestionIds: params.enemBankQuestionIds.length ? params.enemBankQuestionIds : null,
-      examKind,
+      examKind: examKind === 'atividade' && params.storedExamKind ? params.storedExamKind : examKind,
       assessmentKind,
       scoringMethod: scoringMethodForQuestions(examWithBank.questions),
       status: examKind === 'prova' && !isPartial ? 'atribuido' : 'rascunho',

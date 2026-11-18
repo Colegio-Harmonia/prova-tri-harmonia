@@ -146,6 +146,9 @@ export const gerarAtividadeJobPayloadSchema = z.object({
   })).min(1).max(60).optional(),
   classLabel: z.string().min(1).max(120).optional(),
   classroomCourseId: z.string().min(1).optional(),
+  // Presente só na prova de recuperação individual (recovery_students.id):
+  // o worker grava a prova como 'recuperacao' e a liga ao aluno do lote.
+  recoveryStudentId: z.number().int().positive().optional(),
 }).refine((payload) => isActivityGradeCompatible(payload.segment, payload.gradeYear), {
   message: 'A série precisa pertencer ao segmento selecionado.',
   path: ['gradeYear'],

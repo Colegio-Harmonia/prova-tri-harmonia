@@ -40,6 +40,13 @@ export function buildAssessmentMeta(params: {
     return { ano, bimestre, disciplina: params.subject, tituloProva: `ATIVIDADE - ${disciplinaUpper}`, tituloGabarito: `GABARITO DA ATIVIDADE - ${disciplinaUpper}`, tituloMapa: `MAPA DA ATIVIDADE - ${disciplinaUpper}` }
   }
 
+  if (params.examKind === 'recuperacao') {
+    // Prova individual: o nome do aluno nunca vai para o Doc (LGPD); ele é
+    // carimbado só no PDF baixado da fila de impressão.
+    const bimestre = params.bimester ? `${params.bimester}º` : 'Anual'
+    return { ano, bimestre, disciplina: params.subject, tituloProva: `AVALIAÇÃO DE RECUPERAÇÃO - ${disciplinaUpper}`, tituloGabarito: `GABARITO DA RECUPERAÇÃO - ${disciplinaUpper}`, tituloMapa: `MAPA DA RECUPERAÇÃO - ${disciplinaUpper}` }
+  }
+
   const bimestre = params.bimester ? `${params.bimester}º` : 'Final'
   const tipoAvaliacao = params.bimester ? 'BIMESTRAL' : 'FINAL'
 

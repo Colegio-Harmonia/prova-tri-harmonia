@@ -24,6 +24,7 @@ import { alternativesCountForSegment } from '@/lib/gemini/promptBuilder'
 import { scoringMethodForQuestions } from '@/lib/scoring/scoringPolicy'
 import { initializeJobItems, saveItemProgress, setJobItemStage } from '@/lib/queue/jobProgress'
 import { persistGeneratedQuestionClassifications } from '@/lib/pedagogical/generatedQuestionClassificationService'
+import { linkRecoveryExam } from '@/lib/recovery/recoveryService'
 
 // Handlers de execução por tipo de job. O worker chama executeJob() e trata
 // sucesso/falha de forma uniforme — cada handler só precisa validar o
@@ -315,7 +316,19 @@ async function executeGerarAtividade(job: ClaimedJob): Promise<JobExecutionResul
     classroomCourseId: payload.classroomCourseId ?? null,
     pedagogicalIntent: payload.pedagogicalIntent,
     generationJobId: job.id,
+    ...(payload.recoveryStudentId ? { storedExamKind: 'recuperacao' as const } : {}),
   }, job.requestedBy)
+
+  if (payload.recoveryStudentId) {
+    await linkRecoveryExam(payload.recoveryStudentId, job.id, result.examId)
+    return {
+      resultExamId: result.examId,
+      resultRef: { bnccCodes: payload.bnccCodes, warnings: result.warnings, issues: result.issues, recoveryStudentId: payload.recoveryStudentId },
+      label: `Recuperação ${payload.subject} — ${payload.gradeYear}º ano${payload.classLabel ? ` (${payload.classLabel})` : ''}`,
+      // Um lote gera uma prova por aluno; o acompanhamento fica na tela do lote.
+      notifyRequester: false,
+    }
+  }
 
   return {
     resultExamId: result.examId,
