@@ -197,6 +197,9 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ examId:
   const authResult = await authorizeExamAccess(examId, session.user.email)
   if ('error' in authResult) return authResult.error
   const { exam } = authResult
+  if (exam.examKind === 'recuperacao') {
+    return NextResponse.json({ error: 'Para gerar de novo uma prova de recuperação, use "Gerar de novo" na tela do lote: a matriz de habilidades do aluno é preservada.' }, { status: 422 })
+  }
   const existingPayload = exam.generationPayload as ExamGenerationResult
   if (exam.status !== 'rascunho') {
     return NextResponse.json({ error: 'Só é possível regenerar provas em rascunho.' }, { status: 409 })

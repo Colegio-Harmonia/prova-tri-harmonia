@@ -43,3 +43,10 @@ export async function exportDocAsPdf(params: {
 
   return { pdfFileId }
 }
+
+/** Bytes do Doc exportado como PDF, sem criar arquivo no Drive (fila de impressão). */
+export async function exportDocPdfBytes(docId: string): Promise<Uint8Array> {
+  const drive = getDriveClient()
+  const exported = await drive.files.export({ fileId: docId, mimeType: 'application/pdf' }, { responseType: 'arraybuffer' })
+  return new Uint8Array(exported.data as ArrayBuffer)
+}

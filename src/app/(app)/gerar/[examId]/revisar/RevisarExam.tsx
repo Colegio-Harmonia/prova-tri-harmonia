@@ -51,7 +51,7 @@ type ExamRow = {
   subject: string
   bimester: number | null
   status: string
-  examKind: 'prova' | 'reforco_enem' | 'atividade'
+  examKind: 'prova' | 'reforco_enem' | 'atividade' | 'recuperacao'
   createdBy: number
   assignedTo: number | null
   generationPayload: ExamGenerationResult
@@ -506,6 +506,13 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
   return (
     <div className={`space-y-6 ${hasFixedApprovalAction ? 'pb-28' : ''}`}>
       <div aria-live="polite" className="sr-only">{actionMessage}</div>
+      {exam.examKind === 'recuperacao' && (
+        <div className="rounded border border-status-info-border bg-status-info-surface p-4 text-sm text-status-info-content">
+          <p className="font-semibold">Prova de recuperação individual</p>
+          <p className="mt-1">Revise e troque questões aqui. O envio para a coordenação, a aprovação e a impressão acontecem no lote da turma.</p>
+          <Link href="/recuperacao" className="mt-2 inline-block font-semibold underline">Voltar aos lotes de recuperação</Link>
+        </div>
+      )}
       <div className="space-y-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -526,7 +533,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
               + Adicionar questão
             </button>
           )}
-          {exam.status === 'rascunho' && (
+          {exam.status === 'rascunho' && exam.examKind !== 'recuperacao' && (
             <button onClick={handleRegenerate} disabled={regenerating} className="rounded border border-neutral-300 px-4 py-2 text-sm font-medium disabled:opacity-60">
               {regenerating ? 'Regenerando…' : 'Regenerar'}
             </button>
@@ -632,7 +639,7 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
             </Link>
           )}
 
-          {['reforco_enem', 'atividade'].includes(exam.examKind) && ['aprovado', 'impresso', 'aplicado', 'corrigido'].includes(exam.status) && (
+          {(exam.examKind === 'reforco_enem' || exam.examKind === 'atividade') && ['aprovado', 'impresso', 'aplicado', 'corrigido'].includes(exam.status) && (
             <PublishToClassroom
               examId={exam.id}
               linkedCourseId={exam.classroomCourseId}

@@ -19,6 +19,7 @@ type JobRow = {
   bnccCode: string | null
   status: string
   subject: string | null
+  isRecovery?: boolean
   segment: string | null
   gradeYear: number | null
   bimester: number | null
@@ -127,6 +128,7 @@ function isWholeExamGeneration(job: JobRow) {
 function jobTitle(job: JobRow) {
   if (job.jobType === 'adicionar_questao') return `Questão adicional${job.examId ? ` · prova #${job.examId}` : ''}`
   if (job.jobType === 'gerar_imagens_prova') return `Imagens da prova${job.examId ? ` #${job.examId}` : ''}`
+  if (job.isRecovery) return `Recuperação · ${job.subject ?? 'prova individual'}`
   return job.subject ?? job.jobType
 }
 

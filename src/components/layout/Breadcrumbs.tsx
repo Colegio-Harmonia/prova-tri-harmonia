@@ -29,6 +29,7 @@ function getBreadcrumbs(pathname: string): Crumb[] {
     { href: '/status', label: 'Provas' },
     { href: '/arquivadas', label: 'Arquivadas' },
     { href: '/atividades', label: 'Atividades' },
+    { href: '/recuperacao', label: 'Recuperação' },
     { href: '/turmas', label: 'Turmas' },
     { href: '/desempenho', label: 'Desempenho' },
     { href: '/usuarios', label: 'Usuários' },

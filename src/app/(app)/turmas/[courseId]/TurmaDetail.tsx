@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { signIn } from 'next-auth/react'
+import RecoveryLauncher from './RecoveryLauncher'
 
 type Course = { id: string; name: string; section: string | null; room: string | null; alternateLink: string }
 type Exam = { id: number; subject: string; gradeYear: number; bimester: number | null; status: string; createdAt: string }
@@ -87,6 +88,8 @@ export default function TurmaDetail({ courseId }: { courseId: string }) {
         </li>)}
       </ul>
     </section>
+
+    <RecoveryLauncher courseId={course.id} classLabel={course.section ? `${course.name} · ${course.section}` : course.name} subjects={[...new Set(exams.map((exam) => exam.subject))].sort((a, b) => a.localeCompare(b, 'pt-BR'))} />
 
     <section className="rounded-xl border border-border bg-surface">
       <div className="border-b border-border px-5 py-4"><h2 className="font-semibold text-content-primary">Integrantes e desempenho</h2><p className="mt-1 text-sm text-content-secondary">Fotos e lista atualizadas pelo Google Classroom. A média considera somente provas já corrigidas.</p></div>

@@ -69,6 +69,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ examId: 
   const isCoordenacao = isStaffSuperuser(currentUser.role)
   const isAssignee = exam.assignedTo === currentUser.id
   const isOwner = exam.createdBy === currentUser.id
+  // Prova de recuperação individual: envio, aprovação e impressão são do lote
+  // (src/lib/recovery/recoveryService.ts), nunca por prova.
+  if (exam.examKind === 'recuperacao') {
+    return NextResponse.json({ error: 'Esta prova faz parte de um lote de recuperação. Envie, aprove e imprima pela tela do lote.' }, { status: 422 })
+  }
   const isActivity = isSelfManagedActivity(exam)
   // A prova formal continua exigindo revisão/aprovação da coordenação, mas
   // seu criador pode definir quem fará a revisão inicial.
