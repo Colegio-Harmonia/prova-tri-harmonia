@@ -7,7 +7,7 @@ import type { RecoveryRoundStatus, RecoverySkill } from '@/db/schema'
 import { periodLabel } from '@/lib/recovery/recoveryPlan'
 import { ROUND_STATUS_LABELS, ROUND_STATUS_TONES } from '@/lib/recovery/labels'
 
-type Round = { id: number; classroomCourseId: string; classLabel: string; subject: string; gradeYear: number; bimester: number | null; questionCount: number; status: RecoveryRoundStatus }
+type Round = { id: number; classroomCourseId: string; classLabel: string; subject: string; gradeYear: number; bimester: number | null; semester: number | null; questionCount: number; status: RecoveryRoundStatus }
 type Student = {
   id: number; classroomStudentId: string; studentName: string; status: 'gerando' | 'gerada' | 'sem_habilidades' | 'removido'
   weakSkills: RecoverySkill[]; insufficientSkills: RecoverySkill[]; bnccPlan: Array<{ code: string; questionCount: number }>
@@ -96,7 +96,7 @@ export default function RoundDetail({ roundId, isSuperuser }: { roundId: number;
       <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-content-primary">Recuperação · {round.subject}</h1>
-          <p className="mt-1 text-sm text-content-secondary">{round.classLabel} · {round.gradeYear}º ano · {periodLabel(round.bimester)} · até {round.questionCount} questões por aluno</p>
+          <p className="mt-1 text-sm text-content-secondary">{round.classLabel} · {round.gradeYear}º ano · {periodLabel(round.bimester, round.semester)} · até {round.questionCount} questões por aluno</p>
         </div>
         <span className={`rounded-full px-3 py-1 text-sm font-medium ${ROUND_STATUS_TONES[round.status]}`}>{ROUND_STATUS_LABELS[round.status]}</span>
       </div>
@@ -107,7 +107,7 @@ export default function RoundDetail({ roundId, isSuperuser }: { roundId: number;
     {editable && <section className="rounded-xl border border-border bg-surface">
       <div className="border-b border-border px-5 py-4">
         <h2 className="font-semibold text-content-primary">1. Marque quem ficou de recuperação</h2>
-        <p className="mt-1 text-sm text-content-secondary">Ao lado de cada aluno, as habilidades abaixo de 60% em {periodLabel(round.bimester).toLowerCase()}, lidas das correções revisadas. Habilidade com menos de 3 questões avaliadas não entra na prova e aparece como “amostra pequena”.</p>
+        <p className="mt-1 text-sm text-content-secondary">Ao lado de cada aluno, as habilidades abaixo de 60% em {periodLabel(round.bimester, round.semester).toLowerCase()}, lidas das correções revisadas. Habilidade com menos de 3 questões avaliadas não entra na prova e aparece como “amostra pequena”.</p>
       </div>
       {rosterError && <div className="px-5 py-4 text-sm text-status-warning-content"><p>{rosterError}</p><button type="button" onClick={() => signIn('google', { callbackUrl: `/recuperacao/${roundId}` })} className="mt-2 rounded-md bg-action-primary px-3 py-2 font-medium text-action-primary-foreground hover:bg-action-primary-hover">Entrar com Google</button></div>}
       {roster && <>

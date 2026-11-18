@@ -1060,6 +1060,9 @@ export const recoveryRounds = pgTable('recovery_rounds', {
   gradeYear: integer('grade_year').notNull(),
   subject: text('subject').notNull(),
   bimester: integer('bimester'),
+  // 1 = bimestres 1-2, 2 = bimestres 3-4 (migration 0058). Nunca junto com
+  // bimester; os dois nulos = ano todo.
+  semester: integer('semester'),
   questionCount: integer('question_count').notNull().default(10),
   status: text('status', { enum: RECOVERY_ROUND_STATUSES }).notNull().default('aberto'),
   createdBy: integer('created_by').references(() => users.id).notNull(),
@@ -1073,7 +1076,7 @@ export const recoveryRounds = pgTable('recovery_rounds', {
   updatedAt: timestamp('updated_at'),
 }, (table) => ({
   // O índice real usa NULLS NOT DISTINCT (ver 0057); aqui fica a declaração.
-  scopeUnique: uniqueIndex('recovery_rounds_scope_unique').on(table.classroomCourseId, table.academicYear, table.subject, table.bimester),
+  scopeUnique: uniqueIndex('recovery_rounds_scope_unique').on(table.classroomCourseId, table.academicYear, table.subject, table.bimester, table.semester),
   statusIdx: index('recovery_rounds_status_idx').on(table.status),
 }))
 

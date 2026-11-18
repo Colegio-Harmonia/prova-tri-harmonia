@@ -25,6 +25,7 @@ const openSchema = z.object({
   classLabel: z.string().min(1).max(160),
   subject: z.string().min(1).max(120),
   bimester: z.number().int().min(1).max(4).nullable(),
+  semester: z.number().int().min(1).max(2).nullable().optional(),
   questionCount: z.number().int().min(RECOVERY_RULES.minQuestions).max(RECOVERY_RULES.maxQuestions).optional(),
 })
 

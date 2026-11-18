@@ -20,6 +20,8 @@ export type GenerateExamDocsParams = {
   // Distingue documentos que teriam o mesmo nome (uma prova de recuperação
   // por aluno). Nunca recebe dado pessoal do aluno.
   nameSuffix?: string
+  // Rótulo de período da recuperação ("1º semestre", "Ano todo"); só no cabeçalho.
+  periodLabel?: string
 }
 
 export type GenerateExamDocsResult = {

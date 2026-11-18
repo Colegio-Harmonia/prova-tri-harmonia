@@ -16,7 +16,7 @@ import { canonicalSubject, evidenceConditions, loadEvidence } from '@/lib/curric
 import { enqueueAtividadeJob } from '@/lib/queue/enqueue'
 import { generateExamDocs } from '@/lib/docs/generateExamDocs'
 import type { ExamGenerationResult } from '@/lib/gemini/examSchema'
-import { distributeRecoveryQuestions, evidenceForPeriod, RECOVERY_RULES, selectRecoverySkills } from './recoveryPlan'
+import { distributeRecoveryQuestions, evidenceForPeriod, periodLabel, RECOVERY_RULES, selectRecoverySkills } from './recoveryPlan'
 
 export class RecoveryError extends Error {
   constructor(message: string, readonly status = 400) { super(message) }
@@ -45,13 +45,15 @@ export async function courseSubjects(classroomCourseId: string, viewer: Viewer) 
   return [...bySubject.values()].sort((a, b) => a.subject.localeCompare(b.subject, 'pt-BR'))
 }
 
-export async function openRound(input: { classroomCourseId: string; classLabel: string; subject: string; bimester: number | null; questionCount?: number }, viewer: Viewer): Promise<Round> {
+export async function openRound(input: { classroomCourseId: string; classLabel: string; subject: string; bimester: number | null; semester?: number | null; questionCount?: number }, viewer: Viewer): Promise<Round> {
+  const semester = input.bimester ? null : (input.semester ?? null)
   const scope = (await courseSubjects(input.classroomCourseId, viewer)).find((item) => item.subject === input.subject)
   if (!scope) throw new RecoveryError('Esta turma não tem prova da disciplina vinculada a você. A recuperação usa as correções dessas provas para achar as habilidades fracas.', 422)
   const questionCount = Math.min(RECOVERY_RULES.maxQuestions, Math.max(RECOVERY_RULES.minQuestions, input.questionCount ?? RECOVERY_RULES.defaultQuestions))
   const existing = await db.query.recoveryRounds.findFirst({ where: (table, { and, eq, isNull }) => and(
     eq(table.classroomCourseId, input.classroomCourseId), eq(table.academicYear, scope.academicYear), eq(table.subject, input.subject),
     input.bimester === null ? isNull(table.bimester) : eq(table.bimester, input.bimester),
+    semester === null ? isNull(table.semester) : eq(table.semester, semester),
   ) })
   if (existing) {
     assertRoundAccess(existing, viewer)
@@ -65,6 +67,7 @@ export async function openRound(input: { classroomCourseId: string; classLabel: 
     gradeYear: scope.gradeYear,
     subject: input.subject,
     bimester: input.bimester,
+    semester,
     questionCount,
     createdBy: viewer.id,
   }).returning()
@@ -109,7 +112,7 @@ export async function diagnoseStudents(round: Round, viewer: Viewer) {
   const params = new URLSearchParams({ subject: round.subject, gradeYear: String(round.gradeYear), academicYear: String(round.academicYear), segment: round.segment })
   const { evidence } = await loadEvidence(evidenceConditions(viewer, params))
   const subject = canonicalSubject(round.subject)
-  const scoped = evidenceForPeriod(evidence.filter((item) => canonicalSubject(item.subject) === subject), round.bimester)
+  const scoped = evidenceForPeriod(evidence.filter((item) => canonicalSubject(item.subject) === subject), round)
   const byStudent = new Map<string, typeof scoped>()
   for (const item of scoped) {
     if (!item.studentKey.startsWith('classroom:')) continue
@@ -284,7 +287,7 @@ export async function approveRound(round: Round, viewer: Viewer) {
   for (const exam of exams) {
     if (exam.provaDocId && exam.gabaritoDocId) continue
     try {
-      const docs = await generateExamDocs(exam.generationPayload as ExamGenerationResult, { segment: exam.segment, gradeYear: exam.gradeYear, subject: exam.subject, bimester: exam.bimester, examKind: 'recuperacao', nameSuffix: `nº ${exam.id}` })
+      const docs = await generateExamDocs(exam.generationPayload as ExamGenerationResult, { segment: exam.segment, gradeYear: exam.gradeYear, subject: exam.subject, bimester: exam.bimester, examKind: 'recuperacao', nameSuffix: `nº ${exam.id}`, periodLabel: periodLabel(round.bimester, round.semester) })
       await db.update(generatedExams).set({
         status: 'aprovado', reviewedAt: new Date(), finalizedAt: new Date(),
         driveFolderId: docs.driveFolderId, provaDocId: docs.prova.docId, provaDocUrl: docs.prova.url,

@@ -28,7 +28,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ roun
       const appendix = doc === 'prova' ? await recoverySheetPdf({ examId: exam.examId, classroomStudentId: exam.classroomStudentId, studentName: exam.studentName, studentEmail: exam.studentEmail }, access.viewer.id) : undefined
       entries.push({ studentName: exam.studentName, pdf: await exportDocPdfBytes(docId), appendix })
     }
-    const header = `${round.classLabel} · ${round.subject} · ${periodLabel(round.bimester)}${doc === 'gabarito' ? ' · GABARITO' : ''}`
+    const header = `${round.classLabel} · ${round.subject} · ${periodLabel(round.bimester, round.semester)}${doc === 'gabarito' ? ' · GABARITO' : ''}`
     const pdf = await buildRoomPdf(entries, { header })
     if (doc === 'prova') await markPrinted(round, access.viewer)
     const fileName = `recuperacao-${doc}-${round.classLabel}-${round.subject}`.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9]+/g, '-').toLowerCase()

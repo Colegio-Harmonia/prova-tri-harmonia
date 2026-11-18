@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { calculateStudentMastery, type MasteryEvidenceItem, type PlannedMasterySkill } from '@/lib/curriculum/studentMastery'
-import { distributeRecoveryQuestions, evidenceForPeriod, plannedForPeriod, selectRecoverySkills } from './recoveryPlan'
+import { distributeRecoveryQuestions, evidenceForPeriod, periodBimesters, periodLabel, plannedForPeriod, selectRecoverySkills } from './recoveryPlan'
 
 const scope = { academicYear: 2026, segment: 'anos-finais', gradeYear: 7, subject: 'Matemática' }
 
@@ -35,12 +35,24 @@ describe('selectRecoverySkills', () => {
     // Bimestre 1: 0/2 (insuficiente sozinho). Bimestre 3: 1/2. Ano: 1/4 = 25%.
     const evidence = [item('EF07MA01', 1, 1, 1, 0), item('EF07MA01', 1, 1, 2, 0), item('EF07MA01', 3, 5, 1, 1), item('EF07MA01', 3, 5, 2, 0)]
     const planned = [plan('EF07MA01', 1), plan('EF07MA01', 3)]
-    const byBimester = selectRecoverySkills(calculateStudentMastery(plannedForPeriod(planned, 1), evidenceForPeriod(evidence, 1)))
+    const byBimester = selectRecoverySkills(calculateStudentMastery(plannedForPeriod(planned, { bimester: 1 }), evidenceForPeriod(evidence, { bimester: 1 })))
     expect(byBimester.weak).toEqual([])
     expect(byBimester.insufficient.map((skill) => skill.code)).toEqual(['EF07MA01'])
 
-    const year = selectRecoverySkills(calculateStudentMastery(plannedForPeriod(planned, null), evidenceForPeriod(evidence, null)))
+    const year = selectRecoverySkills(calculateStudentMastery(plannedForPeriod(planned, { bimester: null }), evidenceForPeriod(evidence, { bimester: null })))
     expect(year.weak).toEqual([expect.objectContaining({ code: 'EF07MA01', masteryPercent: 25, itemCount: 4 })])
+  })
+
+  it('no semestre, soma só os dois bimestres dele', () => {
+    // 1º bim: 0/2; 2º bim: 1/2 → 1º semestre 1/4 = 25%. O 3º bim (2/2) fica de fora.
+    const evidence = [item('EF07MA01', 1, 1, 1, 0), item('EF07MA01', 1, 1, 2, 0), item('EF07MA01', 2, 3, 1, 1), item('EF07MA01', 2, 3, 2, 0), item('EF07MA01', 3, 5, 1, 1), item('EF07MA01', 3, 5, 2, 1)]
+    const first = selectRecoverySkills(calculateStudentMastery([], evidenceForPeriod(evidence, { bimester: null, semester: 1 })))
+    expect(first.weak).toEqual([expect.objectContaining({ code: 'EF07MA01', masteryPercent: 25, itemCount: 4 })])
+    const second = selectRecoverySkills(calculateStudentMastery([], evidenceForPeriod(evidence, { bimester: null, semester: 2 })))
+    expect(second.weak).toEqual([])
+    expect(second.insufficient.map((skill) => skill.code)).toEqual(['EF07MA01'])
+    expect(periodBimesters({ bimester: null, semester: 2 })).toEqual([3, 4])
+    expect(periodLabel(null, 1)).toBe('1º semestre')
   })
 })
 
