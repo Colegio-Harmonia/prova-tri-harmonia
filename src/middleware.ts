@@ -12,6 +12,7 @@ export const config = {
     '/reforco/:path*',
     '/status/:path*',
     '/atividades/:path*',
+    '/recuperacao/:path*',
     '/turmas/:path*',
     '/usuarios/:path*',
     '/desempenho/:path*',
@@ -24,5 +25,6 @@ export const config = {
     '/api/generation-jobs/:path*',
     '/api/reinforcement/:path*',
     '/api/activities/:path*',
+    '/api/recovery/:path*',
   ],
 }

@@ -11,6 +11,7 @@ const PROTECTED_PATHS = [
   '/reforco',
   '/status',
   '/atividades',
+  '/recuperacao',
   '/turmas',
   '/usuarios',
   '/desempenho',
@@ -23,6 +24,7 @@ const PROTECTED_PATHS = [
   '/api/generation-jobs',
   '/api/reinforcement',
   '/api/activities',
+  '/api/recovery',
 ]
 
 // Edge-safe config: no Credentials provider (needs bcrypt + Postgres, both
