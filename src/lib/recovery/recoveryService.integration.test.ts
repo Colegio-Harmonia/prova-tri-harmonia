@@ -53,6 +53,12 @@ describe.skipIf(!pgliteInstalled())('prova de recuperação (Postgres real)', { 
     roundId = round.id
     expect((await service.openRound({ classroomCourseId: 'C1', classLabel: '7º A', subject: 'Matemática', bimester: 1 }, teacher)).id).toBe(roundId)
     expect((await service.openRound({ classroomCourseId: 'C1', classLabel: '7º A', subject: 'Matemática', bimester: null }, teacher)).id).not.toBe(roundId)
+    // Semestre é um escopo próprio, separado do bimestre e do ano todo (0058).
+    const semester = await service.openRound({ classroomCourseId: 'C1', classLabel: '7º A', subject: 'Matemática', bimester: null, semester: 1 }, teacher)
+    expect(semester).toMatchObject({ bimester: null, semester: 1 })
+    expect((await service.openRound({ classroomCourseId: 'C1', classLabel: '7º A', subject: 'Matemática', bimester: null, semester: 1 }, teacher)).id).toBe(semester.id)
+    expect((await service.diagnoseStudents(semester, teacher)).get('S1')?.weak.map((skill) => skill.code)).toEqual(['EF07MA01'])
+    await expect(pg.query(`insert into recovery_rounds (classroom_course_id, class_label, academic_year, segment, grade_year, subject, bimester, semester, created_by) values ('X', 'X', 2026, 'anos-finais', 7, 'Matemática', 1, 1, 1)`)).rejects.toThrow()
     await expect(service.openRound({ classroomCourseId: 'C1', classLabel: '7º A', subject: 'Matemática', bimester: 1 }, otherTeacher)).rejects.toMatchObject({ status: 422 })
     await expect(service.getRound(roundId, otherTeacher)).rejects.toMatchObject({ status: 403 })
   })

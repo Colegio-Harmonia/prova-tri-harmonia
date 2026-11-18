@@ -1,9 +1,9 @@
 // Regra pura da prova de recuperação individualizada (18/11/2026).
 //
-// 1. O período é escolhido pelo professor: um bimestre ou o ano todo. No ano
-//    todo, as evidências de todos os bimestres da disciplina somam numa leitura
-//    só por habilidade (um código retomado no 3º bimestre conta junto com o
-//    do 1º).
+// 1. O período é escolhido pelo professor: um bimestre, um semestre (1º =
+//    bimestres 1-2, 2º = 3-4; o colégio é semestral) ou o ano todo. Em semestre
+//    e ano, as evidências dos bimestres do período somam numa leitura só por
+//    habilidade (um código retomado no 2º bimestre conta junto com o do 1º).
 // 2. Entram na prova só as habilidades "em desenvolvimento": aproveitamento
 //    abaixo de 60% com pelo menos 3 questões avaliadas (MASTERY_RULES). Com
 //    menos de 3 questões a leitura é "evidência insuficiente": a habilidade
@@ -25,17 +25,30 @@ export const RECOVERY_RULES = {
   defaultQuestions: 10,
 } as const
 
-/** Recorta e, no ano todo, funde os bimestres das evidências. */
-export function evidenceForPeriod<T extends MasteryEvidenceItem>(evidence: T[], bimester: number | null): T[] {
-  if (bimester === null) return evidence.map((item) => ({ ...item, bimester: YEAR_SCOPE_BIMESTER }))
-  return evidence.filter((item) => item.bimester === bimester)
+/** Período do lote: bimestre, semestre ou (os dois nulos) ano todo. */
+export type RecoveryPeriod = { bimester: number | null; semester?: number | null }
+
+/** Bimestres cobertos pelo período; null = todos (ano todo). */
+export function periodBimesters(period: RecoveryPeriod): number[] | null {
+  if (period.bimester) return [period.bimester]
+  if (period.semester) return [period.semester * 2 - 1, period.semester * 2]
+  return null
 }
 
-/** Mesmo recorte para as habilidades planejadas, sem repetir código no ano todo. */
-export function plannedForPeriod(planned: PlannedMasterySkill[], bimester: number | null): PlannedMasterySkill[] {
-  if (bimester !== null) return planned.filter((skill) => skill.bimester === bimester)
+/** Recorta pelo período; em semestre e ano, funde os bimestres numa leitura só. */
+export function evidenceForPeriod<T extends MasteryEvidenceItem>(evidence: T[], period: RecoveryPeriod): T[] {
+  if (period.bimester) return evidence.filter((item) => item.bimester === period.bimester)
+  const bimesters = periodBimesters(period)
+  return evidence.filter((item) => !bimesters || bimesters.includes(item.bimester)).map((item) => ({ ...item, bimester: YEAR_SCOPE_BIMESTER }))
+}
+
+/** Mesmo recorte para as habilidades planejadas, sem repetir código ao fundir bimestres. */
+export function plannedForPeriod(planned: PlannedMasterySkill[], period: RecoveryPeriod): PlannedMasterySkill[] {
+  if (period.bimester) return planned.filter((skill) => skill.bimester === period.bimester)
+  const bimesters = periodBimesters(period)
   const seen = new Map<string, PlannedMasterySkill>()
   for (const skill of planned) {
+    if (bimesters && !bimesters.includes(skill.bimester)) continue
     const code = skill.code.trim().toUpperCase()
     if (!seen.has(code)) seen.set(code, { ...skill, bimester: YEAR_SCOPE_BIMESTER })
   }
@@ -73,6 +86,8 @@ export function distributeRecoveryQuestions(weak: RecoverySkill[], questionCount
   return skills.map((skill, index) => ({ code: skill.code, questionCount: 1 + extra[index]! }))
 }
 
-export function periodLabel(bimester: number | null) {
-  return bimester === null ? 'Ano todo' : `${bimester}º bimestre`
+export function periodLabel(bimester: number | null, semester?: number | null) {
+  if (bimester) return `${bimester}º bimestre`
+  if (semester) return `${semester}º semestre`
+  return 'Ano todo'
 }

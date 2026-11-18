@@ -8,7 +8,7 @@ proficiência, e as provas saem numa fila de impressão por sala.
 
 | Tema | Decisão |
 |---|---|
-| Período | O professor escolhe: um bimestre ou o ano todo. |
+| Período | O professor escolhe: um bimestre, um semestre (1º = bimestres 1-2, 2º = 3-4; o colégio é semestral, ajuste de 18/11/2026, migration 0058) ou o ano todo. |
 | Habilidades que entram | Só "em desenvolvimento": aproveitamento **abaixo de 60%** com pelo menos 3 questões avaliadas. Habilidade com menos de 3 questões ("evidência insuficiente") fica fora e aparece como aviso. |
 | Revisão | Em lote: o professor revisa as provas da turma e envia; a coordenação/direção aprova o lote inteiro. |
 | Impressão | Um PDF por sala com as provas de todos os alunos, em ordem alfabética, e outro com os gabaritos. |
@@ -46,8 +46,10 @@ proficiência, e as provas saem numa fila de impressão por sala.
   com **presença** das provas formais (`exam_kind = 'prova'`) da disciplina,
   série e ano letivo do lote. O professor só enxerga a evidência das provas
   atribuídas a ele (mesma regra de `masteryData.ts`).
-- Ano todo: as evidências de todos os bimestres somam numa leitura só por
-  habilidade (`evidenceForPeriod`).
+- Semestre e ano todo: as evidências dos bimestres do período somam numa
+  leitura só por habilidade (`evidenceForPeriod`, `periodBimesters`). Na
+  geração, o semestre usa o planejamento de todos os bimestres, restrito às
+  habilidades fracas do aluno.
 - Distribuição das questões (`distributeRecoveryQuestions`): no mínimo uma por
   habilidade; o restante proporcional à distância até 60% (maior resto). Com
   mais habilidades que questões, ficam as de menor aproveitamento. A soma é

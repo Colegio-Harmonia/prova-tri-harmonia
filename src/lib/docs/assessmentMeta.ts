@@ -19,6 +19,7 @@ export function buildAssessmentMeta(params: {
   // Atividade / Gabarito Comentado / Mapa da Atividade.
   examKind?: ExamKind
   enemSkills?: string[]
+  periodLabel?: string
 }): AssessmentMeta {
   const ano = `${params.gradeYear}º ano`
   const disciplinaUpper = params.subject.toUpperCase()
@@ -43,7 +44,7 @@ export function buildAssessmentMeta(params: {
   if (params.examKind === 'recuperacao') {
     // Prova individual: o nome do aluno nunca vai para o Doc (LGPD); ele é
     // carimbado só no PDF baixado da fila de impressão.
-    const bimestre = params.bimester ? `${params.bimester}º` : 'Anual'
+    const bimestre = params.periodLabel ?? (params.bimester ? `${params.bimester}º` : 'Anual')
     return { ano, bimestre, disciplina: params.subject, tituloProva: `AVALIAÇÃO DE RECUPERAÇÃO - ${disciplinaUpper}`, tituloGabarito: `GABARITO DA RECUPERAÇÃO - ${disciplinaUpper}`, tituloMapa: `MAPA DA RECUPERAÇÃO - ${disciplinaUpper}` }
   }
 

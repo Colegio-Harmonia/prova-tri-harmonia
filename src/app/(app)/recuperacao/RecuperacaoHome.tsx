@@ -6,7 +6,7 @@ import type { RecoveryRoundStatus } from '@/db/schema'
 import { periodLabel } from '@/lib/recovery/recoveryPlan'
 import { ROUND_STATUS_LABELS, ROUND_STATUS_TONES } from '@/lib/recovery/labels'
 
-type Round = { id: number; classLabel: string; subject: string; gradeYear: number; bimester: number | null; status: RecoveryRoundStatus; studentCount: number; readyCount: number; generatingCount: number; printedAt: string | null }
+type Round = { id: number; classLabel: string; subject: string; gradeYear: number; bimester: number | null; semester: number | null; status: RecoveryRoundStatus; studentCount: number; readyCount: number; generatingCount: number; printedAt: string | null }
 
 function StatusPill({ status }: { status: RecoveryRoundStatus }) {
   return <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${ROUND_STATUS_TONES[status]}`}>{ROUND_STATUS_LABELS[status]}</span>
@@ -56,7 +56,7 @@ export default function RecuperacaoHome({ isSuperuser }: { isSuperuser: boolean 
         {rounds.map((round) => <li key={round.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
           <div className="min-w-0">
             <p className="font-medium text-content-primary">{round.classLabel} · {round.subject}</p>
-            <p className="mt-1 text-xs text-content-muted">{round.gradeYear}º ano · {periodLabel(round.bimester)} · {round.studentCount} aluno(s){round.generatingCount ? ` · ${round.generatingCount} em geração` : ''}</p>
+            <p className="mt-1 text-xs text-content-muted">{round.gradeYear}º ano · {periodLabel(round.bimester, round.semester)} · {round.studentCount} aluno(s){round.generatingCount ? ` · ${round.generatingCount} em geração` : ''}</p>
           </div>
           <div className="flex items-center gap-3"><StatusPill status={round.status} /><Link href={`/recuperacao/${round.id}`} className="text-sm font-medium text-harmonia-green hover:underline">Abrir lote →</Link></div>
         </li>)}
@@ -67,7 +67,7 @@ export default function RecuperacaoHome({ isSuperuser }: { isSuperuser: boolean 
       : <div className="space-y-4">{queue.map(({ sala, items }) => <section key={sala} className="rounded-xl border border-border bg-surface">
         <h2 className="border-b border-border px-5 py-3 font-semibold text-content-primary">{sala}</h2>
         <ul className="divide-y divide-border">{items.map((round) => <li key={round.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-          <div><p className="font-medium text-content-primary">{round.subject} · {periodLabel(round.bimester)}</p><p className="mt-1 text-xs text-content-muted">{round.readyCount} prova(s) individual(is){round.printedAt ? ` · baixado em ${new Date(round.printedAt).toLocaleDateString('pt-BR')}` : ''}</p></div>
+          <div><p className="font-medium text-content-primary">{round.subject} · {periodLabel(round.bimester, round.semester)}</p><p className="mt-1 text-xs text-content-muted">{round.readyCount} prova(s) individual(is){round.printedAt ? ` · baixado em ${new Date(round.printedAt).toLocaleDateString('pt-BR')}` : ''}</p></div>
           <div className="flex flex-wrap items-center gap-2">
             <StatusPill status={round.status} />
             <a href={`/api/recovery/${round.id}/pdf?doc=prova`} className="rounded-md bg-action-primary px-3 py-2 text-sm font-medium text-action-primary-foreground hover:bg-action-primary-hover">Baixar provas (PDF)</a>
