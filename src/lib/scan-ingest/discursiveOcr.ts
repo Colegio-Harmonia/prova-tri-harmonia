@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { AI_BUDGET_EXHAUSTED_CODE, AiBudgetExceededError, reserveAiOperation } from '@/lib/ai/operationBudget'
 import { classifyAiFailure, normalizeAiUsage, recordAiOperation } from '@/lib/ai/operationTelemetry'
 import { activeAiModel, estimateAiCostMicrousd } from '@/lib/ai/modelProfiles'
+import { discursiveSheetGeometry } from '@/lib/scan-sheets/sheetLayout'
 
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
 const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages'
@@ -21,34 +22,26 @@ export class DiscursiveOcrError extends Error {
 export type DiscursiveCropGeometry = { left: number; top: number; width: number; height: number }
 
 /**
- * PTR1 reserva 147 mm para até três respostas discursivas. O recorte exclui
- * o rótulo da questão e as margens, preservando somente a área manuscrita.
+ * Inclui o quadro impresso inteiro e 3 mm externo de segurança para preservar
+ * letras próximas às bordas. A margem permanece dentro do intervalo de 7 mm
+ * entre questões, sem misturar respostas. Não altera cartões já emitidos.
  */
 export function discursiveCropGeometry(questionIndex: number, questionsOnPage: number, pageSize?: { width: number; height: number }): DiscursiveCropGeometry {
-  if (!Number.isInteger(questionIndex) || questionIndex < 0 || questionIndex >= questionsOnPage) throw new Error('Índice de questão discursiva inválido.')
-  if (!Number.isInteger(questionsOnPage) || questionsOnPage < 1 || questionsOnPage > 3) throw new Error('Quantidade de questões discursivas inválida.')
-
-  const mm = (value: number) => Math.round(value * PX_PER_MM)
-  const gap = mm(7)
-  const boxTop = mm(100) + questionIndex * ((mm(147) - gap * (questionsOnPage - 1)) / questionsOnPage + gap)
-  const boxHeight = (mm(147) - gap * (questionsOnPage - 1)) / questionsOnPage
-  const canonicalGeometry = {
-    left: mm(16),
-    top: Math.round(boxTop + mm(11)),
-    width: CANONICAL_WIDTH - mm(32),
-    height: Math.round(boxHeight - mm(17)),
-  }
-  if (!pageSize) return canonicalGeometry
-  if (!Number.isInteger(pageSize.width) || !Number.isInteger(pageSize.height) || pageSize.width < 1 || pageSize.height < 1) {
+  const box = discursiveSheetGeometry(questionIndex, questionsOnPage)
+  const size = pageSize ?? { width: CANONICAL_WIDTH, height: CANONICAL_HEIGHT }
+  if (!Number.isInteger(size.width) || !Number.isInteger(size.height) || size.width < 1 || size.height < 1) {
     throw new DiscursiveOcrError('Imagem sem dimensões válidas para recorte.', 'invalid_image_dimensions')
   }
-  const scaleX = pageSize.width / CANONICAL_WIDTH
-  const scaleY = pageSize.height / CANONICAL_HEIGHT
-  const left = Math.max(0, Math.floor(canonicalGeometry.left * scaleX))
-  const top = Math.max(0, Math.floor(canonicalGeometry.top * scaleY))
-  const width = Math.min(pageSize.width - left, Math.max(1, Math.ceil(canonicalGeometry.width * scaleX)))
-  const height = Math.min(pageSize.height - top, Math.max(1, Math.ceil(canonicalGeometry.height * scaleY)))
-  return { left, top, width, height }
+  const scaleX = PX_PER_MM * size.width / CANONICAL_WIDTH
+  const scaleY = PX_PER_MM * size.height / CANONICAL_HEIGHT
+  const padding = 3
+  const left = Math.max(0, Math.floor((box.left - padding) * scaleX))
+  const top = Math.max(0, Math.floor((box.top - padding) * scaleY))
+  // Arredondar os limites para fora evita perder pixels na borda em scans
+  // menores ou quando três quadros têm altura fracionária.
+  const right = Math.min(size.width, Math.ceil((box.left + box.width + padding) * scaleX))
+  const bottom = Math.min(size.height, Math.ceil((box.top + box.height + padding) * scaleY))
+  return { left, top, width: right - left, height: bottom - top }
 }
 
 export async function cropDiscursiveAnswer(params: { canonicalImage: Buffer; questionIndex: number; questionsOnPage: number }) {

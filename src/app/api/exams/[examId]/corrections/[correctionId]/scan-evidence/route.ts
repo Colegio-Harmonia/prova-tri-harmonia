@@ -108,7 +108,7 @@ async function evidenceForCorrection(access: AuthorizedAccess, correction: typeo
           exceptionCode: reading.exceptionCode,
           modelReference: reading.modelReference,
           reviewStatus: reading.reviewStatus,
-          cropAvailable: Boolean(reading.cropDriveFileId),
+          cropAvailable: Boolean(reading.cropDriveFileId || (reading.kind === 'discursive' && page?.imageAvailable)),
           transcriptionActive: Boolean(activeJobForQuestion(reading.pageId, reading.questionNumber)),
           transcriptionJobStatus: activeJobForQuestion(reading.pageId, reading.questionNumber)?.status ?? null,
         } : null,
