@@ -22,7 +22,7 @@ export class DiscursiveOcrError extends Error {
 export type DiscursiveCropGeometry = { left: number; top: number; width: number; height: number }
 
 /**
- * Inclui o quadro impresso inteiro e 1 mm externo de segurança para preservar
+ * Inclui o quadro impresso inteiro e 3 mm externo de segurança para preservar
  * letras próximas às bordas. A margem permanece dentro do intervalo de 7 mm
  * entre questões, sem misturar respostas. Não altera cartões já emitidos.
  */
@@ -34,7 +34,7 @@ export function discursiveCropGeometry(questionIndex: number, questionsOnPage: n
   }
   const scaleX = PX_PER_MM * size.width / CANONICAL_WIDTH
   const scaleY = PX_PER_MM * size.height / CANONICAL_HEIGHT
-  const padding = 1
+  const padding = 3
   const left = Math.max(0, Math.floor((box.left - padding) * scaleX))
   const top = Math.max(0, Math.floor((box.top - padding) * scaleY))
   // Arredondar os limites para fora evita perder pixels na borda em scans

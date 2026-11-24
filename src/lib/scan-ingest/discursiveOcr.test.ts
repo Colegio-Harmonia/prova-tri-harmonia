@@ -14,9 +14,9 @@ describe('recortes PTR1 de respostas discursivas', () => {
     expect(third.top + third.height).toBeLessThanOrEqual(2970)
     expect(first.top + first.height).toBeLessThan(second.top)
     expect(second.top + second.height).toBeLessThan(third.top)
-    expect(first).toEqual({ left: 110, top: 990, width: 1880, height: 464 })
-    expect(third.top + third.height).toBeGreaterThanOrEqual(2480)
-    expect(third.top + third.height).toBeLessThanOrEqual(2481)
+    expect(first).toEqual({ left: 90, top: 970, width: 1920, height: 504 })
+    expect(third.top + third.height).toBeGreaterThanOrEqual(2500)
+    expect(third.top + third.height).toBeLessThanOrEqual(2501)
   })
 
   it.each([1, 2, 3])('preserva tinta nas quatro bordas de cada um dos %i quadros impressos em diferentes resoluções', async (count) => {
@@ -33,6 +33,8 @@ describe('recortes PTR1 de respostas discursivas', () => {
           { left: Math.floor(198 * sx) - 3, top: Math.ceil(printedTop * sy) },
           { left: Math.ceil(12 * sx), top: Math.floor((printedTop + printedHeight) * sy) - 3 },
           { left: Math.floor(198 * sx) - 3, top: Math.floor((printedTop + printedHeight) * sy) - 3 },
+          { left: Math.ceil(10 * sx), top: Math.ceil((printedTop - 2) * sy) },
+          { left: Math.floor(200 * sx) - 3, top: Math.floor((printedTop + printedHeight + 2) * sy) - 3 },
         ]
         const ink = await sharp({ create: { width: 3, height: 3, channels: 3, background: 'black' } }).png().toBuffer()
         const canonicalImage = await sharp({ create: { ...size, channels: 3, background: 'white' } })

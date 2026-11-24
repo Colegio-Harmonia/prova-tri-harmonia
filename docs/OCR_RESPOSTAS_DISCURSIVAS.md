@@ -19,7 +19,7 @@ modelo antes de o professor confirmar a transcrição.
 
 ## Recorte integral dos quadros
 
-O recorte inclui todo o quadro impresso da questão, com 1 mm adicional em
+O recorte inclui todo o quadro impresso da questão, com 3 mm adicional em
 cada borda. As medidas do quadro são compartilhadas com o gerador do PDF;
 as posições impressas, os QR e as versões PTR1/PTR2/PTR3 são preservados.
 O arredondamento é feito para fora nas diferentes resoluções de scan.
