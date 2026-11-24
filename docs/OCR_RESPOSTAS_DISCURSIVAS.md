@@ -17,6 +17,19 @@ professor confere/edita no aluno -> sugestão de nota -> professor define nota f
 Os dois últimos passos são separados: uma sugestão de nota nunca é enviada ao
 modelo antes de o professor confirmar a transcrição.
 
+## Recorte integral dos quadros
+
+O recorte inclui todo o quadro impresso da questão, com 1 mm adicional em
+cada borda. As medidas do quadro são compartilhadas com o gerador do PDF;
+as posições impressas, os QR e as versões PTR1/PTR2/PTR3 são preservados.
+O arredondamento é feito para fora nas diferentes resoluções de scan.
+
+Na visualização, inclusive para scans antigos, o quadro é recalculado a
+partir da página canônica privada. Os recortes arquivados, as transcrições
+salvas e as notas não são sobrescritos por essa consulta. Uma nova leitura
+de IA usa o recorte integral; transcrições antigas podem ser relidas pela
+ação já disponível na questão.
+
 ## Privacidade e auditoria
 
 - Não há URL do Drive, QR ou identificação do aluno no pedido ao provedor.

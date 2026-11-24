@@ -3,7 +3,7 @@ import { join } from 'path'
 import QRCode from 'qrcode'
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
 import type { ExamQuestion } from '@/lib/gemini/examSchema'
-import { objectiveSheetGeometry, planSheetPages } from '@/lib/scan-sheets/sheetLayout'
+import { discursiveSheetGeometry, objectiveSheetGeometry, planSheetPages } from '@/lib/scan-sheets/sheetLayout'
 
 const MM = 72 / 25.4
 const PAGE_WIDTH = 210 * MM
@@ -177,13 +177,11 @@ function drawObjectivePage(page: PDFPage, fonts: { regular: PDFFont; bold: PDFFo
 
 function drawDiscursivePage(page: PDFPage, fonts: { regular: PDFFont; bold: PDFFont }, questions: ExamQuestion[]) {
   drawTopText(page, 'Escreva somente dentro das áreas delimitadas. Mantenha o QR e os marcadores visíveis no scan.', MARGIN, 88 * MM, 7.8, fonts.regular, colors.muted)
-  const gap = 7 * MM
-  const top = 100 * MM
-  const availableHeight = 147 * MM
-  const height = (availableHeight - gap * (questions.length - 1)) / questions.length
   for (const [index, question] of questions.entries()) {
-    const boxTop = top + index * (height + gap)
-    page.drawRectangle({ x: MARGIN, y: yFromTop(boxTop, height), width: PAGE_WIDTH - 2 * MARGIN, height, color: rgb(1, 1, 1), borderColor: rgb(0.73, 0.76, 0.74), borderWidth: 0.7 })
+    const box = discursiveSheetGeometry(index, questions.length)
+    const boxTop = box.top * MM
+    const height = box.height * MM
+    page.drawRectangle({ x: box.left * MM, y: yFromTop(boxTop, height), width: box.width * MM, height, color: rgb(1, 1, 1), borderColor: rgb(0.73, 0.76, 0.74), borderWidth: 0.7 })
     drawTopText(page, `QUESTÃO ${question.number}`, MARGIN + 4 * MM, boxTop + 5 * MM, 9.5, fonts.bold, colors.green)
     drawTopText(page, 'Escreva somente dentro desta área.', MARGIN + 31 * MM, boxTop + 5.2 * MM, 7.5, fonts.regular, colors.muted)
     for (let lineTop = boxTop + 15 * MM; lineTop < boxTop + height - 7 * MM; lineTop += 6 * MM) {

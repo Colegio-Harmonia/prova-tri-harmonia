@@ -6,6 +6,14 @@ export const CURRENT_SHEET_LAYOUT = 'PTR3'
 export const SHEET_MIN_ALTERNATIVES = 4
 export const SHEET_MAX_ALTERNATIVES = 5
 
+/** Limites do quadro impresso, em mm, comuns a PTR1/PTR2/PTR3. */
+export function discursiveSheetGeometry(questionIndex: number, questionsOnPage: number) {
+  if (!Number.isInteger(questionsOnPage) || questionsOnPage < 1 || questionsOnPage > 3) throw new Error('Quantidade de questões discursivas inválida.')
+  if (!Number.isInteger(questionIndex) || questionIndex < 0 || questionIndex >= questionsOnPage) throw new Error('Índice de questão discursiva inválido.')
+  const height = (147 - 7 * (questionsOnPage - 1)) / questionsOnPage
+  return { left: 12, top: 100 + questionIndex * (height + 7), width: 186, height }
+}
+
 /** Medidas em mm. PTR1 permanece disponível para cartões já emitidos. */
 export function objectiveSheetGeometry(layoutVersion: string) {
   switch (layoutVersion) {
