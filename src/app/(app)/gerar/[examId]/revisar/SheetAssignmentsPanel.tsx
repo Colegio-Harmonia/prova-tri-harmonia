@@ -4,6 +4,7 @@ import { signIn } from 'next-auth/react'
 import { useEffect, useMemo, useState } from 'react'
 import { downloadSheetAssignments } from './downloadSheetAssignments'
 import { CURRENT_SHEET_LAYOUT } from '@/lib/scan-sheets/sheetLayout'
+import { checkCourseExamFit, courseLabel, describeMismatch, sortCoursesForExam } from '@/lib/classroom/courseExamFit'
 
 type ClassroomCourse = { id: string; name: string; section: string | null }
 type Assignment = {
@@ -24,10 +25,14 @@ function errorMessage(body: { error?: string; message?: string }) {
 export default function SheetAssignmentsPanel({
   examId,
   classroomCourseId,
+  examSubject,
+  examGradeYear,
   onCourseLinked,
 }: {
   examId: number
   classroomCourseId: string | null
+  examSubject: string
+  examGradeYear: number | null
   onCourseLinked: () => Promise<void>
 }) {
   const [courses, setCourses] = useState<ClassroomCourse[]>([])
@@ -44,6 +49,11 @@ export default function SheetAssignmentsPanel({
     () => courses.find((course) => course.id === classroomCourseId),
     [classroomCourseId, courses],
   )
+  const examForFit = useMemo(() => ({ subject: examSubject, gradeYear: examGradeYear }), [examSubject, examGradeYear])
+  const sortedCourses = useMemo(() => sortCoursesForExam(courses, examForFit), [courses, examForFit])
+  const selectedCourseInfo = courses.find((course) => course.id === selectedCourse) ?? null
+  const selectedMismatch = selectedCourseInfo ? describeMismatch(checkCourseExamFit(selectedCourseInfo, examForFit)) : null
+  const linkedMismatch = linkedCourse ? describeMismatch(checkCourseExamFit(linkedCourse, examForFit)) : null
   const readyAssignments = assignments?.filter((assignment) => assignment.status === 'pronta') ?? []
   const emittedAssignments = assignments?.filter((assignment) => assignment.status === 'emitida') ?? []
   const outdatedAssignments = emittedAssignments.filter((assignment) => assignment.layoutVersion !== CURRENT_SHEET_LAYOUT)
@@ -76,6 +86,7 @@ export default function SheetAssignmentsPanel({
 
   async function linkCourse() {
     if (!selectedCourse) return
+    if (selectedMismatch && !window.confirm(`Atenção: ${selectedMismatch.charAt(0).toLowerCase()}${selectedMismatch.slice(1)}.\n\nTem certeza de que “${selectedCourseInfo ? courseLabel(selectedCourseInfo) : 'esta turma'}” é a turma desta prova?`)) return
     setLinking(true); setError(null); setNotice(null)
     try {
       const response = await fetch(`/api/exams/${examId}/link-course`, {
@@ -170,16 +181,18 @@ export default function SheetAssignmentsPanel({
             <label htmlFor="sheet-classroom-course" className="text-sm font-medium">Turma do Classroom</label>
             <select id="sheet-classroom-course" value={selectedCourse} onChange={(event) => setSelectedCourse(event.target.value)} className="block rounded border border-neutral-300 px-2 py-2 text-sm">
               <option value="">Selecione…</option>
-              {courses.map((course) => <option key={course.id} value={course.id}>{course.name}{course.section ? ` — ${course.section}` : ''}</option>)}
+              {sortedCourses.map((course) => <option key={course.id} value={course.id}>{courseLabel(course)}{checkCourseExamFit(course, examForFit).kind === 'mismatch' ? ' (outra disciplina/série?)' : ''}</option>)}
             </select>
           </div>
           <button type="button" onClick={linkCourse} disabled={!selectedCourse || linking} className="rounded bg-harmonia-green px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
             {linking ? 'Vinculando…' : 'Vincular turma'}
           </button>
+          {selectedMismatch && <p role="alert" className="w-full text-sm text-amber-800">{selectedMismatch}. Confira se esta é mesmo a turma da prova.</p>}
         </div>
       ) : (
         <div className="mt-3 rounded border bg-white p-3 text-sm">
-          <p><strong>Turma vinculada:</strong> {linkedCourse ? `${linkedCourse.name}${linkedCourse.section ? ` — ${linkedCourse.section}` : ''}` : 'turma do Classroom'}</p>
+          <p><strong>Turma vinculada:</strong> {linkedCourse ? courseLabel(linkedCourse) : 'turma do Classroom'}</p>
+          {linkedMismatch && <p role="alert" className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-amber-900"><strong>Confira a turma:</strong> {linkedMismatch}. Se estiver errada, use “Trocar turma” na tela de correção antes de lançar as notas.</p>}
           {assignments === null ? <p className="mt-2 text-neutral-500">Carregando fichas…</p> : <>
             <p className="mt-2 text-neutral-600">{activeAssignments.length === 0 ? 'Nenhuma ficha preparada ainda.' : `${activeAssignments.length} fichas no lote: ${readyAssignments.length} prontas e ${emittedAssignments.length} já emitidas.`}</p>
             <div className="mt-3 flex flex-wrap gap-2">

@@ -1,9 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, CheckCircle2, CloudUpload, LoaderCircle, Users } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, CloudUpload, LoaderCircle, School, Users } from 'lucide-react'
 import { signIn } from 'next-auth/react'
 import { readJsonResponse } from '@/lib/http/readJsonResponse'
+import { checkCourseExamFit, courseLabel, describeMismatch, sortCoursesForExam } from '@/lib/classroom/courseExamFit'
 
 type Completion = {
   expected: number
@@ -18,8 +19,16 @@ type Completion = {
 }
 
 type Exam = {
+  subject: string
+  gradeYear: number | null
   classroomCourseId: string | null
   classroomCourseWorkId: string | null
+}
+
+type LinkResult = {
+  error?: string
+  message?: string
+  previousCourseWork?: { courseId: string | null; courseWorkId: string | null; deleted: boolean }
 }
 
 type ClassroomCourse = { id: string; name: string; section: string | null }
@@ -54,8 +63,10 @@ export default function ReturnGradesCard({ examId }: { examId: number }) {
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<ReturnResult | null>(null)
   const [courses, setCourses] = useState<ClassroomCourse[]>([])
+  const [coursesLoaded, setCoursesLoaded] = useState(false)
   const [selectedCourse, setSelectedCourse] = useState('')
   const [linking, setLinking] = useState(false)
+  const [changingCourse, setChangingCourse] = useState(false)
   const [needsGoogle, setNeedsGoogle] = useState(false)
 
   const load = useCallback(async () => {
@@ -78,8 +89,13 @@ export default function ReturnGradesCard({ examId }: { examId: number }) {
     void load().catch((reason) => setError(reason instanceof Error ? reason.message : 'Não foi possível carregar o status do Classroom.')).finally(() => setLoading(false))
   }, [load])
 
+  // As turmas são carregadas também quando a prova já está vinculada: é o que
+  // permite mostrar o NOME da turma vinculada e avisar se ela não parece ser
+  // desta prova (caso real: provas de Ciências vinculadas à turma de Artes).
   useEffect(() => {
-    if (loading || exam?.classroomCourseId) return
+    if (loading || coursesLoaded) return
+    setCoursesLoaded(true)
+    const linkedOnLoad = Boolean(exam?.classroomCourseId)
     fetch('/api/classroom/courses')
       .then(async (response) => {
         const body = await readJsonResponse<{ courses?: ClassroomCourse[]; error?: string; message?: string }>(response)
@@ -89,25 +105,51 @@ export default function ReturnGradesCard({ examId }: { examId: number }) {
         }
         setCourses(body.courses ?? [])
       })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : 'Não foi possível carregar as turmas.'))
-  }, [exam, loading])
+      .catch((reason) => {
+        // Com a prova já vinculada, a lista serve só para mostrar o nome da
+        // turma: a falha não deve virar um erro em destaque na tela.
+        if (!linkedOnLoad) setError(reason instanceof Error ? reason.message : 'Não foi possível carregar as turmas.')
+      })
+  }, [coursesLoaded, loading, exam?.classroomCourseId])
+
+  const examForFit = useMemo(() => exam ? { subject: exam.subject, gradeYear: exam.gradeYear } : null, [exam])
+  const sortedCourses = useMemo(() => examForFit ? sortCoursesForExam(courses, examForFit) : courses, [courses, examForFit])
+  const linkedCourse = useMemo(() => courses.find((course) => course.id === exam?.classroomCourseId) ?? null, [courses, exam?.classroomCourseId])
+  const linkedMismatch = linkedCourse && examForFit ? describeMismatch(checkCourseExamFit(linkedCourse, examForFit)) : null
+  const selectedCourseInfo = courses.find((course) => course.id === selectedCourse) ?? null
+  const selectedMismatch = selectedCourseInfo && examForFit ? describeMismatch(checkCourseExamFit(selectedCourseInfo, examForFit)) : null
 
   const disabledReason = useMemo(() => reasonForDisabled(completion, exam), [completion, exam])
   const canImport = Boolean(exam?.classroomCourseId && completion?.classroomReady && completion.reviewed > 0 && !loading && !importing)
 
   async function linkCourse() {
-    if (!selectedCourse) return
+    if (!selectedCourse || !exam) return
+    const target = selectedCourseInfo ? `“${courseLabel(selectedCourseInfo)}”` : 'a turma selecionada'
+    if (selectedMismatch && !window.confirm(`Atenção: ${selectedMismatch.charAt(0).toLowerCase()}${selectedMismatch.slice(1)}.\n\nTem certeza de que ${target} é a turma desta prova?`)) return
+    const replaceCourseWork = Boolean(exam.classroomCourseId && exam.classroomCourseWorkId && exam.classroomCourseId !== selectedCourse)
+    if (replaceCourseWork) {
+      const previous = linkedCourse ? `“${courseLabel(linkedCourse)}”` : 'da turma anterior'
+      if (!window.confirm(`A prova passará para ${target}.\n\nA atividade criada na turma ${previous} será apagada do Classroom, junto com as notas lançadas lá. Depois, lance as notas de novo nesta tela.\n\nDeseja continuar?`)) return
+    }
     setLinking(true)
     setError(null)
+    setMessage(null)
+    setResult(null)
     try {
       const response = await fetch(`/api/exams/${examId}/link-course`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ classroomCourseId: selectedCourse }),
+        body: JSON.stringify({ classroomCourseId: selectedCourse, ...(replaceCourseWork ? { replaceCourseWork: true } : {}) }),
       })
-      const body = await readJsonResponse<{ message?: string; error?: string }>(response)
+      const body = await readJsonResponse<LinkResult>(response)
       if (!response.ok) throw new Error(body.message ?? body.error ?? 'Não foi possível vincular a turma.')
+      if (body.previousCourseWork) {
+        setMessage(body.previousCourseWork.deleted
+          ? 'Turma trocada. A atividade da turma anterior foi apagada do Classroom. Agora lance as notas de novo.'
+          : 'Turma trocada, mas não consegui apagar a atividade da turma anterior no Classroom. Apague-a manualmente lá e depois lance as notas de novo.')
+      }
       setSelectedCourse('')
+      setChangingCourse(false)
       await load()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Não foi possível vincular a turma.')
@@ -119,9 +161,11 @@ export default function ReturnGradesCard({ examId }: { examId: number }) {
   async function importGrades(correctionIds?: number[]) {
     if (!canImport) return
     const isRetry = Boolean(correctionIds?.length)
-    if (!window.confirm(isRetry
-      ? `O sistema tentará novamente lançar ${correctionIds?.length} nota(s) que falharam. Deseja continuar?`
-      : 'As notas dos alunos corrigidos serão lançadas no Google Classroom. Alunos marcados como ausentes não receberão nota. Deseja continuar?')) return
+    const destination = linkedCourse ? ` na turma “${courseLabel(linkedCourse)}”` : ' no Google Classroom'
+    const warning = linkedMismatch ? `Atenção: ${linkedMismatch.charAt(0).toLowerCase()}${linkedMismatch.slice(1)}.\n\n` : ''
+    if (!window.confirm(warning + (isRetry
+      ? `O sistema tentará novamente lançar ${correctionIds?.length} nota(s) que falharam${destination}. Deseja continuar?`
+      : `As notas dos alunos corrigidos serão lançadas${destination}. Alunos marcados como ausentes não receberão nota. Deseja continuar?`))) return
     setImporting(true)
     setError(null)
     setMessage(null)
@@ -148,6 +192,21 @@ export default function ReturnGradesCard({ examId }: { examId: number }) {
     }
   }
 
+  const coursePicker = (
+    <div className="flex flex-wrap items-center gap-2">
+      <label htmlFor="return-grades-course" className="sr-only">Turma do Google Classroom</label>
+      <select id="return-grades-course" value={selectedCourse} onChange={(event) => setSelectedCourse(event.target.value)} disabled={loading || linking} className="min-h-10 max-w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-content-primary">
+        <option value="">{loading ? 'Carregando turmas…' : 'Selecione a turma…'}</option>
+        {sortedCourses.filter((course) => course.id !== exam?.classroomCourseId).map((course) => {
+          const mismatch = examForFit ? checkCourseExamFit(course, examForFit).kind === 'mismatch' : false
+          return <option key={course.id} value={course.id}>{courseLabel(course)}{mismatch ? ' (outra disciplina/série?)' : ''}</option>
+        })}
+      </select>
+      <button type="button" onClick={() => void linkCourse()} disabled={!selectedCourse || linking} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-harmonia-green px-4 py-2 text-sm font-semibold text-harmonia-green hover:bg-harmonia-green/10 disabled:cursor-not-allowed disabled:opacity-50">{linking ? <LoaderCircle size={16} className="animate-spin" /> : null}{linking ? 'Vinculando…' : exam?.classroomCourseId ? 'Trocar para esta turma' : 'Vincular turma'}</button>
+      {exam?.classroomCourseId && <button type="button" onClick={() => { setChangingCourse(false); setSelectedCourse('') }} disabled={linking} className="min-h-10 rounded-lg px-3 py-2 text-sm text-content-secondary hover:underline">Cancelar</button>}
+    </div>
+  )
+
   const failedCorrectionIds = result?.errors?.flatMap((item) => typeof item.correctionId === 'number' ? [item.correctionId] : []) ?? []
   const hasPartialErrors = Boolean(result?.errors?.length)
   return (
@@ -164,14 +223,7 @@ export default function ReturnGradesCard({ examId }: { examId: number }) {
           needsGoogle ? (
             <button type="button" onClick={() => signIn('google', { callbackUrl: `/gerar/${examId}/corrigir` })} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-harmonia-green px-4 py-2 text-sm font-semibold text-harmonia-green hover:bg-harmonia-green/10">Conectar Google</button>
           ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              <label htmlFor="return-grades-course" className="sr-only">Turma do Google Classroom</label>
-              <select id="return-grades-course" value={selectedCourse} onChange={(event) => setSelectedCourse(event.target.value)} disabled={loading || linking} className="min-h-10 max-w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-content-primary">
-                <option value="">{loading ? 'Carregando turmas…' : 'Selecione a turma…'}</option>
-                {courses.map((course) => <option key={course.id} value={course.id}>{course.name}{course.section ? ` — ${course.section}` : ''}</option>)}
-              </select>
-              <button type="button" onClick={() => void linkCourse()} disabled={!selectedCourse || linking} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-harmonia-green px-4 py-2 text-sm font-semibold text-harmonia-green hover:bg-harmonia-green/10 disabled:cursor-not-allowed disabled:opacity-50">{linking ? <LoaderCircle size={16} className="animate-spin" /> : null}{linking ? 'Vinculando…' : 'Vincular turma'}</button>
-            </div>
+            coursePicker
           )
         ) : (
           <button type="button" onClick={() => void importGrades()} disabled={!canImport} title={canImport ? 'Importar notas para o Google Classroom' : disabledReason} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-harmonia-green px-5 py-2.5 text-sm font-semibold text-action-primary-foreground shadow-sm transition hover:bg-harmonia-green/90 disabled:cursor-not-allowed disabled:opacity-50">
@@ -180,6 +232,19 @@ export default function ReturnGradesCard({ examId }: { examId: number }) {
           </button>
         )}
       </div>
+
+      {!loading && exam?.classroomCourseId && (
+        <div className="mt-4 rounded-xl border border-border bg-surface/80 px-3 py-2.5 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="flex min-w-0 items-center gap-2 text-content-secondary"><School size={16} aria-hidden="true" /><span>Turma no Classroom: <strong className="text-content-primary">{linkedCourse ? courseLabel(linkedCourse) : needsGoogle ? 'conecte o Google para ver o nome' : coursesLoaded && courses.length > 0 ? 'turma fora da sua lista de turmas' : 'carregando…'}</strong></span></p>
+            {!changingCourse && !needsGoogle && <button type="button" onClick={() => setChangingCourse(true)} disabled={importing || linking} className="text-sm font-semibold text-harmonia-green hover:underline disabled:opacity-50">Trocar turma</button>}
+          </div>
+          {changingCourse && <div className="mt-3">{coursePicker}</div>}
+          {selectedMismatch && <p className="mt-2 flex items-center gap-2 text-status-warning-content"><AlertTriangle size={16} /> {selectedMismatch}.</p>}
+        </div>
+      )}
+      {!loading && !exam?.classroomCourseId && selectedMismatch && <p role="alert" className="mt-4 flex items-center gap-2 text-sm text-status-warning-content"><AlertTriangle size={16} /> {selectedMismatch}. Confira se esta é mesmo a turma da prova.</p>}
+      {linkedMismatch && <p role="alert" className="mt-3 flex items-start gap-2 rounded-lg border border-status-warning-border bg-status-warning-surface p-3 text-sm text-status-warning-content"><AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span><strong>Confira a turma antes de lançar as notas.</strong> {linkedMismatch}. Se estiver errada, use “Trocar turma”.</span></p>}
 
       <div className="mt-5 grid gap-2 sm:grid-cols-4" aria-label="Resumo da conclusão da prova">
         <div className="rounded-xl border border-border bg-surface/80 px-3 py-2.5"><p className="text-xs text-content-muted">Alunos</p><p className="mt-0.5 text-lg font-semibold text-content-primary">{loading ? '—' : completion?.expected ?? 0}</p></div>
