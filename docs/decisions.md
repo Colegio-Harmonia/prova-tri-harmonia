@@ -1,5 +1,27 @@
 # Decisões Arquiteturais
 
+## ADR-017 - Conferir turma do Classroom contra a disciplina da prova
+
+**Data:** 25/11/2026
+**Problema:** o seletor de turma lista todas as turmas em que o professor
+leciona. Duas provas de Ciências do 3º ano (743 e 744) foram vinculadas às
+turmas de Artes da mesma série e as notas foram lançadas lá. A tela de correção
+não mostrava o nome da turma vinculada, e a rota `link-course` recusava trocar a
+turma depois de criada a atividade, então a correção só foi possível no banco.
+**Decisão:** `src/lib/classroom/courseExamFit.ts` compara o nome/seção da turma
+com a disciplina e a série da prova. É heurística: só ordena o seletor, marca as
+turmas suspeitas e pede confirmação; nunca bloqueia, porque o nome da turma é
+livre no Classroom. A tela de correção mostra a turma vinculada e oferece
+"Trocar turma"; com atividade já criada, `link-course` exige
+`replaceCourseWork: true`, só para prova.
+**Ordem da troca:** dentro do mesmo advisory lock de `return-grades`, a prova
+passa a apontar para a turma nova, sem atividade e com `grade_returned_at`
+zerado; só depois a atividade antiga é apagada no Classroom. Se o Classroom
+recusar, a prova continua na turma certa e a tela pede para apagar à mão.
+**Consequência:** a professora corrige o vínculo sozinha e as notas nunca
+voltam para a turma errada; a atividade e as notas da turma anterior somem
+junto com a atividade apagada.
+
 ## ADR-016 - Observabilidade do Jev sem conteúdo pedagógico
 
 **Data:** 01/10/2026

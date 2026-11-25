@@ -677,6 +677,8 @@ export default function RevisarExam({ examId, currentUserRole, currentUserId }: 
         <SheetAssignmentsPanel
           examId={examId}
           classroomCourseId={exam.classroomCourseId}
+          examSubject={exam.subject}
+          examGradeYear={exam.gradeYear}
           onCourseLinked={load}
         />
       )}
