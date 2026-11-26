@@ -16,7 +16,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ rou
   if (!parsed.success) return NextResponse.json({ error: 'Ação inválida.' }, { status: 400 })
   try {
     const round = await getRound(parseId((await params).roundId), access.viewer)
-    if (parsed.data.action === 'gerar') return NextResponse.json(await generatePlanned(round, access.viewer))
+    if (parsed.data.action === 'gerar') return NextResponse.json(await generatePlanned(round))
     if (parsed.data.action === 'enviar') await submitRound(round, access.viewer)
     if (parsed.data.action === 'devolver') await returnRound(round, access.viewer)
     if (parsed.data.action === 'aprovar') {

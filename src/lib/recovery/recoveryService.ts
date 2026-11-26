@@ -277,13 +277,19 @@ export async function updateStudentPlan(round: Round, recoveryStudentId: number,
   await db.update(recoveryStudents).set({ contentPlan: contentPlan.filter((item) => item.questionCount > 0), updatedAt: new Date() }).where(eq(recoveryStudents.id, student.id))
 }
 
-/** Envia para a fila todos os alunos com matriz conferida ('planejado'). */
-export async function generatePlanned(round: Round, viewer: Viewer) {
+/**
+ * Envia para a fila todos os alunos com matriz conferida ('planejado').
+ * O job sai em nome do professor dono do lote, não de quem clicou: o worker
+ * usa job.requestedBy como createdBy/assignedTo da prova, e com a direção
+ * clicando o professor recebia 403 na revisão (lote 7, provas 853-856,
+ * 26/11/2026).
+ */
+export async function generatePlanned(round: Round) {
   assertEditable(round)
   const planned = (await activeStudents(round.id)).filter((student) => student.status === 'planejado')
   if (!planned.length) throw new RecoveryError('Nenhum aluno com matriz pronta para gerar.', 409)
   for (const student of planned) {
-    const jobId = await enqueueStudentExam(round, student.id, student.contentPlan, student.weakSkills.map((skill) => skill.code), viewer.id)
+    const jobId = await enqueueStudentExam(round, student.id, student.contentPlan, student.weakSkills.map((skill) => skill.code), round.createdBy)
     await db.update(recoveryStudents).set({ status: 'gerando', jobId, examId: null, updatedAt: new Date() }).where(eq(recoveryStudents.id, student.id))
   }
   return { queued: planned.length }

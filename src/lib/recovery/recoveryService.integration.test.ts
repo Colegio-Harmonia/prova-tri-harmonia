@@ -105,15 +105,16 @@ describe.skipIf(!pgliteInstalled())('prova de recuperação (Postgres real)', { 
     expect(ana.contentPlan).toEqual([expect.objectContaining({ unitRowIndex: 0, questionCount: 15 })])
 
     // Gerar: um job da prova formal por aluno, pelo Planejamento, com foco nas fracas.
-    expect(await service.generatePlanned(updated, teacher)).toEqual({ queued: 1 })
+    expect(await service.generatePlanned(updated)).toEqual({ queued: 1 })
     ana = (await service.roundDetail(updated)).students.find((student) => student.classroomStudentId === 'S1')!
     expect(ana).toMatchObject({ status: 'gerando', generation: 'na_fila' })
-    const job = await pg.query<{ job_type: string; payload: Record<string, unknown> }>(`select job_type, payload from generation_jobs where id = $1`, [ana.jobId])
-    expect(job.rows[0]).toMatchObject({ job_type: 'gerar_prova', payload: {
+    const job = await pg.query<{ job_type: string; requested_by: number; payload: Record<string, unknown> }>(`select job_type, requested_by, payload from generation_jobs where id = $1`, [ana.jobId])
+    // O job sai em nome do dono do lote (a prova vira dele), mesmo que a coordenação clique.
+    expect(job.rows[0]).toMatchObject({ job_type: 'gerar_prova', requested_by: teacher.id, payload: {
       recoveryStudentId: ana.id, focusBnccCodes: ['EF07MA01'], questionSource: 'ia', objectivePercentage: 50, questionCount: 15, bimester: 1,
       curriculumPlanId: expect.any(Number), contentPlan: [expect.objectContaining({ unitRowIndex: 0, questionCount: 15 })],
     } })
-    await expect(service.generatePlanned(updated, teacher)).rejects.toMatchObject({ status: 409 })
+    await expect(service.generatePlanned(updated)).rejects.toMatchObject({ status: 409 })
   })
 
   it('só liga a prova do job vigente; job antigo arquiva a própria prova', async () => {
