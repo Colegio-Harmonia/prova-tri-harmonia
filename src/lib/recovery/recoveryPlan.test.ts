@@ -36,11 +36,31 @@ describe('selectRecoverySkills', () => {
     const evidence = [item('EF07MA01', 1, 1, 1, 0), item('EF07MA01', 1, 1, 2, 0), item('EF07MA01', 3, 5, 1, 1), item('EF07MA01', 3, 5, 2, 0)]
     const planned = [plan('EF07MA01', 1), plan('EF07MA01', 3)]
     const byBimester = selectRecoverySkills(calculateStudentMastery(plannedForPeriod(planned, { bimester: 1 }), evidenceForPeriod(evidence, { bimester: 1 })))
-    expect(byBimester.weak).toEqual([])
-    expect(byBimester.insufficient.map((skill) => skill.code)).toEqual(['EF07MA01'])
+    // Sozinho no 1º bimestre (0/2) só entra pelo fallback de amostra pequena.
+    expect(byBimester.weak).toEqual([expect.objectContaining({ code: 'EF07MA01', masteryPercent: 0, itemCount: 2, smallSample: true })])
+    expect(byBimester.insufficient).toEqual([])
 
     const year = selectRecoverySkills(calculateStudentMastery(plannedForPeriod(planned, { bimester: null }), evidenceForPeriod(evidence, { bimester: null })))
     expect(year.weak).toEqual([expect.objectContaining({ code: 'EF07MA01', masteryPercent: 25, itemCount: 4 })])
+    expect(year.weak[0]!.smallSample).toBeUndefined()
+  })
+
+  it('sem nenhuma fraca com amostra suficiente, leva as de amostra pequena abaixo de 60% (marcadas)', () => {
+    // Caso do lote 7: uma prova só no semestre, uma questão por habilidade.
+    const evidence = [item('EF07MA01', 3, 5, 1, 0), item('EF07MA02', 3, 5, 2, 0.5), item('EF07MA03', 3, 5, 3, 1)]
+    const { weak, insufficient } = selectRecoverySkills(calculateStudentMastery([], evidenceForPeriod(evidence, { bimester: null, semester: 2 })))
+    expect(weak.map((skill) => [skill.code, skill.masteryPercent, skill.smallSample])).toEqual([['EF07MA01', 0, true], ['EF07MA02', 50, true]])
+    expect(insufficient.map((skill) => skill.code)).toEqual(['EF07MA03'])
+  })
+
+  it('com alguma fraca de amostra suficiente, a amostra pequena continua de fora', () => {
+    const evidence = [
+      item('EF07MA01', 1, 1, 1, 0), item('EF07MA01', 1, 1, 2, 0), item('EF07MA01', 1, 2, 1, 1), item('EF07MA01', 1, 2, 2, 0),
+      item('EF07MA02', 1, 1, 3, 0),
+    ]
+    const { weak, insufficient } = selectRecoverySkills(calculateStudentMastery([], evidence))
+    expect(weak.map((skill) => skill.code)).toEqual(['EF07MA01'])
+    expect(insufficient.map((skill) => skill.code)).toEqual(['EF07MA02'])
   })
 
   it('no semestre, soma só os dois bimestres dele', () => {

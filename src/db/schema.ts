@@ -1084,7 +1084,8 @@ export const recoveryRounds = pgTable('recovery_rounds', {
   statusIdx: index('recovery_rounds_status_idx').on(table.status),
 }))
 
-export type RecoverySkill = { code: string; description: string | null; masteryPercent: number | null; itemCount: number }
+/** smallSample: entrou com menos de 3 questões avaliadas (fallback quando o aluno não tem nenhuma fraca com amostra suficiente). */
+export type RecoverySkill = { code: string; description: string | null; masteryPercent: number | null; itemCount: number; smallSample?: boolean }
 export type RecoveryContentPlanItem = { unitRowIndex: number; questionCount: number; priority: 'alta' | 'media' | 'baixa'; visualAid: 'auto' | 'obrigatorio' | 'sem_imagem' }
 
 export const recoveryStudents = pgTable('recovery_students', {

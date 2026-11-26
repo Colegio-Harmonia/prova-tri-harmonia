@@ -9,7 +9,7 @@ proficiência, e as provas saem numa fila de impressão por sala.
 | Tema | Decisão |
 |---|---|
 | Período | O professor escolhe: um bimestre, um semestre (1º = bimestres 1-2, 2º = 3-4; o colégio é semestral, ajuste de 18/11/2026, migration 0058) ou o ano todo. |
-| Habilidades que entram | Só "em desenvolvimento": aproveitamento **abaixo de 60%** com pelo menos 3 questões avaliadas. Habilidade com menos de 3 questões ("evidência insuficiente") fica fora e aparece como aviso. |
+| Habilidades que entram | Só "em desenvolvimento": aproveitamento **abaixo de 60%** com pelo menos 3 questões avaliadas. Habilidade com menos de 3 questões ("evidência insuficiente") fica fora e aparece como aviso — **exceto** quando o aluno não tem nenhuma fraca com amostra suficiente (ex.: uma prova só corrigida no período): aí entram as de amostra pequena abaixo de 60%, marcadas `smallSample` e com `*` na tela (26/11/2026, lote 7). |
 | Revisão | Em lote: o professor revisa as provas da turma e envia; a coordenação/direção aprova o lote inteiro. |
 | Impressão | Um PDF por sala com as provas de todos os alunos, em ordem alfabética, e outro com os gabaritos. |
 

@@ -8,6 +8,11 @@
 //    abaixo de 60% com pelo menos 3 questões avaliadas (MASTERY_RULES). Com
 //    menos de 3 questões a leitura é "evidência insuficiente": a habilidade
 //    não entra e aparece como aviso para o professor.
+//    Exceção (26/11/2026, lote 7): se o aluno não tem NENHUMA habilidade fraca
+//    com amostra suficiente (ex.: só uma prova corrigida no semestre, uma
+//    questão por habilidade), entram as de amostra pequena abaixo de 60%,
+//    marcadas `smallSample` para o professor conferir na matriz. Sem isso o
+//    lote inteiro ficava "sem habilidades" e nada era gerado.
 // 3. As questões são distribuídas entre as habilidades fracas: no mínimo uma
 //    por habilidade, o restante proporcional à distância até 60% (quem está
 //    mais longe recebe mais). Se houver mais habilidades que questões, ficam
@@ -65,7 +70,12 @@ export function selectRecoverySkills(rows: StudentMasteryRow[]): { weak: Recover
   const byPercent = (a: RecoverySkill, b: RecoverySkill) => (a.masteryPercent ?? 0) - (b.masteryPercent ?? 0) || a.code.localeCompare(b.code)
   const weak = rows.filter((row) => row.level === 'em_desenvolvimento').map(toRecoverySkill).sort(byPercent)
   const insufficient = rows.filter((row) => row.level === 'evidencia_insuficiente').map(toRecoverySkill).sort(byPercent)
-  return { weak, insufficient }
+  if (weak.length) return { weak, insufficient }
+  const isBelow = (skill: RecoverySkill) => skill.itemCount > 0 && skill.masteryPercent !== null && skill.masteryPercent < MASTERY_RULES.nearMasteryPercent
+  return {
+    weak: insufficient.filter(isBelow).map((skill) => ({ ...skill, smallSample: true })),
+    insufficient: insufficient.filter((skill) => !isBelow(skill)),
+  }
 }
 
 /** Peso de uma habilidade fraca: distância até 60% ("próximo do domínio"); nunca zero. */

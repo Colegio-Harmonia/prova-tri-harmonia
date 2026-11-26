@@ -22,7 +22,8 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' }
 
 function SkillChips({ skills }: { skills: RecoverySkill[] }) {
   if (!skills.length) return <span className="text-xs text-content-muted">Nenhuma habilidade abaixo de 60%</span>
-  return <div className="flex flex-wrap gap-1.5">{skills.map((skill) => <span key={skill.code} title={skill.description ?? undefined} className="rounded bg-status-warning-surface px-2 py-0.5 text-xs font-medium text-status-warning-content">{skill.code} · {skill.masteryPercent?.toFixed(0) ?? '—'}%</span>)}</div>
+  return <><div className="flex flex-wrap gap-1.5">{skills.map((skill) => <span key={skill.code} title={[skill.description, skill.smallSample ? `Amostra pequena: ${skill.itemCount} questão(ões) avaliada(s)` : null].filter(Boolean).join(' · ') || undefined} className="rounded bg-status-warning-surface px-2 py-0.5 text-xs font-medium text-status-warning-content">{skill.code} · {skill.masteryPercent?.toFixed(0) ?? '—'}%{skill.smallSample && <span className="font-normal"> · {skill.itemCount}q*</span>}</span>)}</div>
+    {skills.some((skill) => skill.smallSample) && <p className="mt-1 text-xs text-content-muted">* Amostra pequena (menos de 3 questões avaliadas). Entrou porque o aluno não tem habilidade fraca com amostra suficiente; confira a matriz.</p>}</>
 }
 
 function studentState(student: Student) {
@@ -115,7 +116,7 @@ export default function RoundDetail({ roundId, isSuperuser }: { roundId: number;
     {editable && <section className="rounded-xl border border-border bg-surface">
       <div className="border-b border-border px-5 py-4">
         <h2 className="font-semibold text-content-primary">1. Marque quem ficou de recuperação</h2>
-        <p className="mt-1 text-sm text-content-secondary">Ao lado de cada aluno, as habilidades abaixo de 60% em {periodLabel(round.bimester, round.semester).toLowerCase()}, lidas das correções revisadas. Habilidade com menos de 3 questões avaliadas não entra na prova e aparece como “amostra pequena”.</p>
+        <p className="mt-1 text-sm text-content-secondary">Ao lado de cada aluno, as habilidades abaixo de 60% em {periodLabel(round.bimester, round.semester).toLowerCase()}, lidas das correções revisadas. Habilidade com menos de 3 questões avaliadas aparece como “amostra pequena” e só entra na prova (marcada com *) quando o aluno não tem nenhuma habilidade fraca com amostra suficiente.</p>
       </div>
       {rosterError && <div className="px-5 py-4 text-sm text-status-warning-content"><p>{rosterError}</p><button type="button" onClick={() => signIn('google', { callbackUrl: `/recuperacao/${roundId}` })} className="mt-2 rounded-md bg-action-primary px-3 py-2 font-medium text-action-primary-foreground hover:bg-action-primary-hover">Entrar com Google</button></div>}
       {roster && <>
